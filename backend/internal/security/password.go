@@ -17,6 +17,7 @@ const (
 	argonParallelism = 2
 	argonSaltLength  = 16
 	argonKeyLength   = 32
+	argonParameters  = "m=65536,t=3,p=2"
 )
 
 // HashPassword derives an Argon2id password hash. The result includes every
@@ -59,15 +60,16 @@ func decodePasswordHash(encoded string) (passwordParams, []byte, []byte, error) 
 		return passwordParams{}, nil, nil, errors.New("invalid password hash format")
 	}
 	params := passwordParams{}
-	if _, err := fmt.Sscanf(parts[3], "m=%d,t=%d,p=%d", &params.memory, &params.iterations, &params.parallelism); err != nil || params.memory == 0 || params.iterations == 0 || params.parallelism == 0 {
+	if parts[3] != argonParameters {
 		return passwordParams{}, nil, nil, errors.New("invalid password hash parameters")
 	}
+	params = passwordParams{memory: argonMemory, iterations: argonIterations, parallelism: argonParallelism}
 	salt, err := base64.RawStdEncoding.DecodeString(parts[4])
-	if err != nil || len(salt) == 0 {
+	if err != nil || len(salt) != argonSaltLength {
 		return passwordParams{}, nil, nil, errors.New("invalid password hash salt")
 	}
 	hash, err := base64.RawStdEncoding.DecodeString(parts[5])
-	if err != nil || len(hash) == 0 {
+	if err != nil || len(hash) != argonKeyLength {
 		return passwordParams{}, nil, nil, errors.New("invalid password hash value")
 	}
 	return params, salt, hash, nil

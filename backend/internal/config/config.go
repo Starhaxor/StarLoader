@@ -39,6 +39,9 @@ func Load() (Config, error) {
 		}
 		values[name] = value
 	}
+	if values["LICENSE_HMAC_KEY"] == values["HARDWARE_HMAC_KEY"] {
+		return Config{}, fmt.Errorf("LICENSE_HMAC_KEY and HARDWARE_HMAC_KEY must differ")
+	}
 
 	return Config{
 		DatabaseURL:       values["DATABASE_URL"],

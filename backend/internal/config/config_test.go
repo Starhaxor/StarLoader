@@ -33,6 +33,14 @@ func TestLoadReturnsConfiguredValues(t *testing.T) {
 	}
 }
 
+func TestLoadRejectsReusedHMACKey(t *testing.T) {
+	setRequiredEnvironment(t)
+	t.Setenv("HARDWARE_HMAC_KEY", "license-hmac-key")
+	if _, err := Load(); err == nil {
+		t.Fatal("Load() accepted identical license and hardware HMAC keys")
+	}
+}
+
 func setRequiredEnvironment(t *testing.T) {
 	t.Helper()
 	for _, setting := range []struct{ name, value string }{
