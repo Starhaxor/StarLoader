@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>HwidDialog</class>
+ <widget class="QDialog" name="HwidDialog">
+  <property name="geometry"><rect><x>0</x><y>0</y><width>390</width><height>245</height></rect></property>
+  <property name="minimumSize"><size><width>390</width><height>245</height></size></property>
+  <property name="maximumSize"><size><width>390</width><height>245</height></size></property>
+  <property name="windowTitle"><string>Device ID</string></property>
+  <property name="modal"><bool>true</bool></property>
+  <property name="styleSheet"><string notr="true">QDialog { background: #0C111B; color: #F7F9FC; }
+QLabel#titleLabel { color: #F7F9FC; font-size: 20px; font-weight: 800; }
+QLabel#descriptionLabel { color: #8D99AC; font-size: 11px; }
+QLineEdit#hwidLineEdit { min-height: 42px; padding: 0 12px; color: #AFC2FF; background: #121A28; border: 1px solid #2B3A52; border-radius: 9px; font-family: Consolas; font-weight: 700; }
+QPushButton { min-height: 38px; border-radius: 9px; font-weight: 700; }
+QPushButton#copyButton { color: white; background: #4F7CFF; border: none; }
+QPushButton#copyButton:hover { background: #638CFF; }
+QPushButton#closeButton { color: #B9C2D0; background: #182131; border: 1px solid #2A374B; }
+QPushButton#closeButton:hover { color: white; background: #202B3E; }</string></property>
+  <layout class="QVBoxLayout" name="dialogLayout">
+   <property name="leftMargin"><number>24</number></property><property name="topMargin"><number>22</number></property>
+   <property name="rightMargin"><number>24</number></property><property name="bottomMargin"><number>20</number></property><property name="spacing"><number>10</number></property>
+   <item><widget class="QLabel" name="titleLabel"><property name="text"><string>Your device ID</string></property></widget></item>
+   <item><widget class="QLabel" name="descriptionLabel"><property name="text"><string>This code is unique to your device. Only share it with support.</string></property><property name="wordWrap"><bool>true</bool></property></widget></item>
+   <item><spacer name="topSpacer"><property name="orientation"><enum>Qt::Vertical</enum></property><property name="sizeHint" stdset="0"><size><width>20</width><height>8</height></size></property></spacer></item>
+   <item><widget class="QLineEdit" name="hwidLineEdit"><property name="readOnly"><bool>true</bool></property><property name="alignment"><set>Qt::AlignCenter</set></property></widget></item>
+   <item><layout class="QHBoxLayout" name="buttonLayout"><property name="spacing"><number>8</number></property>
+    <item><widget class="QPushButton" name="closeButton"><property name="cursor"><cursorShape>PointingHandCursor</cursorShape></property><property name="text"><string>Close</string></property></widget></item>
+    <item><widget class="QPushButton" name="copyButton"><property name="cursor"><cursorShape>PointingHandCursor</cursorShape></property><property name="text"><string>Copy code</string></property><property name="default"><bool>true</bool></property></widget></item>
+   </layout></item>
+  </layout>
+ </widget>
+ <tabstops><tabstop>hwidLineEdit</tabstop><tabstop>copyButton</tabstop><tabstop>closeButton</tabstop></tabstops>
+ <resources/><connections/>
+</ui>
