@@ -152,6 +152,36 @@ func TestLoginMapsSafeServiceErrors(t *testing.T) {
 	}
 }
 
+func TestLoginBoundsServiceWorkWithConfiguredDeadline(t *testing.T) {
+	serviceCanceled := make(chan error, 1)
+	login := &fakeLoginService{
+		loginFunc: func(ctx context.Context, _ service.LoginInput) (service.PendingChallenge, error) {
+			<-ctx.Done()
+			serviceCanceled <- ctx.Err()
+			return service.PendingChallenge{}, ctx.Err()
+		},
+	}
+	router := NewRouter(RouterConfig{
+		Login:        login,
+		LoginTimeout: 20 * time.Millisecond,
+	})
+	rr := httptest.NewRecorder()
+	startedAt := time.Now()
+
+	router.ServeHTTP(rr, loginRequest(validLoginJSON))
+
+	assertErrorResponse(t, rr, http.StatusInternalServerError, "SERVER_ERROR")
+	if elapsed := time.Since(startedAt); elapsed > 500*time.Millisecond {
+		t.Fatalf("login took %s despite configured deadline", elapsed)
+	}
+	if err := <-serviceCanceled; !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("service context error = %v, want deadline exceeded", err)
+	}
+	if strings.Contains(rr.Body.String(), "deadline") || strings.Contains(rr.Body.String(), "context") {
+		t.Fatalf("response leaks cancellation detail: %s", rr.Body.String())
+	}
+}
+
 func TestRecoveryReturnsServerErrorAndLogsOnlyRequestID(t *testing.T) {
 	var logged strings.Builder
 	router := NewRouter(RouterConfig{
@@ -306,13 +336,17 @@ type fakeLoginService struct {
 	err        error
 	input      service.LoginInput
 	panicValue any
+	loginFunc  func(context.Context, service.LoginInput) (service.PendingChallenge, error)
 }
 
-func (fake *fakeLoginService) Login(_ context.Context, input service.LoginInput) (service.PendingChallenge, error) {
+func (fake *fakeLoginService) Login(ctx context.Context, input service.LoginInput) (service.PendingChallenge, error) {
 	if fake.panicValue != nil {
 		panic(fake.panicValue)
 	}
 	fake.input = input
+	if fake.loginFunc != nil {
+		return fake.loginFunc(ctx, input)
+	}
 	return fake.pending, fake.err
 }
 

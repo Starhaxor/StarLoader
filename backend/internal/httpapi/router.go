@@ -19,6 +19,7 @@ type RouterConfig struct {
 	Login              LoginService
 	HealthCheck        func(context.Context) error
 	HealthCheckTimeout time.Duration
+	LoginTimeout       time.Duration
 	TrustedProxies     []netip.Prefix
 	Logger             *log.Logger
 	RateLimitMaxKeys   int
@@ -29,6 +30,7 @@ type Router struct {
 	login              LoginService
 	healthCheck        func(context.Context) error
 	healthCheckTimeout time.Duration
+	loginTimeout       time.Duration
 	trustedProxies     []netip.Prefix
 	loginLimiter       *ipRateLimiter
 	handler            http.Handler
@@ -43,10 +45,15 @@ func NewRouter(config RouterConfig) *Router {
 	if healthCheckTimeout <= 0 {
 		healthCheckTimeout = 2 * time.Second
 	}
+	loginTimeout := config.LoginTimeout
+	if loginTimeout <= 0 {
+		loginTimeout = 10 * time.Second
+	}
 	router := &Router{
 		login:              config.Login,
 		healthCheck:        config.HealthCheck,
 		healthCheckTimeout: healthCheckTimeout,
+		loginTimeout:       loginTimeout,
 		trustedProxies:     append([]netip.Prefix(nil), config.TrustedProxies...),
 		loginLimiter:       newIPRateLimiter(5, time.Minute, config.RateLimitMaxKeys, config.Now),
 	}

@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -34,6 +35,9 @@ func (router *Router) handleLogin(writer http.ResponseWriter, request *http.Requ
 		writeError(writer, request, http.StatusTooManyRequests, "RATE_LIMITED", "too many requests")
 		return
 	}
+	ctx, cancel := context.WithTimeout(request.Context(), router.loginTimeout)
+	defer cancel()
+	request = request.WithContext(ctx)
 	mediaType, _, err := mime.ParseMediaType(request.Header.Get("Content-Type"))
 	if err != nil || mediaType != "application/json" {
 		writeError(writer, request, http.StatusUnsupportedMediaType, "INVALID_REQUEST", "invalid request")

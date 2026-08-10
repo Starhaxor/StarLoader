@@ -4,7 +4,10 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 )
+
+const defaultLoginTimeout = 10 * time.Second
 
 var requiredEnvironmentVariables = [...]string{
 	"DATABASE_URL",
@@ -26,6 +29,7 @@ type Config struct {
 	LicenseIssuer     string
 	LicenseAudience   string
 	Product           string
+	LoginTimeout      time.Duration
 }
 
 // Load reads the complete configuration, refusing to start when any required
@@ -42,6 +46,14 @@ func Load() (Config, error) {
 	if values["LICENSE_HMAC_KEY"] == values["HARDWARE_HMAC_KEY"] {
 		return Config{}, fmt.Errorf("LICENSE_HMAC_KEY and HARDWARE_HMAC_KEY must differ")
 	}
+	loginTimeout := defaultLoginTimeout
+	if configuredTimeout := strings.TrimSpace(os.Getenv("LOGIN_TIMEOUT")); configuredTimeout != "" {
+		parsedTimeout, err := time.ParseDuration(configuredTimeout)
+		if err != nil || parsedTimeout <= 0 {
+			return Config{}, fmt.Errorf("LOGIN_TIMEOUT must be a positive duration")
+		}
+		loginTimeout = parsedTimeout
+	}
 
 	return Config{
 		DatabaseURL:       values["DATABASE_URL"],
@@ -51,5 +63,6 @@ func Load() (Config, error) {
 		LicenseIssuer:     values["LICENSE_ISSUER"],
 		LicenseAudience:   values["LICENSE_AUDIENCE"],
 		Product:           values["PRODUCT"],
+		LoginTimeout:      loginTimeout,
 	}, nil
 }

@@ -3,7 +3,9 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"net/netip"
 	"os"
@@ -20,9 +22,16 @@ import (
 )
 
 func main() {
+	if err := run(); err != nil {
+		log.Print(err)
+		os.Exit(1)
+	}
+}
+
+func run() error {
 	configuration, err := config.Load()
 	if err != nil {
-		log.Fatal("configuration error: ", err)
+		return fmt.Errorf("configuration error: %w", err)
 	}
 
 	trustedProxies := make([]netip.Prefix, 0)
@@ -33,28 +42,29 @@ func main() {
 		}
 		prefix, err := netip.ParsePrefix(configuredProxy)
 		if err != nil {
-			log.Fatal("configuration error: TRUSTED_PROXIES contains an invalid network")
+			return errors.New("configuration error: TRUSTED_PROXIES contains an invalid network")
 		}
 		trustedProxies = append(trustedProxies, prefix)
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-	pool, err := pgxpool.New(ctx, configuration.DatabaseURL)
+	applicationCtx, cancelApplication := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancelApplication()
+	pool, err := pgxpool.New(applicationCtx, configuration.DatabaseURL)
 	if err != nil {
-		log.Fatal("database configuration failed")
+		return errors.New("database configuration failed")
 	}
 	defer pool.Close()
-	startupCtx, cancelStartup := context.WithTimeout(ctx, 10*time.Second)
+	startupCtx, cancelStartup := context.WithTimeout(applicationCtx, 10*time.Second)
 	defer cancelStartup()
 	if err := pool.Ping(startupCtx); err != nil {
-		log.Fatal("database connection failed")
+		return errors.New("database connection failed")
 	}
 
 	repository := store.New(pool)
 	loginService := service.NewLoginService(repository, []byte(configuration.LicenseHMACKey), configuration.Product)
 	router := httpapi.NewRouter(httpapi.RouterConfig{
 		Login:          loginService,
+		LoginTimeout:   configuration.LoginTimeout,
 		TrustedProxies: trustedProxies,
 		Logger:         log.Default(),
 		HealthCheck:    pool.Ping,
@@ -63,32 +73,67 @@ func main() {
 	if address == "" {
 		address = ":8080"
 	}
-	server := &http.Server{
-		Addr:              address,
-		Handler:           router,
+	server := newHTTPServer(address, router, applicationCtx)
+
+	log.Printf("license service listening on %s", address)
+	if err := serveUntilStopped(applicationCtx, cancelApplication, server, 10*time.Second); err != nil {
+		return fmt.Errorf("server stopped: %w", err)
+	}
+	return nil
+}
+
+func newHTTPServer(address string, handler http.Handler, applicationCtx context.Context) *http.Server {
+	return &http.Server{
+		Addr:    address,
+		Handler: handler,
+		BaseContext: func(net.Listener) context.Context {
+			return applicationCtx
+		},
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      15 * time.Second,
 		IdleTimeout:       60 * time.Second,
 		MaxHeaderBytes:    1 << 20,
 	}
+}
 
+type managedHTTPServer interface {
+	Shutdown(context.Context) error
+	Close() error
+}
+
+type runningHTTPServer interface {
+	managedHTTPServer
+	ListenAndServe() error
+}
+
+func serveUntilStopped(applicationCtx context.Context, cancelApplication context.CancelFunc, server runningHTTPServer, gracePeriod time.Duration) error {
 	serverErrors := make(chan error, 1)
 	go func() {
-		log.Printf("license service listening on %s", address)
 		serverErrors <- server.ListenAndServe()
 	}()
 
 	select {
-	case <-ctx.Done():
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		if err := server.Shutdown(shutdownCtx); err != nil {
-			log.Print("server shutdown failed")
-		}
+	case <-applicationCtx.Done():
+		return shutdownServer(server, cancelApplication, gracePeriod)
 	case err := <-serverErrors:
-		if !errors.Is(err, http.ErrServerClosed) {
-			log.Fatal("server stopped unexpectedly: ", err)
+		cancelApplication()
+		if errors.Is(err, http.ErrServerClosed) {
+			return nil
 		}
+		return err
 	}
+}
+
+func shutdownServer(server managedHTTPServer, cancelApplication context.CancelFunc, gracePeriod time.Duration) error {
+	cancelApplication()
+	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), gracePeriod)
+	defer cancelShutdown()
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		if closeErr := server.Close(); closeErr != nil {
+			return errors.Join(err, closeErr)
+		}
+		return err
+	}
+	return nil
 }
