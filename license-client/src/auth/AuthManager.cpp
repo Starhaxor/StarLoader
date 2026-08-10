@@ -54,6 +54,7 @@ AuthManager::AuthManager(IApiClient &apiClient, IHardwareCollector &hardwareColl
     connect(&apiClient_, &IApiClient::deviceVerified, this, &AuthManager::handleDeviceVerified);
     connect(&apiClient_, &IApiClient::deviceVerificationFailed, this, &AuthManager::handleDeviceVerificationFailed);
     connect(&collectionWatcher_, &QFutureWatcher<CollectionResult>::finished, this, &AuthManager::completeCollection);
+    connect(&signingWatcher_, &QFutureWatcher<SigningResult>::finished, this, &AuthManager::completeSigning);
 }
 
 AuthManager::~AuthManager() { cancelAndWait(); }
@@ -96,6 +97,8 @@ void AuthManager::cancelAndWait()
     ++attempt_;
     collectionWatcher_.cancel();
     collectionWatcher_.waitForFinished();
+    signingWatcher_.cancel();
+    signingWatcher_.waitForFinished();
 }
 
 void AuthManager::completeCollection()
@@ -117,11 +120,28 @@ void AuthManager::handleLoginSucceeded(const LoginResponse &response)
     transition(AuthState::WaitingForDeviceChallenge, QStringLiteral("Verifying device challenge."));
     if (!strictBase64(response.challenge, &challenge_)) { fail({QStringLiteral("INVALID_CHALLENGE"), QStringLiteral("Server challenge is invalid."), response.requestId}); return; }
     sessionId_ = response.sessionId;
-    QByteArray signature, publicKey;
-    QString signerError;
     transition(AuthState::VerifyingDevice, QStringLiteral("Signing device challenge."));
-    if (!deviceSigner_.sign(challenge_, &signature, &publicKey, &signerError)) { fail({QStringLiteral("DEVICE_SIGNING_FAILED"), QStringLiteral("Device proof could not be created."), response.requestId}); return; }
-    apiClient_.verifyDevice({sessionId_, response.challenge, QString::fromUtf8(signature.toBase64()), QString::fromUtf8(publicKey.toBase64()), {hardware_.smbiosUuid, hardware_.motherboardSerial, hardware_.biosSerial, hardware_.systemDiskSerial, hardware_.machineGuid, hardware_.finalFingerprint}});
+    IDeviceSigner *signer = &deviceSigner_;
+    const QByteArray challenge = challenge_;
+    const quint64 attempt = attempt_;
+    const QString encodedChallenge = response.challenge;
+    const QString requestId = response.requestId;
+    signingWatcher_.setFuture(QtConcurrent::run([signer, challenge, attempt, encodedChallenge, requestId] {
+        SigningResult result;
+        result.attempt = attempt;
+        result.encodedChallenge = encodedChallenge;
+        result.requestId = requestId;
+        result.success = signer->sign(challenge, &result.signature, &result.publicKey, &result.error);
+        return result;
+    }));
+}
+
+void AuthManager::completeSigning()
+{
+    const SigningResult result = signingWatcher_.result();
+    if (result.attempt != attempt_ || state_ != AuthState::VerifyingDevice) return;
+    if (!result.success) { fail({QStringLiteral("DEVICE_SIGNING_FAILED"), QStringLiteral("Device proof could not be created."), result.requestId}); return; }
+    apiClient_.verifyDevice({sessionId_, result.encodedChallenge, QString::fromUtf8(result.signature.toBase64()), QString::fromUtf8(result.publicKey.toBase64()), {hardware_.smbiosUuid, hardware_.motherboardSerial, hardware_.biosSerial, hardware_.systemDiskSerial, hardware_.machineGuid, hardware_.finalFingerprint}});
 }
 
 void AuthManager::handleLoginFailed(const ApiError &error) { if (state_ == AuthState::Authenticating) fail(error); }

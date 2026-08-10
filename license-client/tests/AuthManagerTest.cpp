@@ -2,7 +2,12 @@
 #include "security/Fingerprint.h"
 
 #include <QJsonDocument>
+#include <QElapsedTimer>
+#include <QSemaphore>
+#include <QThread>
 #include <QtTest>
+
+#include <thread>
 
 #include <openssl/evp.h>
 
@@ -14,8 +19,9 @@ public:
     LoginRequest lastLogin;
     DeviceVerifyRequest lastVerify;
     int loginCount = 0;
+    int verifyCount = 0;
     void login(const LoginRequest &request) override { lastLogin = request; ++loginCount; }
-    void verifyDevice(const DeviceVerifyRequest &request) override { lastVerify = request; }
+    void verifyDevice(const DeviceVerifyRequest &request) override { lastVerify = request; ++verifyCount; }
     void completeLogin(const LoginResponse &response) { emit loginSucceeded(response); }
     void rejectLogin(const ApiError &error) { emit loginFailed(error); }
     void completeVerify(const DeviceVerifyResponse &response) { emit deviceVerified(response); }
@@ -41,6 +47,21 @@ public:
         if (!succeeds) { *error = QStringLiteral("signing failed"); return false; }
         if (challenge != QByteArrayLiteral("challenge")) return false;
         *signature = QByteArrayLiteral("signature"); *publicKey = QByteArrayLiteral("public-key"); return true;
+    }
+};
+
+class BlockingDeviceSigner final : public IDeviceSigner
+{
+public:
+    QSemaphore entered;
+    QSemaphore release;
+    bool sign(const QByteArray &challenge, QByteArray *signature, QByteArray *publicKey, QString *) override {
+        if (challenge != QByteArrayLiteral("challenge")) return false;
+        entered.release();
+        release.acquire();
+        *signature = QByteArrayLiteral("signature");
+        *publicKey = QByteArrayLiteral("public-key");
+        return true;
     }
 };
 
@@ -85,6 +106,8 @@ private slots:
     void failsForLoginChallengeSigningAndDeviceErrors();
     void failsForInvalidTokenWithoutAuthenticatedState();
     void systemCollectorGeneratesFingerprintBeforeAuthentication();
+    void signsDeviceChallengeWithoutBlockingManagerThread();
+    void destructionWaitsForInFlightSigning();
 };
 
 void AuthManagerTest::reachesAuthenticatedOnlyAfterVerifiedDeviceToken()
@@ -96,6 +119,7 @@ void AuthManagerTest::reachesAuthenticatedOnlyAfterVerifiedDeviceToken()
     QTRY_COMPARE(api.loginCount, 1);
     QCOMPARE(api.lastLogin.deviceFingerprint, QStringLiteral("ABCDEF1234567890"));
     api.completeLogin(challengeResponse());
+    QTRY_COMPARE(api.verifyCount, 1);
     QCOMPARE(api.lastVerify.challenge, QStringLiteral("Y2hhbGxlbmdl"));
     QCOMPARE(api.lastVerify.challengeSignature, QStringLiteral("c2lnbmF0dXJl"));
     api.completeVerify(verifiedResponse(tokenFor(validClaims())));
@@ -133,9 +157,9 @@ void AuthManagerTest::failsForLoginChallengeSigningAndDeviceErrors()
     manager.login(QStringLiteral("a@b.c"), QStringLiteral("p"), QStringLiteral("l"));
     QTRY_COMPARE(api.loginCount, 3);
     signer.succeeds = false; api.completeLogin(challengeResponse());
-    QCOMPARE(manager.state(), AuthState::Failed);
+    QTRY_COMPARE(manager.state(), AuthState::Failed);
     signer.succeeds = true; manager.login(QStringLiteral("a@b.c"), QStringLiteral("p"), QStringLiteral("l")); QTRY_COMPARE(api.loginCount, 4);
-    api.completeLogin(challengeResponse()); api.rejectVerify({QStringLiteral("DEVICE_REVOKED"), {}, {}});
+    api.completeLogin(challengeResponse()); QTRY_COMPARE(api.verifyCount, 1); api.rejectVerify({QStringLiteral("DEVICE_REVOKED"), {}, {}});
     QCOMPARE(manager.state(), AuthState::Failed);
 }
 
@@ -143,7 +167,7 @@ void AuthManagerTest::failsForInvalidTokenWithoutAuthenticatedState()
 {
     FakeApiClient api; FakeHardwareCollector collector; FakeDeviceSigner signer;
     AuthManager manager(api, collector, signer, verifier()); QSignalSpy states(&manager, &AuthManager::stateChanged);
-    manager.login(QStringLiteral("a@b.c"), QStringLiteral("p"), QStringLiteral("l")); QTRY_COMPARE(api.loginCount, 1); api.completeLogin(challengeResponse());
+    manager.login(QStringLiteral("a@b.c"), QStringLiteral("p"), QStringLiteral("l")); QTRY_COMPARE(api.loginCount, 1); api.completeLogin(challengeResponse()); QTRY_COMPARE(api.verifyCount, 1);
     QJsonObject claims = validClaims(); claims[QStringLiteral("device_id")] = QStringLiteral("other-device");
     api.completeVerify(verifiedResponse(tokenFor(claims)));
     QCOMPARE(manager.state(), AuthState::Failed);
@@ -162,6 +186,44 @@ void AuthManagerTest::systemCollectorGeneratesFingerprintBeforeAuthentication()
     QString error;
     QVERIFY2(collector.collect(&identity, &error), qPrintable(error));
     QCOMPARE(identity.finalFingerprint, Fingerprint::generate(raw));
+}
+
+void AuthManagerTest::signsDeviceChallengeWithoutBlockingManagerThread()
+{
+    FakeApiClient api; FakeHardwareCollector collector; BlockingDeviceSigner signer;
+    AuthManager manager(api, collector, signer, verifier());
+    manager.login(QStringLiteral("a@b.c"), QStringLiteral("p"), QStringLiteral("l"));
+    QTRY_COMPARE(api.loginCount, 1);
+
+    std::thread releaser([&signer] { QThread::msleep(200); signer.release.release(); });
+    QElapsedTimer elapsed; elapsed.start();
+    api.completeLogin(challengeResponse());
+    const qint64 deliveryMilliseconds = elapsed.elapsed();
+    releaser.join();
+
+    QVERIFY2(deliveryMilliseconds < 100, qPrintable(QStringLiteral("challenge delivery blocked for %1 ms").arg(deliveryMilliseconds)));
+    QCOMPARE(manager.state(), AuthState::VerifyingDevice);
+    manager.login(QStringLiteral("other@b.c"), QStringLiteral("other"), QStringLiteral("other"));
+    QCOMPARE(api.loginCount, 1);
+    QTRY_COMPARE(api.verifyCount, 1);
+}
+
+void AuthManagerTest::destructionWaitsForInFlightSigning()
+{
+    FakeApiClient api; FakeHardwareCollector collector; BlockingDeviceSigner signer;
+    auto manager = std::make_unique<AuthManager>(api, collector, signer, verifier());
+    manager->login(QStringLiteral("a@b.c"), QStringLiteral("p"), QStringLiteral("l"));
+    QTRY_COMPARE(api.loginCount, 1);
+    api.completeLogin(challengeResponse());
+    QVERIFY(signer.entered.tryAcquire(1, 1000));
+
+    std::thread releaser([&signer] { QThread::msleep(200); signer.release.release(); });
+    QElapsedTimer elapsed; elapsed.start();
+    manager.reset();
+    const qint64 destructionMilliseconds = elapsed.elapsed();
+    releaser.join();
+
+    QVERIFY2(destructionMilliseconds >= 150, qPrintable(QStringLiteral("destruction returned before signer completion after %1 ms").arg(destructionMilliseconds)));
 }
 
 QTEST_MAIN(AuthManagerTest)

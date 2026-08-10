@@ -81,11 +81,14 @@ private:
     QByteArray challenge_;
     QString sessionToken_;
     struct CollectionResult { quint64 attempt = 0; bool success = false; HardwareIdentity identity; QString error; };
+    struct SigningResult { quint64 attempt = 0; bool success = false; QByteArray signature; QByteArray publicKey; QString encodedChallenge; QString requestId; QString error; };
     struct PendingLogin { QString email; QString password; QString licenseKey; };
     QFutureWatcher<CollectionResult> collectionWatcher_;
+    QFutureWatcher<SigningResult> signingWatcher_;
     PendingLogin pendingLogin_;
     quint64 attempt_ = 0;
     void transition(AuthState state, const QString &status);
     void fail(const ApiError &error);
     void completeCollection();
+    void completeSigning();
 };
