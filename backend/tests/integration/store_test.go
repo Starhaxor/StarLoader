@@ -1,0 +1,371 @@
+package integration_test
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"os"
+	"testing"
+	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/starloader/backend/internal/domain"
+	"github.com/starloader/backend/internal/store"
+)
+
+func TestUserAndLicenseRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	pool := openTestPool(t, ctx)
+	resetAndMigrate(t, ctx, pool)
+	repository := store.New(pool)
+
+	createdUser, err := repository.CreateUser(ctx, domain.NewUser{
+		Email:        "person@example.com",
+		PasswordHash: "$argon2id$v=19$test-hash",
+	})
+	if err != nil {
+		t.Fatalf("CreateUser() error = %v", err)
+	}
+	if createdUser.ID == "" {
+		t.Fatal("CreateUser() returned an empty ID")
+	}
+
+	foundUser, err := repository.FindUserByEmail(ctx, "person@example.com")
+	if err != nil {
+		t.Fatalf("FindUserByEmail() error = %v", err)
+	}
+	if foundUser.ID != createdUser.ID || foundUser.Email != "person@example.com" || foundUser.PasswordHash != "$argon2id$v=19$test-hash" || foundUser.Status != domain.UserStatusActive {
+		t.Fatalf("FindUserByEmail() = %#v", foundUser)
+	}
+
+	expiresAt := time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC)
+	licenseHMAC := "5c89e0aeacdc0f1e84682f1d9f4b7bc81c279466603fefb87941b21df91f5fd2"
+	createdLicense, err := repository.CreateLicense(ctx, domain.NewLicense{
+		LicenseHMAC: licenseHMAC,
+		UserID:      createdUser.ID,
+		Product:     "StarLoader",
+		MaxDevices:  2,
+		ExpiresAt:   expiresAt,
+	})
+	if err != nil {
+		t.Fatalf("CreateLicense() error = %v", err)
+	}
+
+	foundLicense, err := repository.FindLicenseByHMAC(ctx, licenseHMAC)
+	if err != nil {
+		t.Fatalf("FindLicenseByHMAC() error = %v", err)
+	}
+	if foundLicense.ID != createdLicense.ID || foundLicense.UserID != createdUser.ID || foundLicense.LicenseHMAC != licenseHMAC || foundLicense.Product != "StarLoader" || foundLicense.Status != domain.LicenseStatusActive || foundLicense.MaxDevices != 2 || !foundLicense.ExpiresAt.Equal(expiresAt) {
+		t.Fatalf("FindLicenseByHMAC() = %#v", foundLicense)
+	}
+}
+
+func TestUserRepositoryNormalizesEmail(t *testing.T) {
+	ctx := context.Background()
+	pool := openTestPool(t, ctx)
+	resetAndMigrate(t, ctx, pool)
+	repository := store.New(pool)
+
+	created, err := repository.CreateUser(ctx, domain.NewUser{
+		Email:        "  Person@Example.COM ",
+		PasswordHash: "$argon2id$v=19$normalized-email",
+	})
+	if err != nil {
+		t.Fatalf("CreateUser() error = %v", err)
+	}
+	if created.Email != "person@example.com" {
+		t.Fatalf("CreateUser() email = %q", created.Email)
+	}
+
+	found, err := repository.FindUserByEmail(ctx, " PERSON@EXAMPLE.COM ")
+	if err != nil {
+		t.Fatalf("FindUserByEmail() error = %v", err)
+	}
+	if found.ID != created.ID {
+		t.Fatalf("FindUserByEmail() ID = %q, want %q", found.ID, created.ID)
+	}
+}
+
+func TestRepositoryNotFoundErrorsAreTyped(t *testing.T) {
+	ctx := context.Background()
+	pool := openTestPool(t, ctx)
+	resetAndMigrate(t, ctx, pool)
+	repository := store.New(pool)
+
+	tests := []struct {
+		name   string
+		entity string
+		find   func() error
+	}{
+		{
+			name:   "user",
+			entity: "user",
+			find: func() error {
+				_, err := repository.FindUserByEmail(ctx, "missing@example.com")
+				return err
+			},
+		},
+		{
+			name:   "license",
+			entity: "license",
+			find: func() error {
+				_, err := repository.FindLicenseByHMAC(ctx, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+				return err
+			},
+		},
+		{
+			name:   "challenge",
+			entity: "challenge",
+			find: func() error {
+				return repository.WithLockedChallenge(ctx, "00000000-0000-0000-0000-000000000000", func(*store.LockedChallenge) error {
+					return nil
+				})
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.find()
+			var notFound *domain.NotFoundError
+			if !errors.As(err, &notFound) || notFound.Entity != tt.entity {
+				t.Fatalf("error = %v, want typed %s not-found error", err, tt.entity)
+			}
+		})
+	}
+}
+
+func TestSchemaRejectsInvalidStatusesAndUnprotectedValues(t *testing.T) {
+	ctx := context.Background()
+	pool := openTestPool(t, ctx)
+	resetAndMigrate(t, ctx, pool)
+	repository := store.New(pool)
+	user, license := createUserAndLicense(t, ctx, repository, "constraints@example.com")
+
+	invalidStatements := []struct {
+		name string
+		sql  string
+		args []any
+	}{
+		{
+			name: "unnormalized email",
+			sql:  `insert into users (email, password_hash) values ('Mixed@Example.COM', 'hash')`,
+		},
+		{
+			name: "invalid user status",
+			sql:  `update users set status = 'unknown' where id = $1`,
+			args: []any{user.ID},
+		},
+		{
+			name: "invalid license status",
+			sql:  `update licenses set status = 'unknown' where id = $1`,
+			args: []any{license.ID},
+		},
+		{
+			name: "non-positive device limit",
+			sql:  `update licenses set max_devices = 0 where id = $1`,
+			args: []any{license.ID},
+		},
+		{
+			name: "non-HMAC license value",
+			sql:  `update licenses set license_hmac = 'plaintext-license' where id = $1`,
+			args: []any{license.ID},
+		},
+		{
+			name: "invalid device status",
+			sql: `insert into devices (
+				user_id, license_id, tpm_public_key, tpm_public_key_sha256, fingerprint_hmac, status
+			) values ($1, $2, $3, $4, $5, 'unknown')`,
+			args: []any{user.ID, license.ID, []byte{0x01}, bytes.Repeat([]byte{0x02}, 32), "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},
+		},
+		{
+			name: "invalid session status",
+			sql:  `insert into auth_sessions (user_id, license_id, status, expires_at) values ($1, $2, 'unknown', $3)`,
+			args: []any{user.ID, license.ID, time.Date(2026, 8, 10, 12, 2, 0, 0, time.UTC)},
+		},
+	}
+
+	for _, tt := range invalidStatements {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := pool.Exec(ctx, tt.sql, tt.args...); err == nil {
+				t.Fatal("invalid database write unexpectedly succeeded")
+			}
+		})
+	}
+}
+
+func TestMigrationDownAndUp(t *testing.T) {
+	ctx := context.Background()
+	pool := openTestPool(t, ctx)
+	resetAndMigrate(t, ctx, pool)
+
+	if err := store.MigrateDown(ctx, pool); err != nil {
+		t.Fatalf("MigrateDown() error = %v", err)
+	}
+	assertTablesExist(t, ctx, pool, false)
+
+	if err := store.MigrateUp(ctx, pool); err != nil {
+		t.Fatalf("second MigrateUp() error = %v", err)
+	}
+	assertTablesExist(t, ctx, pool, true)
+}
+
+func TestConcurrentChallengeConsumptionHasExactlyOneConsumer(t *testing.T) {
+	ctx := context.Background()
+	pool := openTestPool(t, ctx)
+	resetAndMigrate(t, ctx, pool)
+	repository := store.New(pool)
+	pending := createPendingSession(t, ctx, repository)
+
+	firstLocked := make(chan struct{})
+	releaseFirst := make(chan struct{})
+	results := make(chan error, 2)
+	consume := func(holdLock bool) {
+		results <- repository.WithLockedChallenge(ctx, pending.Session.ID, func(locked *store.LockedChallenge) error {
+			if locked.Challenge.ConsumedAt != nil {
+				return domain.ErrChallengeConsumed
+			}
+			if holdLock {
+				close(firstLocked)
+				<-releaseFirst
+			}
+			return locked.Consume(ctx, time.Date(2026, 8, 10, 12, 1, 0, 0, time.UTC))
+		})
+	}
+
+	go consume(true)
+	<-firstLocked
+	go consume(false)
+
+	// Keep the first transaction open long enough for the second transaction
+	// to reach the same SELECT FOR UPDATE and block on its row lock.
+	time.Sleep(150 * time.Millisecond)
+	close(releaseFirst)
+
+	succeeded := 0
+	consumed := 0
+	for range 2 {
+		err := <-results
+		switch {
+		case err == nil:
+			succeeded++
+		case errors.Is(err, domain.ErrChallengeConsumed):
+			consumed++
+		default:
+			t.Fatalf("WithLockedChallenge() error = %v", err)
+		}
+	}
+	if succeeded != 1 || consumed != 1 {
+		t.Fatalf("challenge results: succeeded=%d consumed=%d", succeeded, consumed)
+	}
+}
+
+func TestWithLockedChallengeRollsBackCallbackFailure(t *testing.T) {
+	ctx := context.Background()
+	pool := openTestPool(t, ctx)
+	resetAndMigrate(t, ctx, pool)
+	repository := store.New(pool)
+	pending := createPendingSession(t, ctx, repository)
+	callbackErr := errors.New("verification failed")
+
+	err := repository.WithLockedChallenge(ctx, pending.Session.ID, func(locked *store.LockedChallenge) error {
+		if err := locked.Consume(ctx, time.Date(2026, 8, 10, 12, 1, 0, 0, time.UTC)); err != nil {
+			return err
+		}
+		return callbackErr
+	})
+	if !errors.Is(err, callbackErr) {
+		t.Fatalf("WithLockedChallenge() error = %v, want %v", err, callbackErr)
+	}
+
+	err = repository.WithLockedChallenge(ctx, pending.Session.ID, func(locked *store.LockedChallenge) error {
+		if locked.Challenge.ConsumedAt != nil {
+			return domain.ErrChallengeConsumed
+		}
+		return locked.Consume(ctx, time.Date(2026, 8, 10, 12, 2, 0, 0, time.UTC))
+	})
+	if err != nil {
+		t.Fatalf("second WithLockedChallenge() error = %v", err)
+	}
+}
+
+func openTestPool(t *testing.T, ctx context.Context) *pgxpool.Pool {
+	t.Helper()
+	databaseURL := os.Getenv("TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Fatal("TEST_DATABASE_URL must be set for PostgreSQL integration tests")
+	}
+	pool, err := pgxpool.New(ctx, databaseURL)
+	if err != nil {
+		t.Fatalf("pgxpool.New() error = %v", err)
+	}
+	t.Cleanup(pool.Close)
+	if err := pool.Ping(ctx); err != nil {
+		t.Fatalf("database ping failed: %v", err)
+	}
+	return pool
+}
+
+func resetAndMigrate(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
+	t.Helper()
+	if _, err := pool.Exec(ctx, "drop schema public cascade; create schema public"); err != nil {
+		t.Fatalf("reset schema: %v", err)
+	}
+	if err := store.MigrateUp(ctx, pool); err != nil {
+		t.Fatalf("MigrateUp() error = %v", err)
+	}
+}
+
+func assertTablesExist(t *testing.T, ctx context.Context, pool *pgxpool.Pool, want bool) {
+	t.Helper()
+	for _, table := range []string{"users", "licenses", "devices", "auth_sessions", "device_challenges"} {
+		var exists bool
+		if err := pool.QueryRow(ctx, `select to_regclass('public.' || $1) is not null`, table).Scan(&exists); err != nil {
+			t.Fatalf("look up table %s: %v", table, err)
+		}
+		if exists != want {
+			t.Errorf("table %s exists = %t, want %t", table, exists, want)
+		}
+	}
+}
+
+func createPendingSession(t *testing.T, ctx context.Context, repository *store.Store) *domain.PendingSession {
+	t.Helper()
+	user, license := createUserAndLicense(t, ctx, repository, "challenge@example.com")
+	challengeSHA256 := bytes.Repeat([]byte{0x5a}, 32)
+	pending, err := repository.CreatePendingSession(ctx, domain.NewPendingSession{
+		UserID:          user.ID,
+		LicenseID:       license.ID,
+		ChallengeSHA256: challengeSHA256,
+		ExpiresAt:       time.Date(2026, 8, 10, 12, 2, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("CreatePendingSession() error = %v", err)
+	}
+	if !bytes.Equal(pending.Challenge.ChallengeSHA256, challengeSHA256) {
+		t.Fatalf("stored challenge SHA-256 = %x", pending.Challenge.ChallengeSHA256)
+	}
+	return pending
+}
+
+func createUserAndLicense(t *testing.T, ctx context.Context, repository *store.Store, email string) (*domain.User, *domain.License) {
+	t.Helper()
+	user, err := repository.CreateUser(ctx, domain.NewUser{
+		Email:        email,
+		PasswordHash: "$argon2id$v=19$integration-hash",
+	})
+	if err != nil {
+		t.Fatalf("CreateUser() error = %v", err)
+	}
+	license, err := repository.CreateLicense(ctx, domain.NewLicense{
+		LicenseHMAC: "8f46bf9ec2d930aaae995b45ad6f7867ad5c8c8ef9b4b1e9c4ab325ce36af7ac",
+		UserID:      user.ID,
+		Product:     "StarLoader",
+		MaxDevices:  1,
+		ExpiresAt:   time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("CreateLicense() error = %v", err)
+	}
+	return user, license
+}
