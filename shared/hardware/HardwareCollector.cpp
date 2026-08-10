@@ -4,6 +4,7 @@
 #include "DiskReader.h"
 #include "RegistryReader.h"
 #include "SmbiosReader.h"
+#include "security/TpmIdentity.h"
 
 #include <QSysInfo>
 
@@ -48,5 +49,10 @@ HardwareIdentity HardwareCollector::collect()
     identity.machineGuid = source_->machineGuid();
     identity.cpuArchitecture = QSysInfo::currentCpuArchitecture();
     identity.hostName = QSysInfo::machineHostName();
+    if (source_ == &defaultHardwareSource()) {
+        QString error;
+        if (TpmIdentity::ensureKey(&error))
+            identity.tpmPublicKeyHash = TpmIdentity::publicKeySha256();
+    }
     return identity;
 }

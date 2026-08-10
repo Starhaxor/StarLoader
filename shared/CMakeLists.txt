@@ -7,7 +7,9 @@ add_library(DeviceIdentityShared STATIC
     hardware/SmbiosParser.cpp
     hardware/SmbiosReader.cpp
     security/Fingerprint.cpp
+    security/EcdsaSignature.cpp
     security/HardwareNormalization.cpp
+    security/TpmIdentity.cpp
 )
 
 target_include_directories(DeviceIdentityShared PUBLIC
@@ -22,6 +24,8 @@ target_link_libraries(DeviceIdentityShared PUBLIC
 if(WIN32)
     target_link_libraries(DeviceIdentityShared PRIVATE
         Advapi32
+        Bcrypt
+        Ncrypt
         Ole32
         OleAut32
         Wbemuuid
