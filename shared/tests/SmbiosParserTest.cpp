@@ -18,7 +18,7 @@ void SmbiosParserTest::parsesIdentityFieldsFromCompleteRecords()
 {
     QByteArray table;
 
-    // Type 0: use the BIOS version string as the stable BIOS identifier.
+    // Type 0 offset 0x05 is BIOS Version, not a serial number.
     table += QByteArray::fromHex("000900000001000000");
     table.append("BIOS-123", 8);
     table.append("\0\0", 2);
@@ -37,7 +37,7 @@ void SmbiosParserTest::parsesIdentityFieldsFromCompleteRecords()
 
     const auto result = SmbiosParser::parse(table);
 
-    QCOMPARE(result.biosSerial, QString("BIOS-123"));
+    QVERIFY(result.biosSerial.isEmpty());
     QCOMPARE(result.systemUuid, QString("00112233-4455-6677-8899-aabbccddeeff"));
     QCOMPARE(result.motherboardSerial, QString("BOARD-456"));
 }

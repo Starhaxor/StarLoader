@@ -1,11 +1,16 @@
 #include "DiskReader.h"
 
+#include "security/HardwareNormalization.h"
+
 #include <Windows.h>
 #include <winioctl.h>
+
+#include <QStringList>
 
 #include <algorithm>
 #include <cstddef>
 #include <cstring>
+#include <limits>
 #include <optional>
 #include <string>
 #include <vector>
@@ -58,38 +63,79 @@ QString systemDriveDevicePath()
     return QStringLiteral("\\\\.\\") + systemDrive;
 }
 
-std::optional<DWORD> systemDiskNumber(HANDLE volume)
+std::optional<DWORD> checkedExtentBufferSize(DWORD extentCount)
 {
-    std::vector<BYTE> buffer(1024);
-    for (;;) {
-        DWORD bytesReturned = 0;
-        if (DeviceIoControl(volume,
-                            IOCTL_VOLUME_GET_VOLUME_DISK_EXTENTS,
-                            nullptr,
-                            0,
-                            buffer.data(),
-                            static_cast<DWORD>(buffer.size()),
-                            &bytesReturned,
-                            nullptr)) {
-            constexpr size_t firstExtentEnd =
-                offsetof(VOLUME_DISK_EXTENTS, Extents) + sizeof(DISK_EXTENT);
-            if (bytesReturned < firstExtentEnd) {
-                return std::nullopt;
-            }
+    constexpr size_t headerSize = offsetof(VOLUME_DISK_EXTENTS, Extents);
+    constexpr size_t maxDword = std::numeric_limits<DWORD>::max();
+    if (extentCount == 0
+        || extentCount > (maxDword - headerSize) / sizeof(DISK_EXTENT)) {
+        return std::nullopt;
+    }
 
-            const auto *extents =
-                reinterpret_cast<const VOLUME_DISK_EXTENTS *>(buffer.data());
-            if (extents->NumberOfDiskExtents == 0) {
-                return std::nullopt;
-            }
-            return extents->Extents[0].DiskNumber;
-        }
+    return static_cast<DWORD>(headerSize
+                              + static_cast<size_t>(extentCount)
+                                  * sizeof(DISK_EXTENT));
+}
 
-        if (GetLastError() != ERROR_MORE_DATA || buffer.size() >= 64 * 1024) {
+std::optional<QList<quint32>> systemDiskNumbers(HANDLE volume)
+{
+    std::vector<BYTE> buffer(sizeof(VOLUME_DISK_EXTENTS), 0);
+    DWORD bytesReturned = 0;
+    const BOOL initialResult = DeviceIoControl(
+        volume,
+        IOCTL_VOLUME_GET_VOLUME_DISK_EXTENTS,
+        nullptr,
+        0,
+        buffer.data(),
+        static_cast<DWORD>(buffer.size()),
+        &bytesReturned,
+        nullptr);
+    const DWORD initialError = initialResult ? ERROR_SUCCESS : GetLastError();
+
+    const auto *initialExtents =
+        reinterpret_cast<const VOLUME_DISK_EXTENTS *>(buffer.data());
+    auto requiredSize = checkedExtentBufferSize(initialExtents->NumberOfDiskExtents);
+    if (initialResult) {
+        if (!requiredSize || bytesReturned < *requiredSize) {
             return std::nullopt;
         }
-        buffer.resize(buffer.size() * 2);
+    } else {
+        if (initialError != ERROR_MORE_DATA
+            || bytesReturned < sizeof(initialExtents->NumberOfDiskExtents)
+            || !requiredSize
+            || *requiredSize <= buffer.size()) {
+            return std::nullopt;
+        }
+
+        buffer.assign(*requiredSize, 0);
+        bytesReturned = 0;
+        if (!DeviceIoControl(volume,
+                             IOCTL_VOLUME_GET_VOLUME_DISK_EXTENTS,
+                             nullptr,
+                             0,
+                             buffer.data(),
+                             static_cast<DWORD>(buffer.size()),
+                             &bytesReturned,
+                             nullptr)) {
+            return std::nullopt;
+        }
     }
+
+    const auto *extents =
+        reinterpret_cast<const VOLUME_DISK_EXTENTS *>(buffer.data());
+    requiredSize = checkedExtentBufferSize(extents->NumberOfDiskExtents);
+    if (!requiredSize
+        || *requiredSize > buffer.size()
+        || bytesReturned < *requiredSize) {
+        return std::nullopt;
+    }
+
+    QList<quint32> diskNumbers;
+    diskNumbers.reserve(extents->NumberOfDiskExtents);
+    for (DWORD index = 0; index < extents->NumberOfDiskExtents; ++index) {
+        diskNumbers.append(extents->Extents[index].DiskNumber);
+    }
+    return diskNumbers;
 }
 
 QString diskSerial(HANDLE disk)
@@ -147,7 +193,49 @@ QString diskSerial(HANDLE disk)
     return QString::fromLatin1(serialStart, serialEnd - serialStart).trimmed();
 }
 
+class WindowsDiskSerialSource final : public IDiskSerialSource
+{
+public:
+    QString serialNumber(quint32 diskNumber) override
+    {
+        const QString diskPath =
+            QStringLiteral("\\\\.\\PhysicalDrive%1").arg(diskNumber);
+        const std::wstring nativeDiskPath = diskPath.toStdWString();
+        const Handle disk(CreateFileW(nativeDiskPath.c_str(),
+                                      0,
+                                      FILE_SHARE_READ | FILE_SHARE_WRITE,
+                                      nullptr,
+                                      OPEN_EXISTING,
+                                      0,
+                                      nullptr));
+        if (!disk.isValid()) {
+            return {};
+        }
+
+        return diskSerial(disk.get());
+    }
+};
+
 } // namespace
+
+QString DiskReader::serialSignal(QList<quint32> diskNumbers,
+                                 IDiskSerialSource &source)
+{
+    std::sort(diskNumbers.begin(), diskNumbers.end());
+    diskNumbers.erase(std::unique(diskNumbers.begin(), diskNumbers.end()),
+                      diskNumbers.end());
+
+    QStringList serials;
+    for (const quint32 diskNumber : diskNumbers) {
+        const QString serial =
+            normalizeHardwareValue(source.serialNumber(diskNumber));
+        if (!serial.isEmpty()) {
+            serials.append(serial);
+        }
+    }
+
+    return serials.join('|');
+}
 
 QString DiskReader::systemDiskSerial()
 {
@@ -168,24 +256,11 @@ QString DiskReader::systemDiskSerial()
         return {};
     }
 
-    const auto diskNumber = systemDiskNumber(volume.get());
-    if (!diskNumber) {
+    const auto diskNumbers = systemDiskNumbers(volume.get());
+    if (!diskNumbers) {
         return {};
     }
 
-    const QString diskPath =
-        QStringLiteral("\\\\.\\PhysicalDrive%1").arg(*diskNumber);
-    const std::wstring nativeDiskPath = diskPath.toStdWString();
-    const Handle disk(CreateFileW(nativeDiskPath.c_str(),
-                                  0,
-                                  FILE_SHARE_READ | FILE_SHARE_WRITE,
-                                  nullptr,
-                                  OPEN_EXISTING,
-                                  0,
-                                  nullptr));
-    if (!disk.isValid()) {
-        return {};
-    }
-
-    return diskSerial(disk.get());
+    WindowsDiskSerialSource source;
+    return serialSignal(*diskNumbers, source);
 }

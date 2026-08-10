@@ -119,12 +119,7 @@ SmbiosInfo SmbiosParser::parse(QByteArrayView rawTable)
         }
 
         const auto formatted = rawTable.sliced(recordStart, formattedLength);
-        if (type == 0 && formattedLength > 5) {
-            result.biosSerial = smbiosString(rawTable,
-                                             stringsStart,
-                                             *stringsEnd,
-                                             byteAt(formatted, 5));
-        } else if (type == 1) {
+        if (type == 1) {
             result.systemUuid = formatUuid(formatted);
         } else if (type == 2 && formattedLength > 7) {
             result.motherboardSerial = smbiosString(rawTable,

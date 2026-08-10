@@ -11,6 +11,7 @@ public:
     virtual ~IHardwareSource() = default;
 
     virtual SmbiosInfo smbiosInfo() = 0;
+    virtual QString biosSerial() = 0;
     virtual QString systemDiskSerial() = 0;
     virtual QString machineGuid() = 0;
 };

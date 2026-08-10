@@ -1,5 +1,6 @@
 add_library(DeviceIdentityShared STATIC
     DeviceIdentity.cpp
+    hardware/BiosReader.cpp
     hardware/DiskReader.cpp
     hardware/HardwareCollector.cpp
     hardware/RegistryReader.cpp
@@ -19,7 +20,12 @@ target_link_libraries(DeviceIdentityShared PUBLIC
 )
 
 if(WIN32)
-    target_link_libraries(DeviceIdentityShared PRIVATE Advapi32)
+    target_link_libraries(DeviceIdentityShared PRIVATE
+        Advapi32
+        Ole32
+        OleAut32
+        Wbemuuid
+    )
 endif()
 
 add_subdirectory(tests)

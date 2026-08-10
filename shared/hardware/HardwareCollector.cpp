@@ -1,5 +1,6 @@
 #include "HardwareCollector.h"
 
+#include "BiosReader.h"
 #include "DiskReader.h"
 #include "RegistryReader.h"
 #include "SmbiosReader.h"
@@ -12,6 +13,7 @@ class WindowsHardwareSource final : public IHardwareSource
 {
 public:
     SmbiosInfo smbiosInfo() override { return SmbiosReader::read(); }
+    QString biosSerial() override { return BiosReader::serialNumber(); }
     QString systemDiskSerial() override { return DiskReader::systemDiskSerial(); }
     QString machineGuid() override { return RegistryReader::machineGuid(); }
 };
@@ -41,7 +43,7 @@ HardwareIdentity HardwareCollector::collect()
     HardwareIdentity identity;
     identity.smbiosUuid = smbios.systemUuid;
     identity.motherboardSerial = smbios.motherboardSerial;
-    identity.biosSerial = smbios.biosSerial;
+    identity.biosSerial = source_->biosSerial();
     identity.systemDiskSerial = source_->systemDiskSerial();
     identity.machineGuid = source_->machineGuid();
     identity.cpuArchitecture = QSysInfo::currentCpuArchitecture();
