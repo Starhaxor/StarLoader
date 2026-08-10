@@ -10,6 +10,7 @@ add_library(DeviceIdentityShared STATIC
     security/EcdsaSignature.cpp
     security/HardwareNormalization.cpp
     security/TpmIdentity.cpp
+    security/TpmKeyLifecycle.cpp
 )
 
 target_include_directories(DeviceIdentityShared PUBLIC

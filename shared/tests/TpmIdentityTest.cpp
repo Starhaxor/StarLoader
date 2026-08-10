@@ -1,9 +1,75 @@
 #include "security/EcdsaSignature.h"
 #include "security/TpmIdentity.h"
+#include "security/TpmKeyLifecycle.h"
 #include "hardware/HardwareCollector.h"
 
 #include <QCryptographicHash>
 #include <QtTest>
+
+#include <initializer_list>
+#include <vector>
+
+namespace {
+
+class FakeKeyLifecycle final : public TpmIdentityDetail::KeyLifecycle
+{
+public:
+    explicit FakeKeyLifecycle(
+        std::initializer_list<TpmIdentityDetail::KeyOperationResult> opens)
+        : openResults(opens)
+    {
+    }
+
+    TpmIdentityDetail::KeyOperationResult openKey() override
+    {
+        ++openCalls;
+        if (nextOpen >= openResults.size())
+            return TpmIdentityDetail::KeyOperationResult::Failure;
+        return openResults[nextOpen++];
+    }
+
+    TpmIdentityDetail::KeyOperationResult createKey() override
+    {
+        ++createCalls;
+        return createResult;
+    }
+
+    bool configureCreatedKey() override
+    {
+        ++configureCalls;
+        return configureResult;
+    }
+
+    bool finalizeCreatedKey() override
+    {
+        ++finalizeCalls;
+        return finalizeResult;
+    }
+
+    bool validateKey() override
+    {
+        ++validateCalls;
+        return validateResult;
+    }
+
+    void deleteCreatedKey() override { ++deleteCalls; }
+
+    std::vector<TpmIdentityDetail::KeyOperationResult> openResults;
+    std::size_t nextOpen = 0;
+    TpmIdentityDetail::KeyOperationResult createResult =
+        TpmIdentityDetail::KeyOperationResult::Success;
+    bool configureResult = true;
+    bool finalizeResult = true;
+    bool validateResult = true;
+    int openCalls = 0;
+    int createCalls = 0;
+    int configureCalls = 0;
+    int finalizeCalls = 0;
+    int validateCalls = 0;
+    int deleteCalls = 0;
+};
+
+} // namespace
 
 #ifdef Q_OS_WIN
 #include <windows.h>
@@ -126,6 +192,9 @@ class TpmIdentityTest final : public QObject
 private slots:
     void verifierAcceptsValidCngP256Signature();
     void verifierRejectsWrongChallengeTamperingAndMalformedInputs();
+    void lifecycleReopensKeyAfterConcurrentCreation();
+    void lifecycleDeletesNewKeyAfterSetupFailure();
+    void lifecycleNeverDeletesPreExistingKey();
     void signatureBindsChallenge();
 };
 
@@ -164,6 +233,62 @@ void TpmIdentityTest::verifierRejectsWrongChallengeTamperingAndMalformedInputs()
 #else
     QSKIP("CNG verifier is Windows-only");
 #endif
+}
+
+void TpmIdentityTest::lifecycleReopensKeyAfterConcurrentCreation()
+{
+    using enum TpmIdentityDetail::KeyOperationResult;
+    FakeKeyLifecycle lifecycle({NotFound, Success});
+    lifecycle.createResult = AlreadyExists;
+
+    QCOMPARE(
+        TpmIdentityDetail::ensureKeyLifecycle(lifecycle),
+        TpmIdentityDetail::EnsureKeyResult::Success);
+    QCOMPARE(lifecycle.openCalls, 2);
+    QCOMPARE(lifecycle.createCalls, 1);
+    QCOMPARE(lifecycle.validateCalls, 1);
+    QCOMPARE(lifecycle.configureCalls, 0);
+    QCOMPARE(lifecycle.finalizeCalls, 0);
+    QCOMPARE(lifecycle.deleteCalls, 0);
+}
+
+void TpmIdentityTest::lifecycleDeletesNewKeyAfterSetupFailure()
+{
+    using enum TpmIdentityDetail::KeyOperationResult;
+
+    FakeKeyLifecycle configurationFailure({NotFound});
+    configurationFailure.configureResult = false;
+    QCOMPARE(
+        TpmIdentityDetail::ensureKeyLifecycle(configurationFailure),
+        TpmIdentityDetail::EnsureKeyResult::ConfigureFailed);
+    QCOMPARE(configurationFailure.deleteCalls, 1);
+
+    FakeKeyLifecycle finalizationFailure({NotFound});
+    finalizationFailure.finalizeResult = false;
+    QCOMPARE(
+        TpmIdentityDetail::ensureKeyLifecycle(finalizationFailure),
+        TpmIdentityDetail::EnsureKeyResult::FinalizeFailed);
+    QCOMPARE(finalizationFailure.deleteCalls, 1);
+
+    FakeKeyLifecycle validationFailure({NotFound});
+    validationFailure.validateResult = false;
+    QCOMPARE(
+        TpmIdentityDetail::ensureKeyLifecycle(validationFailure),
+        TpmIdentityDetail::EnsureKeyResult::ValidationFailed);
+    QCOMPARE(validationFailure.deleteCalls, 1);
+}
+
+void TpmIdentityTest::lifecycleNeverDeletesPreExistingKey()
+{
+    using enum TpmIdentityDetail::KeyOperationResult;
+    FakeKeyLifecycle lifecycle({Success});
+    lifecycle.validateResult = false;
+
+    QCOMPARE(
+        TpmIdentityDetail::ensureKeyLifecycle(lifecycle),
+        TpmIdentityDetail::EnsureKeyResult::ValidationFailed);
+    QCOMPARE(lifecycle.createCalls, 0);
+    QCOMPARE(lifecycle.deleteCalls, 0);
 }
 
 void TpmIdentityTest::signatureBindsChallenge()

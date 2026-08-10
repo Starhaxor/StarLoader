@@ -1,4 +1,5 @@
 #include "TpmIdentity.h"
+#include "TpmKeyLifecycle.h"
 
 #include <QCryptographicHash>
 
@@ -43,12 +44,22 @@ public:
 
     ~NCryptHandle()
     {
-        if (handle_)
-            NCryptFreeObject(handle_);
+        reset();
     }
 
-    Handle *put() { return &handle_; }
+    Handle *put()
+    {
+        reset();
+        return &handle_;
+    }
     Handle get() const { return handle_; }
+    Handle release() { return std::exchange(handle_, 0); }
+
+    void reset()
+    {
+        if (handle_)
+            NCryptFreeObject(std::exchange(handle_, 0));
+    }
 
 private:
     Handle handle_ = 0;
@@ -69,7 +80,7 @@ SECURITY_STATUS openProvider(ProviderHandle &provider)
     return NCryptOpenStorageProvider(provider.put(), MS_PLATFORM_CRYPTO_PROVIDER, 0);
 }
 
-SECURITY_STATUS openKey(NCRYPT_PROV_HANDLE provider, KeyHandle &key)
+SECURITY_STATUS openPersistedKey(NCRYPT_PROV_HANDLE provider, KeyHandle &key)
 {
     return NCryptOpenKey(provider, key.put(), KeyName, 0, 0);
 }
@@ -117,6 +128,94 @@ bool validateP256Key(NCRYPT_KEY_HANDLE key)
     return isP256PublicBlob(exportPublicKey(key));
 }
 
+class CngKeyLifecycle final : public TpmIdentityDetail::KeyLifecycle
+{
+public:
+    explicit CngKeyLifecycle(NCRYPT_PROV_HANDLE provider)
+        : provider_(provider)
+    {
+    }
+
+    TpmIdentityDetail::KeyOperationResult openKey() override
+    {
+        operation_ = QStringLiteral("Opening the persisted TPM identity key");
+        status_ = openPersistedKey(provider_, key_);
+        if (status_ == ERROR_SUCCESS)
+            return TpmIdentityDetail::KeyOperationResult::Success;
+        if (status_ == NTE_BAD_KEYSET)
+            return TpmIdentityDetail::KeyOperationResult::NotFound;
+        return TpmIdentityDetail::KeyOperationResult::Failure;
+    }
+
+    TpmIdentityDetail::KeyOperationResult createKey() override
+    {
+        operation_ = QStringLiteral("Creating the TPM identity key");
+        status_ = NCryptCreatePersistedKey(
+            provider_, key_.put(), NCRYPT_ECDSA_P256_ALGORITHM, KeyName, 0, 0);
+        if (status_ == ERROR_SUCCESS)
+            return TpmIdentityDetail::KeyOperationResult::Success;
+        if (status_ == NTE_EXISTS)
+            return TpmIdentityDetail::KeyOperationResult::AlreadyExists;
+        return TpmIdentityDetail::KeyOperationResult::Failure;
+    }
+
+    bool configureCreatedKey() override
+    {
+        DWORD exportPolicy = 0;
+        operation_ = QStringLiteral("Disabling TPM private-key export");
+        status_ = NCryptSetProperty(
+            key_.get(),
+            NCRYPT_EXPORT_POLICY_PROPERTY,
+            reinterpret_cast<PBYTE>(&exportPolicy),
+            sizeof(exportPolicy),
+            0);
+        if (status_ != ERROR_SUCCESS)
+            return false;
+
+        DWORD usage = NCRYPT_ALLOW_SIGNING_FLAG;
+        operation_ = QStringLiteral("Restricting TPM key usage");
+        status_ = NCryptSetProperty(
+            key_.get(),
+            NCRYPT_KEY_USAGE_PROPERTY,
+            reinterpret_cast<PBYTE>(&usage),
+            sizeof(usage),
+            0);
+        return status_ == ERROR_SUCCESS;
+    }
+
+    bool finalizeCreatedKey() override
+    {
+        operation_ = QStringLiteral("Finalizing the TPM identity key");
+        status_ = NCryptFinalizeKey(key_.get(), 0);
+        return status_ == ERROR_SUCCESS;
+    }
+
+    bool validateKey() override
+    {
+        operation_ = QStringLiteral("Validating the TPM identity key");
+        return validateP256Key(key_.get());
+    }
+
+    void deleteCreatedKey() override
+    {
+        const NCRYPT_KEY_HANDLE handle = key_.release();
+        if (!handle)
+            return;
+
+        if (NCryptDeleteKey(handle, 0) != ERROR_SUCCESS)
+            NCryptFreeObject(handle);
+    }
+
+    SECURITY_STATUS status() const { return status_; }
+    QString operation() const { return operation_; }
+
+private:
+    NCRYPT_PROV_HANDLE provider_;
+    KeyHandle key_;
+    SECURITY_STATUS status_ = ERROR_SUCCESS;
+    QString operation_;
+};
+
 } // namespace
 #endif
 
@@ -141,61 +240,17 @@ bool TpmIdentity::ensureKey(QString *error)
         return false;
     }
 
-    KeyHandle key;
-    status = openKey(provider.get(), key);
-    if (status == ERROR_SUCCESS) {
-        if (!validateP256Key(key.get())) {
-            setError(error, QStringLiteral("The persisted TPM identity key is not ECDSA P-256."));
-            return false;
-        }
+    CngKeyLifecycle lifecycle(provider.get());
+    const TpmIdentityDetail::EnsureKeyResult result =
+        TpmIdentityDetail::ensureKeyLifecycle(lifecycle);
+    if (result == TpmIdentityDetail::EnsureKeyResult::Success)
         return true;
-    }
-    if (status != NTE_BAD_KEYSET) {
-        setError(error, cngFailure(QStringLiteral("Opening the persisted TPM identity key"), status));
-        return false;
-    }
-
-    status = NCryptCreatePersistedKey(
-        provider.get(), key.put(), NCRYPT_ECDSA_P256_ALGORITHM, KeyName, 0, 0);
-    if (status != ERROR_SUCCESS) {
-        setError(error, cngFailure(QStringLiteral("Creating the TPM identity key"), status));
-        return false;
-    }
-
-    DWORD exportPolicy = 0;
-    status = NCryptSetProperty(
-        key.get(),
-        NCRYPT_EXPORT_POLICY_PROPERTY,
-        reinterpret_cast<PBYTE>(&exportPolicy),
-        sizeof(exportPolicy),
-        0);
-    if (status != ERROR_SUCCESS) {
-        setError(error, cngFailure(QStringLiteral("Disabling TPM private-key export"), status));
-        return false;
-    }
-
-    DWORD usage = NCRYPT_ALLOW_SIGNING_FLAG;
-    status = NCryptSetProperty(
-        key.get(),
-        NCRYPT_KEY_USAGE_PROPERTY,
-        reinterpret_cast<PBYTE>(&usage),
-        sizeof(usage),
-        0);
-    if (status != ERROR_SUCCESS) {
-        setError(error, cngFailure(QStringLiteral("Restricting TPM key usage"), status));
-        return false;
-    }
-
-    status = NCryptFinalizeKey(key.get(), 0);
-    if (status != ERROR_SUCCESS) {
-        setError(error, cngFailure(QStringLiteral("Finalizing the TPM identity key"), status));
-        return false;
-    }
-    if (!validateP256Key(key.get())) {
+    if (result == TpmIdentityDetail::EnsureKeyResult::ValidationFailed) {
         setError(error, QStringLiteral("The new TPM identity key is not ECDSA P-256."));
         return false;
     }
-    return true;
+    setError(error, cngFailure(lifecycle.operation(), lifecycle.status()));
+    return false;
 #else
     setError(error, QStringLiteral("TPM identity is available only on Windows."));
     return false;
@@ -210,7 +265,7 @@ QByteArray TpmIdentity::publicKeyBlob()
         return {};
 
     KeyHandle key;
-    if (openKey(provider.get(), key) != ERROR_SUCCESS)
+    if (openPersistedKey(provider.get(), key) != ERROR_SUCCESS)
         return {};
 
     const QByteArray blob = exportPublicKey(key.get());
@@ -247,7 +302,7 @@ QByteArray TpmIdentity::signChallenge(QByteArrayView challenge, QString *error)
     }
 
     KeyHandle key;
-    status = openKey(provider.get(), key);
+    status = openPersistedKey(provider.get(), key);
     if (status != ERROR_SUCCESS) {
         setError(error, cngFailure(QStringLiteral("Opening the persisted TPM identity key"), status));
         return {};
