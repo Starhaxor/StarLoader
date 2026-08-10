@@ -3,6 +3,7 @@ add_library(DeviceIdentityShared STATIC
     hardware/BiosReader.cpp
     hardware/DiskReader.cpp
     hardware/HardwareCollector.cpp
+    hardware/HardwareJson.cpp
     hardware/RegistryReader.cpp
     hardware/SmbiosParser.cpp
     hardware/SmbiosReader.cpp
