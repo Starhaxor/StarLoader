@@ -40,9 +40,9 @@ Yönetim komutları:
 - `server admin create-user`: email ve güvenli biçimde alınan parola ile kullanıcı oluşturur.
 - `server admin create-license`: kullanıcı, ürün, süre ve cihaz limiti için kriptografik rastgele lisans üretir. Açık anahtar yalnızca bir kez stdout'a yazılır.
 
-### `deploy` ve `server-contract`
+### `deploy`, `backend/migrations` ve `server-contract`
 
-`deploy` yerel PostgreSQL Docker Compose tanımını ve örnek ortam ayarlarını içerir. `server-contract` sürümlü SQL migration'larını ve Qt/Go arasında paylaşılan API sözleşmesini içerir.
+`deploy` yerel PostgreSQL Docker Compose tanımını ve örnek ortam ayarlarını içerir. `backend/migrations` Go binary'sine gömülen sürümlü SQL migration'larını, `server-contract` ise Qt/Go arasında paylaşılan API sözleşmesini içerir.
 
 ## Donanım Kimliği
 
