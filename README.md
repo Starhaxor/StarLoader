@@ -149,6 +149,8 @@ docker run --rm --add-host host.docker.internal:host-gateway --env-file .env -v 
 
 `migrate down` drops the StarLoader schema objects and destroys application data. Use it only for disposable development/test databases or after a verified backup.
 
+Applied versions are recorded in `schema_migrations`. `migrate up` takes a PostgreSQL advisory transaction lock, applies only pending versions, and is safe to run repeatedly or from concurrent deployment jobs.
+
 ### 4. Create a user
 
 Interactive mode hides the password:

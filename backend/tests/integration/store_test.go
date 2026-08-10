@@ -535,6 +535,57 @@ func TestMigrationDownAndUp(t *testing.T) {
 	assertTablesExist(t, ctx, pool, true)
 }
 
+func TestMigrationUpIsIdempotentAndTracked(t *testing.T) {
+	ctx := context.Background()
+	pool := openTestPool(t, ctx)
+	if _, err := pool.Exec(ctx, "drop schema public cascade; create schema public"); err != nil {
+		t.Fatalf("reset schema: %v", err)
+	}
+	if err := store.MigrateUp(ctx, pool); err != nil {
+		t.Fatalf("first MigrateUp() error = %v", err)
+	}
+	if err := store.MigrateUp(ctx, pool); err != nil {
+		t.Fatalf("second MigrateUp() error = %v", err)
+	}
+	var applied int
+	if err := pool.QueryRow(ctx, `select count(*) from schema_migrations where version = 1`).Scan(&applied); err != nil {
+		t.Fatalf("read schema migration version: %v", err)
+	}
+	if applied != 1 {
+		t.Fatalf("applied migration rows = %d, want 1", applied)
+	}
+}
+
+func TestConcurrentMigrationUpIsSerialized(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	pool := openTestPool(t, ctx)
+	if _, err := pool.Exec(ctx, "drop schema public cascade; create schema public"); err != nil {
+		t.Fatalf("reset schema: %v", err)
+	}
+	start := make(chan struct{})
+	results := make(chan error, 2)
+	for range 2 {
+		go func() {
+			<-start
+			results <- store.MigrateUp(ctx, pool)
+		}()
+	}
+	close(start)
+	for range 2 {
+		if err := <-results; err != nil {
+			t.Fatalf("concurrent MigrateUp() error = %v", err)
+		}
+	}
+	var applied int
+	if err := pool.QueryRow(ctx, `select count(*) from schema_migrations where version = 1`).Scan(&applied); err != nil {
+		t.Fatal(err)
+	}
+	if applied != 1 {
+		t.Fatalf("applied migration rows = %d, want 1", applied)
+	}
+}
+
 func TestConcurrentChallengeConsumptionHasExactlyOneConsumer(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
