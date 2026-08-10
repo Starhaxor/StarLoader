@@ -1,9 +1,14 @@
 package main
 
 import (
+	"bufio"
 	"context"
+	"crypto/ed25519"
+	cryptorand "crypto/rand"
+	"encoding/base64"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -15,7 +20,9 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/starloader/backend/internal/admin"
 	"github.com/starloader/backend/internal/config"
+	"github.com/starloader/backend/internal/domain"
 	"github.com/starloader/backend/internal/httpapi"
 	"github.com/starloader/backend/internal/security"
 	"github.com/starloader/backend/internal/service"
@@ -30,6 +37,81 @@ func main() {
 }
 
 func run() error {
+	mode, args, err := parseCommand(os.Args[1:])
+	if err != nil {
+		return err
+	}
+	switch mode {
+	case commandServe:
+		return runServer()
+	case commandMigrate:
+		return runMigration(args[0])
+	case commandAdmin:
+		return runAdmin(args)
+	case commandKeygen:
+		return generateSigningKeys(os.Stdout, cryptorand.Reader)
+	default:
+		return errors.New("unsupported command")
+	}
+}
+
+type commandMode string
+
+const (
+	commandServe   commandMode = "serve"
+	commandMigrate commandMode = "migrate"
+	commandAdmin   commandMode = "admin"
+	commandKeygen  commandMode = "keygen"
+)
+
+func parseCommand(args []string) (commandMode, []string, error) {
+	if len(args) == 0 {
+		return commandServe, nil, nil
+	}
+	switch args[0] {
+	case "serve":
+		if len(args) != 1 {
+			return "", nil, errors.New("serve does not accept arguments")
+		}
+		return commandServe, nil, nil
+	case "migrate":
+		if len(args) != 2 || (args[1] != "up" && args[1] != "down") {
+			return "", nil, errors.New("usage: server migrate up|down")
+		}
+		return commandMigrate, args[1:], nil
+	case "admin":
+		if len(args) < 2 {
+			return "", nil, errors.New("usage: server admin create-user|create-license [options]")
+		}
+		return commandAdmin, args[1:], nil
+	case "keygen":
+		if len(args) != 1 {
+			return "", nil, errors.New("keygen does not accept arguments")
+		}
+		return commandKeygen, nil, nil
+	default:
+		return "", nil, errors.New("usage: server [serve|migrate up|migrate down|admin ...|keygen]")
+	}
+}
+
+func generateSigningKeys(output io.Writer, random io.Reader) error {
+	if output == nil || random == nil {
+		return errors.New("key generation dependencies are required")
+	}
+	seed := make([]byte, ed25519.SeedSize)
+	if _, err := io.ReadFull(random, seed); err != nil {
+		return fmt.Errorf("generate signing key: %w", err)
+	}
+	privateKey := ed25519.NewKeyFromSeed(seed)
+	publicKey := privateKey.Public().(ed25519.PublicKey)
+	if _, err := fmt.Fprintf(output, "ED25519_PRIVATE_KEY=%s\nSTARLOADER_ED25519_PUBLIC_KEY=%s\n",
+		base64.StdEncoding.EncodeToString(seed), base64.StdEncoding.EncodeToString(publicKey)); err != nil {
+		return fmt.Errorf("write signing keys: %w", err)
+	}
+	return nil
+}
+
+func runServer() error {
 	configuration, err := config.Load()
 	if err != nil {
 		return fmt.Errorf("configuration error: %w", err)
@@ -97,6 +179,118 @@ func run() error {
 		return fmt.Errorf("server stopped: %w", err)
 	}
 	return nil
+}
+
+func runMigration(action string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	pool, err := openDatabase(ctx)
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+	if action == "up" {
+		err = store.MigrateUp(ctx, pool)
+	} else {
+		err = store.MigrateDown(ctx, pool)
+	}
+	if err != nil {
+		return fmt.Errorf("migration %s failed: %w", action, err)
+	}
+	log.Printf("migration %s completed", action)
+	return nil
+}
+
+func runAdmin(args []string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	pool, err := openDatabase(ctx)
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+	repository := store.New(pool)
+	licenseHMACKey := strings.TrimSpace(os.Getenv("LICENSE_HMAC_KEY"))
+	if args[0] == "create-license" && licenseHMACKey == "" {
+		return errors.New("configuration error: LICENSE_HMAC_KEY is not set")
+	}
+	passwordReader := admin.PasswordReader(admin.ReadPasswordFromTerminal)
+	if hasArgument(args, "--password-stdin") {
+		scanner := bufio.NewScanner(os.Stdin)
+		passwordReader = func() (string, error) {
+			if !scanner.Scan() {
+				if err := scanner.Err(); err != nil {
+					return "", err
+				}
+				return "", errors.New("password input ended unexpectedly")
+			}
+			return scanner.Text(), nil
+		}
+	}
+	return admin.Run(
+		ctx,
+		args,
+		os.Stdout,
+		adminUserRepository{store: repository},
+		adminLicenseRepository{store: repository, hmacKey: []byte(licenseHMACKey)},
+		passwordReader,
+		cryptorand.Reader,
+		time.Now,
+	)
+}
+
+func hasArgument(args []string, wanted string) bool {
+	for _, argument := range args {
+		if argument == wanted {
+			return true
+		}
+	}
+	return false
+}
+
+func openDatabase(ctx context.Context) (*pgxpool.Pool, error) {
+	databaseURL := strings.TrimSpace(os.Getenv("DATABASE_URL"))
+	if databaseURL == "" {
+		return nil, errors.New("configuration error: DATABASE_URL is not set")
+	}
+	pool, err := pgxpool.New(ctx, databaseURL)
+	if err != nil {
+		return nil, errors.New("database configuration failed")
+	}
+	if err := pool.Ping(ctx); err != nil {
+		pool.Close()
+		return nil, errors.New("database connection failed")
+	}
+	return pool, nil
+}
+
+type adminUserRepository struct {
+	store *store.Store
+}
+
+func (repository adminUserRepository) CreateUser(ctx context.Context, email, passwordHash string) error {
+	_, err := repository.store.CreateUser(ctx, domain.NewUser{Email: email, PasswordHash: passwordHash})
+	return err
+}
+
+type adminLicenseRepository struct {
+	store   *store.Store
+	hmacKey []byte
+}
+
+func (repository adminLicenseRepository) CreateLicense(ctx context.Context, normalized, userEmail, product string, expiresAt time.Time, maxDevices int) error {
+	user, err := repository.store.FindUserByEmail(ctx, userEmail)
+	if err != nil {
+		return err
+	}
+	_, err = repository.store.CreateLicense(ctx, domain.NewLicense{
+		LicenseHMAC: security.HMACHex(repository.hmacKey, normalized),
+		UserID:      user.ID,
+		Product:     product,
+		MaxDevices:  maxDevices,
+		ExpiresAt:   expiresAt,
+	})
+	return err
 }
 
 func newHTTPServer(address string, handler http.Handler, applicationCtx context.Context) *http.Server {

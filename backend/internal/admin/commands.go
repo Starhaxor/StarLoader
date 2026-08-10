@@ -57,6 +57,7 @@ func createUser(ctx context.Context, args []string, users UserRepository, readPa
 	flags := flag.NewFlagSet("create-user", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	email := flags.String("email", "", "user email")
+	flags.Bool("password-stdin", false, "read password and confirmation from standard input")
 	if err := flags.Parse(args); err != nil {
 		return fmt.Errorf("parse create-user flags: %w", err)
 	}

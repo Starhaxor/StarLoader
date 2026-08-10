@@ -26,6 +26,22 @@ func TestCreateUserHashesPasswordBeforeStoring(t *testing.T) {
 	}
 }
 
+func TestCreateUserAcceptsPasswordStdinFlag(t *testing.T) {
+	repository := &fakeUsers{}
+	passwords := []string{"correct horse battery staple", "correct horse battery staple"}
+	err := Run(context.Background(), []string{"create-user", "--email", "user@example.com", "--password-stdin"}, &bytes.Buffer{}, repository, nil, func() (string, error) {
+		password := passwords[0]
+		passwords = passwords[1:]
+		return password, nil
+	}, nil, time.Now)
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if repository.passwordHash == "" {
+		t.Fatal("password hash was not persisted")
+	}
+}
+
 func TestCreateLicensePrintsPlaintextOnlyAfterRepositorySuccess(t *testing.T) {
 	repository := &fakeLicenses{}
 	var output bytes.Buffer

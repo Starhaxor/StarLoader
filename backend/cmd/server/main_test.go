@@ -1,7 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"crypto/ed25519"
+	"encoding/base64"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +15,70 @@ import (
 	"github.com/starloader/backend/internal/httpapi"
 	"github.com/starloader/backend/internal/service"
 )
+
+func TestParseCommand(t *testing.T) {
+	tests := []struct {
+		name     string
+		args     []string
+		wantMode commandMode
+		wantArgs []string
+		wantErr  bool
+	}{
+		{name: "default serve", wantMode: commandServe},
+		{name: "explicit serve", args: []string{"serve"}, wantMode: commandServe},
+		{name: "migrate up", args: []string{"migrate", "up"}, wantMode: commandMigrate, wantArgs: []string{"up"}},
+		{name: "admin command", args: []string{"admin", "create-user", "--email", "user@example.com"}, wantMode: commandAdmin, wantArgs: []string{"create-user", "--email", "user@example.com"}},
+		{name: "key generation", args: []string{"keygen"}, wantMode: commandKeygen},
+		{name: "missing migrate action", args: []string{"migrate"}, wantErr: true},
+		{name: "missing admin action", args: []string{"admin"}, wantErr: true},
+		{name: "unknown command", args: []string{"unknown"}, wantErr: true},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			mode, args, err := parseCommand(test.args)
+			if test.wantErr {
+				if err == nil {
+					t.Fatal("parseCommand() error = nil, want error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parseCommand() error = %v", err)
+			}
+			if mode != test.wantMode {
+				t.Fatalf("parseCommand() mode = %q, want %q", mode, test.wantMode)
+			}
+			if strings.Join(args, "\x00") != strings.Join(test.wantArgs, "\x00") {
+				t.Fatalf("parseCommand() args = %q, want %q", args, test.wantArgs)
+			}
+		})
+	}
+}
+
+func TestGenerateSigningKeysWritesMatchingBase64Keys(t *testing.T) {
+	var output bytes.Buffer
+	random := bytes.NewReader(bytes.Repeat([]byte{0x42}, 32))
+	if err := generateSigningKeys(&output, random); err != nil {
+		t.Fatalf("generateSigningKeys() error = %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(output.String()), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("output lines = %d, want 2", len(lines))
+	}
+	privateSeed, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(lines[0], "ED25519_PRIVATE_KEY="))
+	if err != nil || len(privateSeed) != 32 {
+		t.Fatalf("private seed is invalid: length=%d error=%v", len(privateSeed), err)
+	}
+	publicKey, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(lines[1], "STARLOADER_ED25519_PUBLIC_KEY="))
+	if err != nil || len(publicKey) != 32 {
+		t.Fatalf("public key is invalid: length=%d error=%v", len(publicKey), err)
+	}
+	expectedPublicKey := ed25519.NewKeyFromSeed(privateSeed).Public().(ed25519.PublicKey)
+	if !bytes.Equal(publicKey, expectedPublicKey) {
+		t.Fatal("generated public key does not match the private seed")
+	}
+}
 
 func TestApplicationContextCancellationStopsActiveLoginHandler(t *testing.T) {
 	applicationCtx, cancelApplication := context.WithCancel(context.Background())
