@@ -246,7 +246,7 @@ The script creates an isolated PostgreSQL 17 container, then runs:
 The temporary database container is removed in a `finally` block. Override its host port if necessary:
 
 ```powershell
-.\scripts\test-all.ps1 -PostgresPort 55435
+.\scripts\test-all.ps1 -PostgresPort 55435 -ApiPort 58081
 ```
 
 ## API contract

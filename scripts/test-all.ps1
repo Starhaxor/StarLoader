@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
-    [int]$PostgresPort = 55434
+    [int]$PostgresPort = 55434,
+    [int]$ApiPort = 58080
 )
 
 $ErrorActionPreference = 'Stop'
@@ -8,6 +9,7 @@ Set-StrictMode -Version Latest
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $databaseContainer = 'starloader-verification-db'
+$apiContainer = 'starloader-verification-api'
 $databasePassword = 'starloader-verification-password'
 $databaseURL = "postgres://starloader:$databasePassword@host.docker.internal:$PostgresPort/starloader_test?sslmode=disable"
 $qtRoot = 'C:\Qt\6.11.1\mingw_64'
@@ -29,12 +31,13 @@ function Invoke-Checked {
 }
 
 function Remove-VerificationContainer {
-    $containerId = & docker ps -aq --filter "name=^/${databaseContainer}$"
+    param([string]$Name)
+    $containerId = & docker ps -aq --filter "name=^/${Name}$"
     if ($LASTEXITCODE -ne 0) {
         throw 'Could not inspect Docker verification containers.'
     }
     if ($containerId) {
-        Invoke-Checked docker rm -f $databaseContainer | Out-Null
+        Invoke-Checked docker rm -f $Name | Out-Null
     }
 }
 
@@ -44,7 +47,8 @@ if (-not (Test-Path -LiteralPath $cmake) -or -not (Test-Path -LiteralPath $ctest
 
 Push-Location $repoRoot
 try {
-    Remove-VerificationContainer
+    Remove-VerificationContainer -Name $apiContainer
+    Remove-VerificationContainer -Name $databaseContainer
     Invoke-Checked docker run -d --name $databaseContainer `
         -e POSTGRES_DB=starloader_test `
         -e POSTGRES_USER=starloader `
@@ -84,6 +88,7 @@ try {
         throw 'Generated signing keys were not returned.'
     }
     $publicKey = $publicKeyLine.Substring('STARLOADER_ED25519_PUBLIC_KEY='.Length)
+    $privateKey = $privateKeyLine.Substring('ED25519_PRIVATE_KEY='.Length)
 
     Invoke-Checked docker run --rm --add-host host.docker.internal:host-gateway `
         -e "DATABASE_URL=$databaseURL" `
@@ -108,6 +113,47 @@ try {
     if ($LASTEXITCODE -ne 0 -or $licenseOutput -notmatch '^[0-9A-F]{8}(?:-[0-9A-F]{8}){3}$') {
         throw 'Administrative license creation failed.'
     }
+    $licenseKey = ([string]$licenseOutput).Trim()
+
+    Invoke-Checked docker run -d --name $apiContainer --add-host host.docker.internal:host-gateway `
+        -e "DATABASE_URL=$databaseURL" `
+        -e LICENSE_HMAC_KEY=verification-license-hmac-key `
+        -e HARDWARE_HMAC_KEY=verification-hardware-hmac-key `
+        -e "ED25519_PRIVATE_KEY=$privateKey" `
+        -e LICENSE_ISSUER=starloader -e LICENSE_AUDIENCE=starloader-client `
+        -e PRODUCT=StarLoader -e SERVER_ADDR=:8080 `
+        -p "127.0.0.1:${ApiPort}:8080" `
+        -v "${repoRoot}:/workspace" -w /workspace/backend `
+        golang:1.24 go run ./cmd/server serve
+
+    $apiReady = $false
+    for ($attempt = 0; $attempt -lt 120; $attempt++) {
+        try {
+            $health = Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:${ApiPort}/healthz" -TimeoutSec 1
+            if ($health.StatusCode -eq 200) {
+                $apiReady = $true
+                break
+            }
+        }
+        catch {
+            Start-Sleep -Milliseconds 500
+        }
+    }
+    if (-not $apiReady) {
+        & docker logs $apiContainer
+        throw 'Production server verification container did not become ready.'
+    }
+
+    Invoke-Checked docker run --rm --add-host host.docker.internal:host-gateway `
+        -e "STARLOADER_SMOKE_BASE_URL=http://host.docker.internal:${ApiPort}" `
+        -e STARLOADER_SMOKE_EMAIL=verification@example.com `
+        -e STARLOADER_SMOKE_PASSWORD=verification-password `
+        -e "STARLOADER_SMOKE_LICENSE=$licenseKey" `
+        -e "STARLOADER_SMOKE_ED25519_PUBLIC_KEY=$publicKey" `
+        -v "${repoRoot}:/workspace" -w /workspace/backend `
+        golang:1.24 go test ./tests/blackbox -run TestProductionServerLoginDeviceAndReplay -count=1 -v
+
+    Remove-VerificationContainer -Name $apiContainer
 
     $env:Path = "C:\Qt\Tools\mingw1310_64\bin;C:\Qt\6.11.1\mingw_64\bin;C:\Qt\Tools\Ninja;C:\Qt\Tools\mingw1310_64\opt\bin;$env:Path"
     Invoke-Checked $cmake -S $repoRoot -B $buildDirectory -G Ninja `
@@ -122,5 +168,6 @@ try {
 }
 finally {
     Pop-Location
-    Remove-VerificationContainer
+    Remove-VerificationContainer -Name $apiContainer
+    Remove-VerificationContainer -Name $databaseContainer
 }
