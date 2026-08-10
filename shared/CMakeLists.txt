@@ -1,5 +1,7 @@
 add_library(DeviceIdentityShared STATIC
     DeviceIdentity.cpp
+    security/Fingerprint.cpp
+    security/HardwareNormalization.cpp
 )
 
 target_include_directories(DeviceIdentityShared PUBLIC

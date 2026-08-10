@@ -1,14 +1,15 @@
 qt_add_executable(SharedTests
-    BuildSmokeTest.cpp
+    FingerprintTest.cpp
 )
 
 target_link_libraries(SharedTests PRIVATE
+    DeviceIdentityShared
     Qt6::Core
     Qt6::Test
 )
 
-add_test(NAME SharedTests COMMAND SharedTests)
+add_test(NAME FingerprintTest COMMAND SharedTests)
 
-set_tests_properties(SharedTests PROPERTIES
+set_tests_properties(FingerprintTest PROPERTIES
     ENVIRONMENT "PATH=$<TARGET_FILE_DIR:Qt6::Core>\\;$ENV{PATH}"
 )
