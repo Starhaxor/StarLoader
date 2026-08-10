@@ -12,7 +12,7 @@ import (
 const licenseColumns = `id::text, license_hmac, user_id::text, product, status, max_devices, expires_at, created_at, updated_at`
 
 func (s *Store) CreateLicense(ctx context.Context, input domain.NewLicense) (*domain.License, error) {
-	row := s.pool.QueryRow(ctx, `
+	row := s.db.QueryRow(ctx, `
 		insert into licenses (license_hmac, user_id, product, max_devices, expires_at)
 		values ($1, $2, $3, $4, $5)
 		returning `+licenseColumns,
@@ -25,7 +25,7 @@ func (s *Store) CreateLicense(ctx context.Context, input domain.NewLicense) (*do
 }
 
 func (s *Store) FindLicenseByHMAC(ctx context.Context, licenseHMAC string) (*domain.License, error) {
-	license, err := scanLicense(s.pool.QueryRow(ctx, `select `+licenseColumns+` from licenses where license_hmac = $1`, licenseHMAC))
+	license, err := scanLicense(s.db.QueryRow(ctx, `select `+licenseColumns+` from licenses where license_hmac = $1`, licenseHMAC))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, domain.ErrLicenseNotFound
 	}

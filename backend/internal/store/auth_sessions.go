@@ -4,14 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/starloader/backend/internal/domain"
 )
 
 func (s *Store) CreatePendingSession(ctx context.Context, input domain.NewPendingSession) (*domain.PendingSession, error) {
-	row := s.pool.QueryRow(ctx, `
+	row := s.db.QueryRow(ctx, `
 		with new_session as (
 			insert into auth_sessions (user_id, license_id, expires_at)
 			values ($1, $2, $3)
@@ -44,22 +43,6 @@ type LockedChallenge struct {
 	tx        pgx.Tx
 }
 
-func (c *LockedChallenge) Consume(ctx context.Context, consumedAt time.Time) error {
-	instant := consumedAt.UTC()
-	tag, err := c.tx.Exec(ctx, `
-		update device_challenges
-		set consumed_at = $2
-		where id = $1 and consumed_at is null`, c.Challenge.ID, instant)
-	if err != nil {
-		return fmt.Errorf("consume challenge: %w", err)
-	}
-	if tag.RowsAffected() != 1 {
-		return domain.ErrChallengeConsumed
-	}
-	c.Challenge.ConsumedAt = &instant
-	return nil
-}
-
 // WithLockedChallenge serializes access to one session and challenge with
 // SELECT FOR UPDATE. The callback and all LockedChallenge mutations commit or
 // roll back as a unit.
@@ -67,7 +50,7 @@ func (s *Store) WithLockedChallenge(ctx context.Context, sessionID string, fn fu
 	if fn == nil {
 		return errors.New("locked challenge callback is required")
 	}
-	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := s.db.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return fmt.Errorf("begin locked challenge transaction: %w", err)
 	}
@@ -79,7 +62,7 @@ func (s *Store) WithLockedChallenge(ctx context.Context, sessionID string, fn fu
 	}()
 
 	locked, err := scanLockedChallenge(tx.QueryRow(ctx, `
-		select
+		select /* starloader:with-locked-challenge */
 			s.id::text, s.user_id::text, s.license_id::text, s.status, s.expires_at, s.created_at, s.updated_at,
 			c.id::text, c.session_id::text, c.challenge_sha256, c.expires_at, c.consumed_at, c.created_at
 		from auth_sessions s
@@ -92,8 +75,21 @@ func (s *Store) WithLockedChallenge(ctx context.Context, sessionID string, fn fu
 	if err != nil {
 		return fmt.Errorf("lock challenge: %w", err)
 	}
+	if locked.Challenge.ConsumedAt != nil {
+		return domain.ErrChallengeConsumed
+	}
 	if err := fn(locked); err != nil {
 		return err
+	}
+	tag, err := tx.Exec(ctx, `
+		update device_challenges
+		set consumed_at = now()
+		where id = $1 and consumed_at is null`, locked.Challenge.ID)
+	if err != nil {
+		return fmt.Errorf("consume challenge: %w", err)
+	}
+	if tag.RowsAffected() != 1 {
+		return domain.ErrChallengeConsumed
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit locked challenge transaction: %w", err)

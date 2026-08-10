@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
@@ -211,41 +212,67 @@ func TestMigrationDownAndUp(t *testing.T) {
 }
 
 func TestConcurrentChallengeConsumptionHasExactlyOneConsumer(t *testing.T) {
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
 	pool := openTestPool(t, ctx)
 	resetAndMigrate(t, ctx, pool)
 	repository := store.New(pool)
 	pending := createPendingSession(t, ctx, repository)
 
-	firstLocked := make(chan struct{})
-	releaseFirst := make(chan struct{})
-	results := make(chan error, 2)
-	consume := func(holdLock bool) {
-		results <- repository.WithLockedChallenge(ctx, pending.Session.ID, func(locked *store.LockedChallenge) error {
-			if locked.Challenge.ConsumedAt != nil {
-				return domain.ErrChallengeConsumed
-			}
-			if holdLock {
-				close(firstLocked)
-				<-releaseFirst
-			}
-			return locked.Consume(ctx, time.Date(2026, 8, 10, 12, 1, 0, 0, time.UTC))
-		})
+	firstConn, err := pool.Acquire(ctx)
+	if err != nil {
+		t.Fatalf("acquire first connection: %v", err)
+	}
+	defer firstConn.Release()
+	secondConn, err := pool.Acquire(ctx)
+	if err != nil {
+		t.Fatalf("acquire second connection: %v", err)
+	}
+	defer secondConn.Release()
+	firstRepository := store.New(firstConn)
+	secondRepository := store.New(secondConn)
+
+	var secondBackendPID int
+	if err := secondConn.QueryRow(ctx, `select pg_backend_pid()`).Scan(&secondBackendPID); err != nil {
+		t.Fatalf("read second backend PID: %v", err)
 	}
 
-	go consume(true)
-	<-firstLocked
-	go consume(false)
+	firstLocked := make(chan struct{})
+	releaseFirst := make(chan struct{})
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(releaseFirst) }) }
+	defer release()
+	secondStarted := make(chan struct{})
+	secondCallbackRan := make(chan struct{}, 1)
+	results := make(chan error, 2)
+	go func() {
+		results <- firstRepository.WithLockedChallenge(ctx, pending.Session.ID, func(*store.LockedChallenge) error {
+			close(firstLocked)
+			select {
+			case <-releaseFirst:
+				return nil
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		})
+	}()
+	waitForSignal(t, ctx, firstLocked, "first callback to acquire the challenge lock")
 
-	// Keep the first transaction open long enough for the second transaction
-	// to reach the same SELECT FOR UPDATE and block on its row lock.
-	time.Sleep(150 * time.Millisecond)
-	close(releaseFirst)
+	go func() {
+		close(secondStarted)
+		results <- secondRepository.WithLockedChallenge(ctx, pending.Session.ID, func(*store.LockedChallenge) error {
+			secondCallbackRan <- struct{}{}
+			return nil
+		})
+	}()
+	waitForSignal(t, ctx, secondStarted, "second transaction to start")
+	waitForBackendLock(t, ctx, pool, secondBackendPID)
+	release()
 
 	succeeded := 0
 	consumed := 0
 	for range 2 {
-		err := <-results
+		err := receiveResult(t, ctx, results)
 		switch {
 		case err == nil:
 			succeeded++
@@ -258,6 +285,12 @@ func TestConcurrentChallengeConsumptionHasExactlyOneConsumer(t *testing.T) {
 	if succeeded != 1 || consumed != 1 {
 		t.Fatalf("challenge results: succeeded=%d consumed=%d", succeeded, consumed)
 	}
+	select {
+	case <-secondCallbackRan:
+		t.Fatal("second callback ran after the first transaction consumed the challenge")
+	default:
+	}
+	assertChallengeConsumedAfterCreation(t, ctx, pool, pending.Challenge)
 }
 
 func TestWithLockedChallengeRollsBackCallbackFailure(t *testing.T) {
@@ -268,25 +301,59 @@ func TestWithLockedChallengeRollsBackCallbackFailure(t *testing.T) {
 	pending := createPendingSession(t, ctx, repository)
 	callbackErr := errors.New("verification failed")
 
-	err := repository.WithLockedChallenge(ctx, pending.Session.ID, func(locked *store.LockedChallenge) error {
-		if err := locked.Consume(ctx, time.Date(2026, 8, 10, 12, 1, 0, 0, time.UTC)); err != nil {
-			return err
-		}
+	err := repository.WithLockedChallenge(ctx, pending.Session.ID, func(*store.LockedChallenge) error {
 		return callbackErr
 	})
 	if !errors.Is(err, callbackErr) {
 		t.Fatalf("WithLockedChallenge() error = %v, want %v", err, callbackErr)
 	}
 
+	var consumedAt *time.Time
+	if err := pool.QueryRow(ctx, `select consumed_at from device_challenges where id = $1`, pending.Challenge.ID).Scan(&consumedAt); err != nil {
+		t.Fatalf("read rolled-back consumed_at: %v", err)
+	}
+	if consumedAt != nil {
+		t.Fatalf("failed callback persisted consumed_at %s", consumedAt)
+	}
+
 	err = repository.WithLockedChallenge(ctx, pending.Session.ID, func(locked *store.LockedChallenge) error {
 		if locked.Challenge.ConsumedAt != nil {
 			return domain.ErrChallengeConsumed
 		}
-		return locked.Consume(ctx, time.Date(2026, 8, 10, 12, 2, 0, 0, time.UTC))
+		return nil
 	})
 	if err != nil {
 		t.Fatalf("second WithLockedChallenge() error = %v", err)
 	}
+	assertChallengeConsumedAfterCreation(t, ctx, pool, pending.Challenge)
+}
+
+func TestSuccessfulLockedChallengeCallbackAlwaysConsumes(t *testing.T) {
+	ctx := context.Background()
+	pool := openTestPool(t, ctx)
+	resetAndMigrate(t, ctx, pool)
+	repository := store.New(pool)
+	pending := createPendingSession(t, ctx, repository)
+
+	if err := repository.WithLockedChallenge(ctx, pending.Session.ID, func(*store.LockedChallenge) error {
+		return nil
+	}); err != nil {
+		t.Fatalf("first WithLockedChallenge() error = %v", err)
+	}
+
+	callbackCalled := false
+	err := repository.WithLockedChallenge(ctx, pending.Session.ID, func(*store.LockedChallenge) error {
+		callbackCalled = true
+		return nil
+	})
+	if !errors.Is(err, domain.ErrChallengeConsumed) {
+		t.Fatalf("second WithLockedChallenge() error = %v, want %v", err, domain.ErrChallengeConsumed)
+	}
+	if callbackCalled {
+		t.Fatal("callback ran for an already-consumed challenge")
+	}
+
+	assertChallengeConsumedAfterCreation(t, ctx, pool, pending.Challenge)
 }
 
 func openTestPool(t *testing.T, ctx context.Context) *pgxpool.Pool {
@@ -326,6 +393,67 @@ func assertTablesExist(t *testing.T, ctx context.Context, pool *pgxpool.Pool, wa
 		if exists != want {
 			t.Errorf("table %s exists = %t, want %t", table, exists, want)
 		}
+	}
+}
+
+func waitForSignal(t *testing.T, ctx context.Context, signal <-chan struct{}, description string) {
+	t.Helper()
+	select {
+	case <-signal:
+	case <-ctx.Done():
+		t.Fatalf("timed out waiting for %s: %v", description, ctx.Err())
+	}
+}
+
+func receiveResult(t *testing.T, ctx context.Context, results <-chan error) error {
+	t.Helper()
+	select {
+	case err := <-results:
+		return err
+	case <-ctx.Done():
+		t.Fatalf("timed out waiting for transaction result: %v", ctx.Err())
+		return nil
+	}
+}
+
+func waitForBackendLock(t *testing.T, ctx context.Context, pool *pgxpool.Pool, backendPID int) {
+	t.Helper()
+	const lockedChallengeQueryMarker = "/* starloader:with-locked-challenge */"
+	poll := time.NewTicker(10 * time.Millisecond)
+	defer poll.Stop()
+
+	for {
+		var waiting bool
+		err := pool.QueryRow(ctx, `
+			select exists (
+				select 1
+				from pg_stat_activity
+				where pid = $1
+				  and wait_event_type = 'Lock'
+				  and query like '%' || $2 || '%'
+			)`, backendPID, lockedChallengeQueryMarker).Scan(&waiting)
+		if err != nil {
+			t.Fatalf("inspect second backend lock wait: %v", err)
+		}
+		if waiting {
+			return
+		}
+		select {
+		case <-poll.C:
+		case <-ctx.Done():
+			t.Fatalf("second backend %d never reported a marked Lock wait: %v", backendPID, ctx.Err())
+		}
+	}
+}
+
+func assertChallengeConsumedAfterCreation(t *testing.T, ctx context.Context, pool *pgxpool.Pool, challenge domain.DeviceChallenge) {
+	t.Helper()
+	var consumedAt time.Time
+	if err := pool.QueryRow(ctx, `select consumed_at from device_challenges where id = $1`, challenge.ID).Scan(&consumedAt); err != nil {
+		t.Fatalf("read consumed_at: %v", err)
+	}
+	if consumedAt.Before(challenge.CreatedAt) {
+		t.Fatalf("consumed_at %s is before created_at %s", consumedAt, challenge.CreatedAt)
 	}
 }
 

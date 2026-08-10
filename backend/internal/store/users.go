@@ -13,7 +13,7 @@ import (
 const userColumns = `id::text, email, password_hash, status, created_at, updated_at`
 
 func (s *Store) CreateUser(ctx context.Context, input domain.NewUser) (*domain.User, error) {
-	row := s.pool.QueryRow(ctx, `
+	row := s.db.QueryRow(ctx, `
 		insert into users (email, password_hash)
 		values ($1, $2)
 		returning `+userColumns, normalizeEmail(input.Email), input.PasswordHash)
@@ -25,7 +25,7 @@ func (s *Store) CreateUser(ctx context.Context, input domain.NewUser) (*domain.U
 }
 
 func (s *Store) FindUserByEmail(ctx context.Context, email string) (*domain.User, error) {
-	user, err := scanUser(s.pool.QueryRow(ctx, `select `+userColumns+` from users where email = $1`, normalizeEmail(email)))
+	user, err := scanUser(s.db.QueryRow(ctx, `select `+userColumns+` from users where email = $1`, normalizeEmail(email)))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, domain.ErrUserNotFound
 	}
