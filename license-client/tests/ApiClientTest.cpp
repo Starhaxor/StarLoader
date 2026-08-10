@@ -13,6 +13,8 @@ private slots:
     void sendsExactLoginContractAndParsesReply();
     void parsesStructuredFailuresWithoutLeakingCredentials();
     void rejectsMalformedSuccessJson();
+    void sendsExactDeviceVerificationContract();
+    void abortsTimedOutRequest();
     void rejectsNonLoopbackHttpUnlessExplicitlyEnabled();
 };
 
@@ -90,6 +92,44 @@ void ApiClientTest::rejectsMalformedSuccessJson()
     client.login({QStringLiteral("a@b.c"), QStringLiteral("password"), QStringLiteral("license"), QStringLiteral("fingerprint")});
     if (failed.isEmpty()) QVERIFY(failed.wait(3000));
     QCOMPARE(failed.at(0).at(0).value<ApiError>().code, QStringLiteral("MALFORMED_RESPONSE"));
+}
+
+void ApiClientTest::sendsExactDeviceVerificationContract()
+{
+    qputenv("STARLOADER_ALLOW_HTTP_LOCAL", "1");
+    QTcpServer server; QVERIFY(server.listen(QHostAddress::LocalHost));
+    QByteArray request;
+    connect(&server, &QTcpServer::newConnection, this, [&] {
+        QTcpSocket *socket = server.nextPendingConnection();
+        connect(socket, &QTcpSocket::readyRead, socket, [&, socket] {
+            request += socket->readAll(); if (!request.contains("\r\n\r\n")) return;
+            const QByteArray response = "{\"ok\":true,\"token\":\"jws\",\"token_expires_at\":\"2026-08-10T12:00:00Z\",\"license_id\":\"license-1\",\"device_id\":\"device-1\"}";
+            socket->write("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: " + QByteArray::number(response.size()) + "\r\n\r\n" + response);
+            socket->disconnectFromHost();
+        });
+    });
+    ApiClient client(QUrl(QStringLiteral("http://127.0.0.1:%1").arg(server.serverPort())));
+    QSignalSpy complete(&client, &ApiClient::deviceVerified);
+    client.verifyDevice({QStringLiteral("0198940d-7cec-7000-8000-000000000001"), QStringLiteral("Y2hhbGxlbmdl"), QStringLiteral("c2lnbmF0dXJl"), QStringLiteral("cHVibGljLWtleQ=="), {QStringLiteral("smbios"), QStringLiteral("board"), QStringLiteral("bios"), QStringLiteral("disk"), QStringLiteral("guid"), QStringLiteral("fingerprint")}});
+    if (complete.isEmpty()) QVERIFY(complete.wait(3000));
+    QVERIFY(request.startsWith("POST /v1/device/verify HTTP/1.1\r\n"));
+    QVERIFY(request.contains("\"session_id\":\"0198940d-7cec-7000-8000-000000000001\""));
+    QVERIFY(request.contains("\"challenge\":\"Y2hhbGxlbmdl\""));
+    QVERIFY(request.contains("\"challenge_signature\":\"c2lnbmF0dXJl\""));
+    QVERIFY(request.contains("\"tpm_public_key\":\"cHVibGljLWtleQ==\""));
+    QVERIFY(request.contains("\"hardware\":{\"bios_serial\":\"bios\",\"fingerprint\":\"fingerprint\",\"machine_guid\":\"guid\",\"motherboard_serial\":\"board\",\"smbios_uuid\":\"smbios\",\"system_disk_serial\":\"disk\"}"));
+}
+
+void ApiClientTest::abortsTimedOutRequest()
+{
+    qputenv("STARLOADER_ALLOW_HTTP_LOCAL", "1");
+    QTcpServer server; QVERIFY(server.listen(QHostAddress::LocalHost));
+    connect(&server, &QTcpServer::newConnection, this, [&] { server.nextPendingConnection(); });
+    ApiClient client(QUrl(QStringLiteral("http://127.0.0.1:%1").arg(server.serverPort())), 25);
+    QSignalSpy failed(&client, &ApiClient::loginFailed);
+    client.login({QStringLiteral("a@b.c"), QStringLiteral("password"), QStringLiteral("license"), QStringLiteral("fingerprint")});
+    QVERIFY(failed.wait(1000));
+    QCOMPARE(failed.at(0).at(0).value<ApiError>().code, QStringLiteral("TIMEOUT"));
 }
 
 void ApiClientTest::rejectsNonLoopbackHttpUnlessExplicitlyEnabled()

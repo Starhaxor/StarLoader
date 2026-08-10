@@ -1,7 +1,10 @@
 #include "AuthManager.h"
 
 #include "hardware/HardwareCollector.h"
+#include "security/Fingerprint.h"
 #include "security/TpmIdentity.h"
+
+#include <QtConcurrent/QtConcurrentRun>
 
 namespace {
 bool strictBase64(const QString &encoded, QByteArray *decoded)
@@ -14,11 +17,23 @@ bool strictBase64(const QString &encoded, QByteArray *decoded)
 }
 }
 
+SystemHardwareCollector::SystemHardwareCollector()
+    : SystemHardwareCollector({
+        [] { return TpmIdentity::isAvailable(); },
+        [](QString *error) { return TpmIdentity::ensureKey(error); },
+        [] { return HardwareCollector().collect(); },
+    }) {}
+
+SystemHardwareCollector::SystemHardwareCollector(SystemHardwareDependencies dependencies)
+    : dependencies_(std::move(dependencies)) {}
+
 bool SystemHardwareCollector::collect(HardwareIdentity *identity, QString *error)
 {
-    if (!TpmIdentity::isAvailable()) { *error = QStringLiteral("TPM is unavailable."); return false; }
-    if (!TpmIdentity::ensureKey(error)) return false;
-    *identity = HardwareCollector().collect();
+    if (!dependencies_.isTpmAvailable || !dependencies_.ensureTpmKey || !dependencies_.collectHardware) { *error = QStringLiteral("Device collector is unavailable."); return false; }
+    if (!dependencies_.isTpmAvailable()) { *error = QStringLiteral("TPM is unavailable."); return false; }
+    if (!dependencies_.ensureTpmKey(error)) return false;
+    *identity = dependencies_.collectHardware();
+    identity->finalFingerprint = Fingerprint::generate(*identity);
     if (identity->finalFingerprint.trimmed().isEmpty()) { *error = QStringLiteral("Device identity is unavailable."); return false; }
     return true;
 }
@@ -38,7 +53,10 @@ AuthManager::AuthManager(IApiClient &apiClient, IHardwareCollector &hardwareColl
     connect(&apiClient_, &IApiClient::loginFailed, this, &AuthManager::handleLoginFailed);
     connect(&apiClient_, &IApiClient::deviceVerified, this, &AuthManager::handleDeviceVerified);
     connect(&apiClient_, &IApiClient::deviceVerificationFailed, this, &AuthManager::handleDeviceVerificationFailed);
+    connect(&collectionWatcher_, &QFutureWatcher<CollectionResult>::finished, this, &AuthManager::completeCollection);
 }
+
+AuthManager::~AuthManager() { cancelAndWait(); }
 
 AuthState AuthManager::state() const { return state_; }
 QString AuthManager::sessionToken() const { return sessionToken_; }
@@ -62,12 +80,35 @@ void AuthManager::login(const QString &email, const QString &password, const QSt
 {
     if (state_ == AuthState::CollectingDevice || state_ == AuthState::Authenticating || state_ == AuthState::WaitingForDeviceChallenge || state_ == AuthState::VerifyingDevice) return;
     sessionToken_.clear();
+    pendingLogin_ = {email, password, licenseKey};
+    const quint64 attempt = ++attempt_;
     transition(AuthState::CollectingDevice, QStringLiteral("Collecting device identity."));
-    QString error;
-    if (!hardwareCollector_.collect(&hardware_, &error)) { fail({QStringLiteral("TPM_UNAVAILABLE"), QStringLiteral("Device security is unavailable."), {}}); return; }
+    IHardwareCollector *collector = &hardwareCollector_;
+    collectionWatcher_.setFuture(QtConcurrent::run([collector, attempt] {
+        CollectionResult result; result.attempt = attempt;
+        result.success = collector->collect(&result.identity, &result.error);
+        return result;
+    }));
+}
+
+void AuthManager::cancelAndWait()
+{
+    ++attempt_;
+    collectionWatcher_.cancel();
+    collectionWatcher_.waitForFinished();
+}
+
+void AuthManager::completeCollection()
+{
+    const CollectionResult result = collectionWatcher_.result();
+    if (result.attempt != attempt_ || state_ != AuthState::CollectingDevice) return;
+    if (!result.success) { fail({QStringLiteral("TPM_UNAVAILABLE"), QStringLiteral("Device security is unavailable."), {}}); return; }
+    hardware_ = result.identity;
     if (!verifier_.isConfigured()) { fail({QStringLiteral("TOKEN_VERIFIER_UNAVAILABLE"), QStringLiteral("Client security configuration is unavailable."), {}}); return; }
     transition(AuthState::Authenticating, QStringLiteral("Authenticating."));
-    apiClient_.login({email, password, licenseKey, hardware_.finalFingerprint});
+    apiClient_.login({pendingLogin_.email, pendingLogin_.password, pendingLogin_.licenseKey, hardware_.finalFingerprint});
+    pendingLogin_.password.clear();
+    pendingLogin_.licenseKey.clear();
 }
 
 void AuthManager::handleLoginSucceeded(const LoginResponse &response)

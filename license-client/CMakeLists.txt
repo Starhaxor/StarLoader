@@ -1,5 +1,15 @@
 find_package(OpenSSL REQUIRED COMPONENTS Crypto)
 
+set(STARLOADER_ED25519_PUBLIC_KEY "" CACHE STRING "Canonical standard-base64 Ed25519 session-token public key")
+string(LENGTH "${STARLOADER_ED25519_PUBLIC_KEY}" STARLOADER_ED25519_PUBLIC_KEY_LENGTH)
+if(NOT STARLOADER_ED25519_PUBLIC_KEY_LENGTH EQUAL 44 OR NOT STARLOADER_ED25519_PUBLIC_KEY MATCHES "^[A-Za-z0-9+/]+=$")
+    message(FATAL_ERROR "STARLOADER_ED25519_PUBLIC_KEY must be a canonical 32-byte standard-base64 public key")
+endif()
+configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/config/ClientSecurityConfig.h.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/generated/ClientSecurityConfig.h"
+    @ONLY)
+
 if(WIN32)
     unset(OPENSSL_CRYPTO_RUNTIME CACHE)
     find_file(OPENSSL_CRYPTO_RUNTIME
@@ -65,10 +75,11 @@ target_link_libraries(LicenseClient PRIVATE
 
 target_include_directories(LicenseClient PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_BINARY_DIR}/generated
 )
 
 target_link_libraries(ApiClientTest PRIVATE Qt6::Core Qt6::Network Qt6::Test)
-target_link_libraries(AuthManagerTest PRIVATE DeviceIdentityShared Qt6::Core Qt6::Network Qt6::Test OpenSSL::Crypto)
+target_link_libraries(AuthManagerTest PRIVATE DeviceIdentityShared Qt6::Core Qt6::Network Qt6::Concurrent Qt6::Test OpenSSL::Crypto)
 target_link_libraries(SessionTokenVerifierTest PRIVATE Qt6::Core Qt6::Test OpenSSL::Crypto)
 
 target_include_directories(ApiClientTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)

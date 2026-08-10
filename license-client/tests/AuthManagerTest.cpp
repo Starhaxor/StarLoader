@@ -1,4 +1,5 @@
 #include "auth/AuthManager.h"
+#include "security/Fingerprint.h"
 
 #include <QJsonDocument>
 #include <QtTest>
@@ -72,7 +73,7 @@ SessionTokenVerifier verifier()
 
 LoginResponse challengeResponse() { return {QStringLiteral("0198940d-7cec-7000-8000-000000000001"), QStringLiteral("Y2hhbGxlbmdl"), {}, QStringLiteral("request-1")}; }
 DeviceVerifyResponse verifiedResponse(QString token = {}) { return {token, {}, QStringLiteral("license-1"), QStringLiteral("device-1"), QStringLiteral("request-2")}; }
-QJsonObject validClaims() { const qint64 now = QDateTime::currentSecsSinceEpoch(); return {{QStringLiteral("sub"), QStringLiteral("user-1")}, {QStringLiteral("license_id"), QStringLiteral("license-1")}, {QStringLiteral("device_id"), QStringLiteral("device-1")}, {QStringLiteral("product"), QStringLiteral("StarLoader")}, {QStringLiteral("iss"), QStringLiteral("starloader")}, {QStringLiteral("aud"), QStringLiteral("starloader-client")}, {QStringLiteral("iat"), now}, {QStringLiteral("exp"), now + 3600}}; }
+QJsonObject validClaims() { const qint64 now = QDateTime::currentSecsSinceEpoch(); return {{QStringLiteral("sub"), QStringLiteral("user-1")}, {QStringLiteral("license_id"), QStringLiteral("license-1")}, {QStringLiteral("device_id"), QStringLiteral("device-1")}, {QStringLiteral("product"), QStringLiteral("StarLoader")}, {QStringLiteral("features"), QJsonArray{}}, {QStringLiteral("iss"), QStringLiteral("starloader")}, {QStringLiteral("aud"), QStringLiteral("starloader-client")}, {QStringLiteral("iat"), now}, {QStringLiteral("exp"), now + 3600}}; }
 } // namespace
 
 class AuthManagerTest final : public QObject
@@ -83,6 +84,7 @@ private slots:
     void failsBeforeNetworkWhenTpmIsUnavailable();
     void failsForLoginChallengeSigningAndDeviceErrors();
     void failsForInvalidTokenWithoutAuthenticatedState();
+    void systemCollectorGeneratesFingerprintBeforeAuthentication();
 };
 
 void AuthManagerTest::reachesAuthenticatedOnlyAfterVerifiedDeviceToken()
@@ -91,6 +93,7 @@ void AuthManagerTest::reachesAuthenticatedOnlyAfterVerifiedDeviceToken()
     AuthManager manager(api, collector, signer, verifier());
     QSignalSpy states(&manager, &AuthManager::stateChanged);
     manager.login(QStringLiteral("person@example.com"), QStringLiteral("password"), QStringLiteral("license-key"));
+    QTRY_COMPARE(api.loginCount, 1);
     QCOMPARE(api.lastLogin.deviceFingerprint, QStringLiteral("ABCDEF1234567890"));
     api.completeLogin(challengeResponse());
     QCOMPARE(api.lastVerify.challenge, QStringLiteral("Y2hhbGxlbmdl"));
@@ -110,6 +113,7 @@ void AuthManagerTest::failsBeforeNetworkWhenTpmIsUnavailable()
     FakeApiClient api; FakeHardwareCollector collector; FakeDeviceSigner signer; collector.succeeds = false;
     AuthManager manager(api, collector, signer, verifier());
     manager.login(QStringLiteral("a@b.c"), QStringLiteral("p"), QStringLiteral("l"));
+    QTRY_COMPARE(manager.state(), AuthState::Failed);
     QCOMPARE(api.loginCount, 0);
     QCOMPARE(manager.state(), AuthState::Failed);
 }
@@ -119,15 +123,18 @@ void AuthManagerTest::failsForLoginChallengeSigningAndDeviceErrors()
     FakeApiClient api; FakeHardwareCollector collector; FakeDeviceSigner signer;
     AuthManager manager(api, collector, signer, verifier());
     manager.login(QStringLiteral("a@b.c"), QStringLiteral("p"), QStringLiteral("l"));
+    QTRY_COMPARE(api.loginCount, 1);
     api.rejectLogin({QStringLiteral("INVALID_CREDENTIALS"), {}, {}});
     QCOMPARE(manager.state(), AuthState::Failed);
     manager.login(QStringLiteral("a@b.c"), QStringLiteral("p"), QStringLiteral("l"));
+    QTRY_COMPARE(api.loginCount, 2);
     api.completeLogin({QStringLiteral("session"), QStringLiteral("bad-base64"), {}, {}});
     QCOMPARE(manager.state(), AuthState::Failed);
     manager.login(QStringLiteral("a@b.c"), QStringLiteral("p"), QStringLiteral("l"));
+    QTRY_COMPARE(api.loginCount, 3);
     signer.succeeds = false; api.completeLogin(challengeResponse());
     QCOMPARE(manager.state(), AuthState::Failed);
-    signer.succeeds = true; manager.login(QStringLiteral("a@b.c"), QStringLiteral("p"), QStringLiteral("l"));
+    signer.succeeds = true; manager.login(QStringLiteral("a@b.c"), QStringLiteral("p"), QStringLiteral("l")); QTRY_COMPARE(api.loginCount, 4);
     api.completeLogin(challengeResponse()); api.rejectVerify({QStringLiteral("DEVICE_REVOKED"), {}, {}});
     QCOMPARE(manager.state(), AuthState::Failed);
 }
@@ -136,11 +143,25 @@ void AuthManagerTest::failsForInvalidTokenWithoutAuthenticatedState()
 {
     FakeApiClient api; FakeHardwareCollector collector; FakeDeviceSigner signer;
     AuthManager manager(api, collector, signer, verifier()); QSignalSpy states(&manager, &AuthManager::stateChanged);
-    manager.login(QStringLiteral("a@b.c"), QStringLiteral("p"), QStringLiteral("l")); api.completeLogin(challengeResponse());
+    manager.login(QStringLiteral("a@b.c"), QStringLiteral("p"), QStringLiteral("l")); QTRY_COMPARE(api.loginCount, 1); api.completeLogin(challengeResponse());
     QJsonObject claims = validClaims(); claims[QStringLiteral("device_id")] = QStringLiteral("other-device");
     api.completeVerify(verifiedResponse(tokenFor(claims)));
     QCOMPARE(manager.state(), AuthState::Failed);
     for (const QList<QVariant> &entry : states) QVERIFY(entry.at(0).value<AuthState>() != AuthState::Authenticated);
+}
+
+void AuthManagerTest::systemCollectorGeneratesFingerprintBeforeAuthentication()
+{
+    const HardwareIdentity raw{QStringLiteral("uuid"), QStringLiteral("board"), QStringLiteral("bios"), QStringLiteral("disk"), QStringLiteral("guid"), {}, {}, QStringLiteral("tpm"), {}};
+    SystemHardwareCollector collector({
+        [] { return true; },
+        [](QString *) { return true; },
+        [raw] { return raw; },
+    });
+    HardwareIdentity identity;
+    QString error;
+    QVERIFY2(collector.collect(&identity, &error), qPrintable(error));
+    QCOMPARE(identity.finalFingerprint, Fingerprint::generate(raw));
 }
 
 QTEST_MAIN(AuthManagerTest)

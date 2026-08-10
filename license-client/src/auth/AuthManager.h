@@ -6,6 +6,9 @@
 
 #include "hardware/HardwareIdentity.h"
 
+#include <QFutureWatcher>
+#include <functional>
+
 class IHardwareCollector
 {
 public:
@@ -20,10 +23,21 @@ public:
     virtual bool sign(const QByteArray &challenge, QByteArray *signature, QByteArray *publicKey, QString *error) = 0;
 };
 
+struct SystemHardwareDependencies
+{
+    std::function<bool()> isTpmAvailable;
+    std::function<bool(QString *)> ensureTpmKey;
+    std::function<HardwareIdentity()> collectHardware;
+};
+
 class SystemHardwareCollector final : public IHardwareCollector
 {
 public:
+    SystemHardwareCollector();
+    explicit SystemHardwareCollector(SystemHardwareDependencies dependencies);
     bool collect(HardwareIdentity *identity, QString *error) override;
+private:
+    SystemHardwareDependencies dependencies_;
 };
 
 class TpmDeviceSigner final : public IDeviceSigner
@@ -37,10 +51,12 @@ class AuthManager final : public QObject
     Q_OBJECT
 public:
     AuthManager(IApiClient &apiClient, IHardwareCollector &hardwareCollector, IDeviceSigner &deviceSigner, SessionTokenVerifier verifier, QObject *parent = nullptr);
+    ~AuthManager() override;
     AuthState state() const;
     QString sessionToken() const;
     QString deviceDisplayId() const;
     void login(const QString &email, const QString &password, const QString &licenseKey);
+    void cancelAndWait();
 
 signals:
     void stateChanged(AuthState state);
@@ -64,6 +80,12 @@ private:
     QString sessionId_;
     QByteArray challenge_;
     QString sessionToken_;
+    struct CollectionResult { quint64 attempt = 0; bool success = false; HardwareIdentity identity; QString error; };
+    struct PendingLogin { QString email; QString password; QString licenseKey; };
+    QFutureWatcher<CollectionResult> collectionWatcher_;
+    PendingLogin pendingLogin_;
+    quint64 attempt_ = 0;
     void transition(AuthState state, const QString &status);
     void fail(const ApiError &error);
+    void completeCollection();
 };

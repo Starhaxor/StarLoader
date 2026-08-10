@@ -17,11 +17,11 @@ QByteArray testPublicKey()
     EVP_PKEY_free(key); return publicKey;
 }
 
-QString signedToken(const QJsonObject &claims)
+QString signedToken(const QJsonObject &claims, QJsonObject header = {{QStringLiteral("alg"), QStringLiteral("EdDSA")}, {QStringLiteral("typ"), QStringLiteral("JWT")}})
 {
-    const QByteArray header = QJsonDocument(QJsonObject{{QStringLiteral("alg"), QStringLiteral("EdDSA")}, {QStringLiteral("typ"), QStringLiteral("JWT")}}).toJson(QJsonDocument::Compact).toBase64(QByteArray::Base64UrlEncoding | QByteArray::OmitTrailingEquals);
+    const QByteArray encodedHeader = QJsonDocument(header).toJson(QJsonDocument::Compact).toBase64(QByteArray::Base64UrlEncoding | QByteArray::OmitTrailingEquals);
     const QByteArray payload = QJsonDocument(claims).toJson(QJsonDocument::Compact).toBase64(QByteArray::Base64UrlEncoding | QByteArray::OmitTrailingEquals);
-    const QByteArray message = header + '.' + payload, privateKey = testPrivateKey();
+    const QByteArray message = encodedHeader + '.' + payload, privateKey = testPrivateKey();
     EVP_PKEY *key = EVP_PKEY_new_raw_private_key(EVP_PKEY_ED25519, nullptr, reinterpret_cast<const unsigned char *>(privateKey.constData()), privateKey.size());
     EVP_MD_CTX *context = EVP_MD_CTX_new(); size_t size = 0;
     if (key == nullptr || context == nullptr || EVP_DigestSignInit(context, nullptr, nullptr, nullptr, key) != 1 || EVP_DigestSign(context, nullptr, &size, reinterpret_cast<const unsigned char *>(message.constData()), message.size()) != 1) { EVP_MD_CTX_free(context); EVP_PKEY_free(key); return {}; }
@@ -34,7 +34,7 @@ QString signedToken(const QJsonObject &claims)
 QJsonObject validClaims()
 {
     const qint64 now = QDateTime::currentSecsSinceEpoch();
-    return {{QStringLiteral("sub"), QStringLiteral("user-1")}, {QStringLiteral("license_id"), QStringLiteral("license-1")}, {QStringLiteral("device_id"), QStringLiteral("device-1")}, {QStringLiteral("product"), QStringLiteral("StarLoader")}, {QStringLiteral("iss"), QStringLiteral("starloader")}, {QStringLiteral("aud"), QStringLiteral("starloader-client")}, {QStringLiteral("iat"), now}, {QStringLiteral("exp"), now + 3600}};
+    return {{QStringLiteral("sub"), QStringLiteral("user-1")}, {QStringLiteral("license_id"), QStringLiteral("license-1")}, {QStringLiteral("device_id"), QStringLiteral("device-1")}, {QStringLiteral("product"), QStringLiteral("StarLoader")}, {QStringLiteral("features"), QJsonArray{}}, {QStringLiteral("iss"), QStringLiteral("starloader")}, {QStringLiteral("aud"), QStringLiteral("starloader-client")}, {QStringLiteral("iat"), now}, {QStringLiteral("exp"), now + 3600}};
 }
 } // namespace
 
@@ -46,6 +46,8 @@ private slots:
     void rejectsTamperedPayloadAndSignature();
     void rejectsMalformedToken();
     void rejectsInvalidPublicKeyAtStartup();
+    void rejectsMissingOrMalformedFeatures();
+    void rejectsUnknownJoseHeadersAndCriticalHeaders();
 };
 
 void SessionTokenVerifierTest::acceptsKnownValidEd25519Token()
@@ -76,6 +78,24 @@ void SessionTokenVerifierTest::rejectsInvalidPublicKeyAtStartup()
 {
     SessionTokenVerifier verifier(QByteArrayLiteral("bad"), QStringLiteral("starloader"), QStringLiteral("starloader-client"), QStringLiteral("StarLoader"));
     QVERIFY(!verifier.isConfigured());
+}
+
+void SessionTokenVerifierTest::rejectsMissingOrMalformedFeatures()
+{
+    SessionTokenVerifier verifier(testPublicKey(), QStringLiteral("starloader"), QStringLiteral("starloader-client"), QStringLiteral("StarLoader"));
+    QJsonObject missing = validClaims(); missing.remove(QStringLiteral("features"));
+    QVERIFY(!verifier.verify(signedToken(missing), QStringLiteral("device-1"), QStringLiteral("license-1")).valid);
+    QJsonObject scalar = validClaims(); scalar[QStringLiteral("features")] = QStringLiteral("feature");
+    QVERIFY(!verifier.verify(signedToken(scalar), QStringLiteral("device-1"), QStringLiteral("license-1")).valid);
+    QJsonObject nonString = validClaims(); nonString[QStringLiteral("features")] = QJsonArray{QStringLiteral("feature"), 3};
+    QVERIFY(!verifier.verify(signedToken(nonString), QStringLiteral("device-1"), QStringLiteral("license-1")).valid);
+}
+
+void SessionTokenVerifierTest::rejectsUnknownJoseHeadersAndCriticalHeaders()
+{
+    SessionTokenVerifier verifier(testPublicKey(), QStringLiteral("starloader"), QStringLiteral("starloader-client"), QStringLiteral("StarLoader"));
+    QVERIFY(!verifier.verify(signedToken(validClaims(), {{QStringLiteral("alg"), QStringLiteral("EdDSA")}, {QStringLiteral("typ"), QStringLiteral("JWT")}, {QStringLiteral("kid"), QStringLiteral("unexpected")}}), QStringLiteral("device-1"), QStringLiteral("license-1")).valid);
+    QVERIFY(!verifier.verify(signedToken(validClaims(), {{QStringLiteral("alg"), QStringLiteral("EdDSA")}, {QStringLiteral("typ"), QStringLiteral("JWT")}, {QStringLiteral("crit"), QJsonArray{QStringLiteral("exp")}}}), QStringLiteral("device-1"), QStringLiteral("license-1")).valid);
 }
 
 QTEST_MAIN(SessionTokenVerifierTest)

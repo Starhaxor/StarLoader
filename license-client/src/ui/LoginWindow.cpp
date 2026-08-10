@@ -3,6 +3,7 @@
 #include "HwidDialog.h"
 #include "api/ApiClient.h"
 #include "auth/AuthManager.h"
+#include "ClientSecurityConfig.h"
 
 #include <QPushButton>
 #include <QLabel>
@@ -16,11 +17,11 @@ LoginWindow::LoginWindow(QWidget *parent)
     setAttribute(Qt::WA_TranslucentBackground);
     setFixedSize(size());
 
-    apiClient_ = new ApiClient(QUrl(qEnvironmentVariable("STARLOADER_API_URL", "https://api.starloader.example")), this);
+    apiClient_ = new ApiClient(QUrl(qEnvironmentVariable("STARLOADER_API_URL", "https://api.starloader.example")), ApiClient::RequestTimeoutMs, this);
     hardwareCollector_ = std::make_unique<SystemHardwareCollector>();
     deviceSigner_ = std::make_unique<TpmDeviceSigner>();
     const SessionTokenVerifier verifier = SessionTokenVerifier::fromBase64(
-        qEnvironmentVariable("STARLOADER_ED25519_PUBLIC_KEY"),
+        QString::fromLatin1(STARLOADER_ED25519_PUBLIC_KEY_BASE64),
         QStringLiteral("starloader"), QStringLiteral("starloader-client"), QStringLiteral("StarLoader"));
     authManager_ = new AuthManager(*apiClient_, *hardwareCollector_, *deviceSigner_, verifier, this);
 
@@ -34,6 +35,7 @@ LoginWindow::LoginWindow(QWidget *parent)
 
 LoginWindow::~LoginWindow()
 {
+    if (authManager_ != nullptr) { authManager_->cancelAndWait(); delete authManager_; authManager_ = nullptr; }
     delete ui;
 }
 

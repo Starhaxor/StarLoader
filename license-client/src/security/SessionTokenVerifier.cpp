@@ -1,6 +1,7 @@
 #include "SessionTokenVerifier.h"
 
 #include <QJsonDocument>
+#include <QJsonArray>
 #include <QJsonObject>
 #include <QTimeZone>
 
@@ -25,9 +26,14 @@ VerificationResult SessionTokenVerifier::verify(const QString &token, const QStr
     const auto decode = [](const QByteArray &part) { const QByteArray raw = QByteArray::fromBase64(part, QByteArray::Base64UrlEncoding); return raw.toBase64(QByteArray::Base64UrlEncoding | QByteArray::OmitTrailingEquals) == part ? raw : QByteArray(); };
     const QByteArray headerBytes = decode(parts[0]), payloadBytes = decode(parts[1]), signature = decode(parts[2]);
     const QJsonDocument header = QJsonDocument::fromJson(headerBytes), payload = QJsonDocument::fromJson(payloadBytes);
-    if (!header.isObject() || !payload.isObject() || signature.size() != 64 || header.object().value(QStringLiteral("alg")).toString() != QStringLiteral("EdDSA") || header.object().value(QStringLiteral("typ")).toString() != QStringLiteral("JWT") || !verifySignature(parts[0] + '.' + parts[1], signature)) return {false, QStringLiteral("Invalid session token."), {}};
+    if (!header.isObject() || !payload.isObject() || signature.size() != 64) return {false, QStringLiteral("Invalid session token."), {}};
+    const QJsonObject jose = header.object();
+    if (jose.size() != 2 || !jose.contains(QStringLiteral("alg")) || !jose.contains(QStringLiteral("typ")) || jose.value(QStringLiteral("alg")).toString() != QStringLiteral("EdDSA") || jose.value(QStringLiteral("typ")).toString() != QStringLiteral("JWT") || !verifySignature(parts[0] + '.' + parts[1], signature)) return {false, QStringLiteral("Invalid session token."), {}};
     const QJsonObject claims = payload.object();
     const qint64 iat = claims.value(QStringLiteral("iat")).toInteger(-1), exp = claims.value(QStringLiteral("exp")).toInteger(-1), now = QDateTime::currentSecsSinceEpoch();
+    const QJsonValue features = claims.value(QStringLiteral("features"));
+    if (!features.isArray()) return {false, QStringLiteral("Invalid session token."), {}};
+    for (const QJsonValue &feature : features.toArray()) if (!feature.isString()) return {false, QStringLiteral("Invalid session token."), {}};
     if (claims.value(QStringLiteral("iss")).toString() != issuer_ || claims.value(QStringLiteral("aud")).toString() != audience_ || claims.value(QStringLiteral("product")).toString() != product_ || claims.value(QStringLiteral("device_id")).toString() != expectedDevice || claims.value(QStringLiteral("license_id")).toString() != expectedLicense || claims.value(QStringLiteral("sub")).toString().isEmpty() || iat < 0 || exp <= now || iat > now || exp - iat != 3600) return {false, QStringLiteral("Invalid session token."), {}};
     return {true, {}, QDateTime::fromSecsSinceEpoch(exp, QTimeZone::UTC)};
 }

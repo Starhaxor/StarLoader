@@ -38,8 +38,8 @@ bool loopbackHost(const QString &host)
 }
 } // namespace
 
-ApiClient::ApiClient(QUrl baseUrl, QObject *parent)
-    : IApiClient(parent), baseUrl_(std::move(baseUrl))
+ApiClient::ApiClient(QUrl baseUrl, int timeoutMs, QObject *parent)
+    : IApiClient(parent), baseUrl_(std::move(baseUrl)), timeoutMs_(qBound(1, timeoutMs, RequestTimeoutMs))
 {
     qRegisterMetaType<LoginResponse>();
     qRegisterMetaType<DeviceVerifyResponse>();
@@ -92,14 +92,16 @@ void ApiClient::postJson(const QString &path, const QJsonObject &body, bool devi
     reply->setReadBufferSize(MaxResponseBytes);
     auto *timer = new QTimer(reply);
     timer->setSingleShot(true);
-    connect(timer, &QTimer::timeout, reply, [reply] { reply->abort(); });
-    timer->start(RequestTimeoutMs);
+    connect(timer, &QTimer::timeout, reply, [reply] { reply->setProperty("starloader.timeout", true); reply->abort(); });
+    timer->start(timeoutMs_);
     connect(reply, &QNetworkReply::finished, this, [this, reply, deviceRequest, requestId] {
         requestActive_ = false;
         const QByteArray body = reply->readAll();
         const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
         if (body.size() > MaxResponseBytes || reply->error() != QNetworkReply::NoError || status < 200 || status >= 300) {
-            ApiError error = errorForReply(reply, body, requestId);
+            ApiError error = reply->property("starloader.timeout").toBool()
+                ? ApiError{QStringLiteral("TIMEOUT"), QStringLiteral("Network request timed out."), requestId}
+                : errorForReply(reply, body, requestId);
             if (body.size() > MaxResponseBytes) error = {QStringLiteral("RESPONSE_TOO_LARGE"), QStringLiteral("Server response is too large."), requestId};
             if (deviceRequest) emit deviceVerificationFailed(error); else emit loginFailed(error);
             reply->deleteLater(); return;

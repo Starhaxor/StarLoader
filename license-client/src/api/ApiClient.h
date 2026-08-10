@@ -45,13 +45,14 @@ class ApiClient final : public IApiClient
     Q_OBJECT
 public:
     static constexpr int RequestTimeoutMs = 15'000;
-    explicit ApiClient(QUrl baseUrl, QObject *parent = nullptr);
+    explicit ApiClient(QUrl baseUrl, int timeoutMs = RequestTimeoutMs, QObject *parent = nullptr);
     void login(const LoginRequest &request) override;
     void verifyDevice(const DeviceVerifyRequest &request) override;
 
 private:
     QUrl baseUrl_;
     QNetworkAccessManager network_;
+    int timeoutMs_;
     bool requestActive_ = false;
     bool isAllowedTransport() const;
     void postJson(const QString &path, const QJsonObject &body, bool deviceRequest);
