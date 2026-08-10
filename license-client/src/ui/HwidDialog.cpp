@@ -1,5 +1,5 @@
-#include "hwiddialog.h"
-#include "ui_hwiddialog.h"
+#include "HwidDialog.h"
+#include "ui_HwidDialog.h"
 
 #include <QApplication>
 #include <QClipboard>

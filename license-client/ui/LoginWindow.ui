@@ -1,10 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <ui version="4.0">
- <class>MainWindow</class>
- <widget class="QMainWindow" name="MainWindow">
-  <property name="geometry"><rect><x>0</x><y>0</y><width>360</width><height>460</height></rect></property>
-  <property name="minimumSize"><size><width>360</width><height>460</height></size></property>
-  <property name="maximumSize"><size><width>360</width><height>460</height></size></property>
+ <class>LoginWindow</class>
+ <widget class="QMainWindow" name="LoginWindow">
+  <property name="geometry"><rect><x>0</x><y>0</y><width>360</width><height>540</height></rect></property>
+  <property name="minimumSize"><size><width>360</width><height>540</height></size></property>
+  <property name="maximumSize"><size><width>360</width><height>540</height></size></property>
   <property name="windowTitle"><string>Secure Access</string></property>
   <property name="windowFlags"><set>Qt::FramelessWindowHint</set></property>
   <property name="styleSheet">
@@ -22,7 +22,9 @@ QPushButton#loginButton:hover { background: #7D6FFF; }
 QPushButton#loginButton:pressed { background: #594BDB; }
 QFrame#divider { color: #202C3D; }
 QPushButton#hwidButton { color: #A8B4C7; background: #0E1622; border: 1px solid #263449; text-align: left; padding-left: 14px; }
-QPushButton#hwidButton:hover { color: #FFFFFF; background: #141E2D; border-color: #6D5DFC; }</string>
+QPushButton#hwidButton:hover { color: #FFFFFF; background: #141E2D; border-color: #6D5DFC; }
+QLabel#statusLabel { color: #A8B4C7; font-size: 11px; }
+QLabel#requestIdLabel { color: #7F8DA3; font-size: 10px; }</string>
   </property>
   <widget class="QWidget" name="centralwidget">
    <layout class="QVBoxLayout" name="pageLayout">
@@ -38,9 +40,13 @@ QPushButton#hwidButton:hover { color: #FFFFFF; background: #141E2D; border-color
        <item><widget class="QLabel" name="titleLabel"><property name="text"><string>Welcome back</string></property><property name="alignment"><set>Qt::AlignCenter</set></property></widget></item>
        <item><widget class="QLabel" name="subtitleLabel"><property name="text"><string>Sign in to continue to your account</string></property><property name="alignment"><set>Qt::AlignCenter</set></property></widget></item>
        <item><spacer name="formTopSpacer"><property name="orientation"><enum>Qt::Vertical</enum></property><property name="sizeHint" stdset="0"><size><width>20</width><height>12</height></size></property></spacer></item>
-       <item><widget class="QLineEdit" name="usernameLineEdit"><property name="placeholderText"><string>Username</string></property><property name="clearButtonEnabled"><bool>true</bool></property></widget></item>
+       <item><widget class="QLineEdit" name="emailLineEdit"><property name="placeholderText"><string>E-posta</string></property><property name="clearButtonEnabled"><bool>true</bool></property></widget></item>
        <item><widget class="QLineEdit" name="passwordLineEdit"><property name="echoMode"><enum>QLineEdit::Password</enum></property><property name="placeholderText"><string>Password</string></property></widget></item>
+       <item><widget class="QLineEdit" name="licenseKeyLineEdit"><property name="placeholderText"><string>Lisans anahtarı</string></property></widget></item>
+       <item><widget class="QLineEdit" name="deviceIdLineEdit"><property name="readOnly"><bool>true</bool></property><property name="placeholderText"><string>Cihaz kimliği</string></property></widget></item>
        <item><widget class="QPushButton" name="loginButton"><property name="cursor"><cursorShape>PointingHandCursor</cursorShape></property><property name="text"><string>Sign in</string></property><property name="default"><bool>true</bool></property></widget></item>
+       <item><widget class="QLabel" name="statusLabel"><property name="text"><string>Giriş bilgilerinizi girin.</string></property><property name="alignment"><set>Qt::AlignCenter</set></property></widget></item>
+       <item><widget class="QLabel" name="requestIdLabel"><property name="text"><string/></property><property name="alignment"><set>Qt::AlignCenter</set></property></widget></item>
        <item><spacer name="footerSpacer"><property name="orientation"><enum>Qt::Vertical</enum></property><property name="sizeHint" stdset="0"><size><width>20</width><height>12</height></size></property></spacer></item>
        <item><widget class="Line" name="divider"><property name="orientation"><enum>Qt::Horizontal</enum></property></widget></item>
        <item><widget class="QPushButton" name="hwidButton"><property name="cursor"><cursorShape>PointingHandCursor</cursorShape></property><property name="text"><string>◇  View device ID</string></property></widget></item>
@@ -50,6 +56,6 @@ QPushButton#hwidButton:hover { color: #FFFFFF; background: #141E2D; border-color
    </layout>
   </widget>
  </widget>
- <tabstops><tabstop>usernameLineEdit</tabstop><tabstop>passwordLineEdit</tabstop><tabstop>loginButton</tabstop><tabstop>hwidButton</tabstop></tabstops>
+ <tabstops><tabstop>emailLineEdit</tabstop><tabstop>passwordLineEdit</tabstop><tabstop>licenseKeyLineEdit</tabstop><tabstop>loginButton</tabstop><tabstop>hwidButton</tabstop></tabstops>
  <resources/><connections/>
 </ui>

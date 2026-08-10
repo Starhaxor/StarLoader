@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>MainWindow</class>
+ <widget class="QMainWindow" name="MainWindow">
+  <property name="geometry">
+   <rect><x>0</x><y>0</y><width>820</width><height>560</height></rect>
+  </property>
+  <property name="windowTitle"><string>HWID Obtainer</string></property>
+  <widget class="QWidget" name="centralWidget">
+   <layout class="QVBoxLayout" name="mainLayout">
+    <property name="leftMargin"><number>20</number></property>
+    <property name="topMargin"><number>20</number></property>
+    <property name="rightMargin"><number>20</number></property>
+    <property name="bottomMargin"><number>20</number></property>
+    <property name="spacing"><number>10</number></property>
+    <item><widget class="QLabel" name="titleLabel"><property name="text"><string>Device Identity Diagnostics</string></property><property name="styleSheet"><string notr="true">font-size: 18px; font-weight: 700;</string></property></widget></item>
+    <item><widget class="QLabel" name="descriptionLabel"><property name="text"><string>Collect local hardware signals and verify the TPM-backed device key.</string></property><property name="wordWrap"><bool>true</bool></property></widget></item>
+    <item>
+     <layout class="QFormLayout" name="signalsFormLayout">
+      <property name="fieldGrowthPolicy"><enum>QFormLayout::AllNonFixedFieldsGrow</enum></property>
+      <item row="0" column="0"><widget class="QLabel" name="smbiosUuidLabel"><property name="text"><string>SMBIOS UUID</string></property></widget></item>
+      <item row="0" column="1"><layout class="QHBoxLayout" name="smbiosUuidLayout"><item><widget class="QLineEdit" name="smbiosUuidEdit"><property name="readOnly"><bool>true</bool></property></widget></item><item><widget class="QLabel" name="smbiosUuidStatusLabel"><property name="minimumSize"><size><width>70</width><height>0</height></size></property><property name="text"><string>Pending</string></property></widget></item></layout></item>
+      <item row="1" column="0"><widget class="QLabel" name="motherboardLabel"><property name="text"><string>Motherboard Serial</string></property></widget></item>
+      <item row="1" column="1"><layout class="QHBoxLayout" name="motherboardLayout"><item><widget class="QLineEdit" name="motherboardEdit"><property name="readOnly"><bool>true</bool></property></widget></item><item><widget class="QLabel" name="motherboardStatusLabel"><property name="minimumSize"><size><width>70</width><height>0</height></size></property><property name="text"><string>Pending</string></property></widget></item></layout></item>
+      <item row="2" column="0"><widget class="QLabel" name="biosLabel"><property name="text"><string>BIOS Serial</string></property></widget></item>
+      <item row="2" column="1"><layout class="QHBoxLayout" name="biosLayout"><item><widget class="QLineEdit" name="biosEdit"><property name="readOnly"><bool>true</bool></property></widget></item><item><widget class="QLabel" name="biosStatusLabel"><property name="minimumSize"><size><width>70</width><height>0</height></size></property><property name="text"><string>Pending</string></property></widget></item></layout></item>
+      <item row="3" column="0"><widget class="QLabel" name="diskLabel"><property name="text"><string>System Disk Serial</string></property></widget></item>
+      <item row="3" column="1"><layout class="QHBoxLayout" name="diskLayout"><item><widget class="QLineEdit" name="diskEdit"><property name="readOnly"><bool>true</bool></property></widget></item><item><widget class="QLabel" name="diskStatusLabel"><property name="minimumSize"><size><width>70</width><height>0</height></size></property><property name="text"><string>Pending</string></property></widget></item></layout></item>
+      <item row="4" column="0"><widget class="QLabel" name="machineGuidLabel"><property name="text"><string>MachineGuid</string></property></widget></item>
+      <item row="4" column="1"><layout class="QHBoxLayout" name="machineGuidLayout"><item><widget class="QLineEdit" name="machineGuidEdit"><property name="readOnly"><bool>true</bool></property></widget></item><item><widget class="QLabel" name="machineGuidStatusLabel"><property name="minimumSize"><size><width>70</width><height>0</height></size></property><property name="text"><string>Pending</string></property></widget></item></layout></item>
+      <item row="5" column="0"><widget class="QLabel" name="tpmLabel"><property name="text"><string>TPM Public Key Hash</string></property></widget></item>
+      <item row="5" column="1"><layout class="QHBoxLayout" name="tpmLayout"><item><widget class="QLineEdit" name="tpmEdit"><property name="readOnly"><bool>true</bool></property></widget></item><item><widget class="QLabel" name="tpmStatusLabel"><property name="minimumSize"><size><width>70</width><height>0</height></size></property><property name="text"><string>Pending</string></property></widget></item></layout></item>
+      <item row="6" column="0"><widget class="QLabel" name="fingerprintLabel"><property name="text"><string>Final Fingerprint</string></property></widget></item>
+      <item row="6" column="1"><layout class="QHBoxLayout" name="fingerprintLayout"><item><widget class="QLineEdit" name="fingerprintEdit"><property name="readOnly"><bool>true</bool></property></widget></item><item><widget class="QLabel" name="fingerprintStatusLabel"><property name="minimumSize"><size><width>70</width><height>0</height></size></property><property name="text"><string>Pending</string></property></widget></item></layout></item>
+     </layout>
+    </item>
+    <item><widget class="QLabel" name="operationStatusLabel"><property name="text"><string>Ready to collect hardware signals.</string></property><property name="wordWrap"><bool>true</bool></property></widget></item>
+    <item><widget class="QLabel" name="tpmTestStatusLabel"><property name="text"><string>TPM test not run.</string></property><property name="wordWrap"><bool>true</bool></property></widget></item>
+    <item>
+     <layout class="QHBoxLayout" name="buttonsLayout">
+      <item><widget class="QPushButton" name="refreshButton"><property name="text"><string>Refresh</string></property></widget></item>
+      <item><widget class="QPushButton" name="copyHwidButton"><property name="text"><string>Copy HWID</string></property></widget></item>
+      <item><widget class="QPushButton" name="exportJsonButton"><property name="text"><string>Export JSON</string></property></widget></item>
+      <item><widget class="QPushButton" name="tpmTestButton"><property name="text"><string>TPM Test</string></property></widget></item>
+      <item><spacer name="buttonSpacer"><property name="orientation"><enum>Qt::Horizontal</enum></property><property name="sizeHint" stdset="0"><size><width>40</width><height>20</height></size></property></spacer></item>
+     </layout>
+    </item>
+   </layout>
+  </widget>
+ </widget>
+ <resources/>
+ <connections/>
+</ui>

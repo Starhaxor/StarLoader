@@ -16,6 +16,7 @@ Windows 10/11 üzerinde çalışan iki ayrı Qt 6 uygulaması ve bunları destek
 - Parolalar Argon2id ile özetlenir.
 - Lisans anahtarları ve donanım sinyalleri sunucuya ait ayrı HMAC-SHA256 anahtarlarıyla korunur.
 - Oturum token'ları Ed25519 ile imzalanır ve kısa ömürlüdür.
+- Request ID ile `users`, `licenses`, `devices`, `auth_sessions` ve `device_challenges` birincil anahtarları UUIDv7 kullanır; veritabanı başka UUID sürümlerini reddeder.
 
 ## Depo Yapısı ve Bileşenler
 
@@ -91,11 +92,11 @@ Toplam skor en az 70 ise kayıt aynı cihaz sayılır. TPM eşleşmesi tek baş�
 
 PostgreSQL migration'ları en az şu tabloları oluşturur:
 
-- `users`: UUID, normalize email, Argon2id password hash, status, timestamps.
-- `licenses`: UUID, license HMAC, user, product, status, max devices, expiry, timestamps.
-- `devices`: UUID, user/license, TPM public key ve hash, HMAC'lenmiş donanım alanları, fingerprint, status, timestamps.
-- `auth_sessions`: UUID, user/license, pending/verified/expired durumu, expiry ve timestamps.
-- `device_challenges`: UUID, session, challenge hash, expiry, consumed timestamp ve created timestamp.
+- `users`: UUIDv7, normalize email, Argon2id password hash, status, timestamps.
+- `licenses`: UUIDv7, license HMAC, user, product, status, max devices, expiry, timestamps.
+- `devices`: UUIDv7, user/license, TPM public key ve hash, HMAC'lenmiş donanım alanları, fingerprint, status, timestamps.
+- `auth_sessions`: UUIDv7, user/license, pending/verified/expired durumu, expiry ve timestamps.
+- `device_challenges`: UUIDv7, session, challenge hash, expiry, consumed timestamp ve created timestamp.
 
 Status alanları veritabanı constraint'leriyle sınırlandırılır. İlişki ve lookup alanları indekslenir. Migration'lar ileri ve geri yönlü dosyalar halinde sürümlenir.
 
