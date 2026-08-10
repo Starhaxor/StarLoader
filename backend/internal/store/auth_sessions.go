@@ -41,6 +41,9 @@ type LockedChallenge struct {
 	Session   domain.AuthSession
 	Challenge domain.DeviceChallenge
 	tx        pgx.Tx
+	sessionID string
+	userID    string
+	licenseID string
 }
 
 // WithLockedChallenge serializes access to one session and challenge with
@@ -124,5 +127,8 @@ func scanLockedChallenge(row pgx.Row, tx pgx.Tx) (*LockedChallenge, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &LockedChallenge{Session: pending.Session, Challenge: pending.Challenge, tx: tx}, nil
+	return &LockedChallenge{
+		Session: pending.Session, Challenge: pending.Challenge, tx: tx,
+		sessionID: pending.Session.ID, userID: pending.Session.UserID, licenseID: pending.Session.LicenseID,
+	}, nil
 }

@@ -51,6 +51,56 @@ type NewLicense struct {
 	ExpiresAt   time.Time
 }
 
+type DeviceStatus string
+
+const (
+	DeviceStatusActive  DeviceStatus = "active"
+	DeviceStatusRevoked DeviceStatus = "revoked"
+)
+
+type Device struct {
+	ID                    string
+	UserID                string
+	LicenseID             string
+	TPMPublicKey          []byte
+	TPMPublicKeySHA256    []byte
+	SMBIOSUUIDHMAC        string
+	MotherboardSerialHMAC string
+	BIOSSerialHMAC        string
+	SystemDiskSerialHMAC  string
+	MachineGuidHMAC       string
+	FingerprintHMAC       string
+	Status                DeviceStatus
+	CreatedAt             time.Time
+	UpdatedAt             time.Time
+	LastSeenAt            time.Time
+}
+
+type NewDevice struct {
+	UserID                string
+	LicenseID             string
+	TPMPublicKey          []byte
+	TPMPublicKeySHA256    []byte
+	SMBIOSUUIDHMAC        string
+	MotherboardSerialHMAC string
+	BIOSSerialHMAC        string
+	SystemDiskSerialHMAC  string
+	MachineGuidHMAC       string
+	FingerprintHMAC       string
+	SeenAt                time.Time
+}
+
+type UpdateDevice struct {
+	ID                    string
+	SMBIOSUUIDHMAC        string
+	MotherboardSerialHMAC string
+	BIOSSerialHMAC        string
+	SystemDiskSerialHMAC  string
+	MachineGuidHMAC       string
+	FingerprintHMAC       string
+	SeenAt                time.Time
+}
+
 type SessionStatus string
 
 const (

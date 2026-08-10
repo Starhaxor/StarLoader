@@ -17,6 +17,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/starloader/backend/internal/config"
 	"github.com/starloader/backend/internal/httpapi"
+	"github.com/starloader/backend/internal/security"
 	"github.com/starloader/backend/internal/service"
 	"github.com/starloader/backend/internal/store"
 )
@@ -62,12 +63,28 @@ func run() error {
 
 	repository := store.New(pool)
 	loginService := service.NewLoginService(repository, []byte(configuration.LicenseHMACKey), configuration.Product)
+	privateKey, err := security.ParseEd25519PrivateKey(configuration.Ed25519PrivateKey)
+	if err != nil {
+		return fmt.Errorf("configuration error: %w", err)
+	}
+	tokenIssuer, err := security.NewTokenIssuer(privateKey, configuration.LicenseIssuer, configuration.LicenseAudience, configuration.Product)
+	if err != nil {
+		return errors.New("configuration error: invalid token issuer configuration")
+	}
+	deviceService := service.NewDeviceService(service.NewStoreDeviceRepository(repository), service.DeviceServiceConfig{
+		HardwareHMACKey: []byte(configuration.HardwareHMACKey),
+		TokenIssuer:     tokenIssuer,
+		Issuer:          configuration.LicenseIssuer,
+		Audience:        configuration.LicenseAudience,
+		Product:         configuration.Product,
+	})
 	router := httpapi.NewRouter(httpapi.RouterConfig{
-		Login:          loginService,
-		LoginTimeout:   configuration.LoginTimeout,
-		TrustedProxies: trustedProxies,
-		Logger:         log.Default(),
-		HealthCheck:    pool.Ping,
+		Login:              loginService,
+		DeviceVerification: deviceService,
+		LoginTimeout:       configuration.LoginTimeout,
+		TrustedProxies:     trustedProxies,
+		Logger:             log.Default(),
+		HealthCheck:        pool.Ping,
 	})
 	address := strings.TrimSpace(os.Getenv("SERVER_ADDR"))
 	if address == "" {
