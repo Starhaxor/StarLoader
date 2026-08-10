@@ -35,6 +35,7 @@
      </layout>
     </item>
     <item><widget class="QLabel" name="operationStatusLabel"><property name="text"><string>Ready to collect hardware signals.</string></property><property name="wordWrap"><bool>true</bool></property></widget></item>
+    <item><widget class="QLabel" name="tpmTestStatusLabel"><property name="text"><string>TPM test not run.</string></property><property name="wordWrap"><bool>true</bool></property></widget></item>
     <item>
      <layout class="QHBoxLayout" name="buttonsLayout">
       <item><widget class="QPushButton" name="refreshButton"><property name="text"><string>Refresh</string></property></widget></item>

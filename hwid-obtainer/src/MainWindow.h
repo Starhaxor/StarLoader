@@ -1,5 +1,6 @@
 #pragma once
 
+#include "DiagnosticPresentation.h"
 #include "hardware/HardwareIdentity.h"
 
 #include <QMainWindow>
@@ -38,9 +39,12 @@ private:
     static TpmTestResult performTpmTest();
     void showSignal(QLineEdit *field, QLabel *status, const QString &value);
     void showIdentity(const HardwareIdentity &identity);
+    void setCollectionStatus(const QString &message);
+    void setTpmTestStatus(const QString &message);
 
     Ui::MainWindow *ui_;
     HardwareIdentity identity_;
+    DiagnosticPresentation::StatusState statusState_;
     QFutureWatcher<HardwareIdentity> collectionWatcher_;
     QFutureWatcher<TpmTestResult> tpmTestWatcher_;
     bool hasCollectedIdentity_ = false;

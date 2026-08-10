@@ -51,6 +51,8 @@ MainWindow::MainWindow(QWidget *parent)
     connect(&tpmTestWatcher_, &QFutureWatcher<TpmTestResult>::finished,
             this, &MainWindow::tpmTestFinished);
 
+    setCollectionStatus(ui_->operationStatusLabel->text());
+    setTpmTestStatus(ui_->tpmTestStatusLabel->text());
     ui_->copyHwidButton->setEnabled(false);
     ui_->exportJsonButton->setEnabled(false);
     refreshHardware();
@@ -70,7 +72,7 @@ void MainWindow::refreshHardware()
     ui_->refreshButton->setEnabled(false);
     ui_->copyHwidButton->setEnabled(false);
     ui_->exportJsonButton->setEnabled(false);
-    ui_->operationStatusLabel->setText(QStringLiteral("Collecting hardware signals…"));
+    setCollectionStatus(QStringLiteral("Collecting hardware signals…"));
 
     collectionWatcher_.setFuture(QtConcurrent::run([] {
         HardwareIdentity identity = HardwareCollector().collect();
@@ -86,7 +88,7 @@ void MainWindow::collectionFinished()
     try {
         identity_ = collectionWatcher_.result();
     } catch (const std::exception &) {
-        ui_->operationStatusLabel->setText(
+        setCollectionStatus(
             QStringLiteral("Hardware collection failed; no values are available."));
         return;
     }
@@ -100,18 +102,18 @@ void MainWindow::collectionFinished()
 void MainWindow::copyHwid()
 {
     if (!hasCollectedIdentity_ || identity_.finalFingerprint.trimmed().isEmpty()) {
-        ui_->operationStatusLabel->setText(QStringLiteral("No fingerprint is available to copy."));
+        setCollectionStatus(QStringLiteral("No fingerprint is available to copy."));
         return;
     }
 
     QApplication::clipboard()->setText(identity_.finalFingerprint);
-    ui_->operationStatusLabel->setText(QStringLiteral("Fingerprint copied to the clipboard."));
+    setCollectionStatus(QStringLiteral("Fingerprint copied to the clipboard."));
 }
 
 void MainWindow::exportJson()
 {
     if (!hasCollectedIdentity_) {
-        ui_->operationStatusLabel->setText(QStringLiteral("Collect hardware signals before exporting JSON."));
+        setCollectionStatus(QStringLiteral("Collect hardware signals before exporting JSON."));
         return;
     }
 
@@ -125,17 +127,17 @@ void MainWindow::exportJson()
 
     QSaveFile file(fileName);
     if (!file.open(QIODevice::WriteOnly)) {
-        ui_->operationStatusLabel->setText(QStringLiteral("Could not open the selected export file."));
+        setCollectionStatus(QStringLiteral("Could not open the selected export file."));
         return;
     }
 
     const QByteArray json = QJsonDocument(HardwareJson::toJson(identity_)).toJson(QJsonDocument::Indented);
     if (file.write(json) != json.size() || !file.commit()) {
-        ui_->operationStatusLabel->setText(QStringLiteral("JSON export failed; the existing file was not replaced."));
+        setCollectionStatus(QStringLiteral("JSON export failed; the existing file was not replaced."));
         return;
     }
 
-    ui_->operationStatusLabel->setText(QStringLiteral("Hardware identity exported successfully."));
+    setCollectionStatus(QStringLiteral("Hardware identity exported successfully."));
 }
 
 void MainWindow::runTpmTest()
@@ -144,7 +146,7 @@ void MainWindow::runTpmTest()
         return;
 
     ui_->tpmTestButton->setEnabled(false);
-    ui_->operationStatusLabel->setText(QStringLiteral("Running TPM verification checks…"));
+    setTpmTestStatus(QStringLiteral("Running TPM verification checks…"));
     tpmTestWatcher_.setFuture(QtConcurrent::run(&MainWindow::performTpmTest));
 }
 
@@ -154,9 +156,9 @@ void MainWindow::tpmTestFinished()
 
     try {
         const TpmTestResult result = tpmTestWatcher_.result();
-        ui_->operationStatusLabel->setText(result.summary);
+        setTpmTestStatus(result.summary);
     } catch (const std::exception &) {
-        ui_->operationStatusLabel->setText(QStringLiteral("TPM test failed unexpectedly."));
+        setTpmTestStatus(QStringLiteral("TPM test failed unexpectedly."));
     }
 }
 
@@ -227,6 +229,18 @@ void MainWindow::showIdentity(const HardwareIdentity &identity)
     const int availableSignals = static_cast<int>(std::count_if(
         hardwareValues.cbegin(), hardwareValues.cend(),
         [](const QString &value) { return !value.trimmed().isEmpty(); }));
-    ui_->operationStatusLabel->setText(
+    setCollectionStatus(
         QStringLiteral("Hardware collection complete: %1 of 7 signals available.").arg(availableSignals));
+}
+
+void MainWindow::setCollectionStatus(const QString &message)
+{
+    statusState_ = DiagnosticPresentation::withCollectionStatus(statusState_, message);
+    ui_->operationStatusLabel->setText(statusState_.collection);
+}
+
+void MainWindow::setTpmTestStatus(const QString &message)
+{
+    statusState_ = DiagnosticPresentation::withTpmTestStatus(statusState_, message);
+    ui_->tpmTestStatusLabel->setText(statusState_.tpmTest);
 }
