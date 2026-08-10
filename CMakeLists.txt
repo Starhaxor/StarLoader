@@ -1,23 +1,16 @@
 cmake_minimum_required(VERSION 3.16)
-project(ModernLogin LANGUAGES CXX)
+project(LicenseSystem LANGUAGES CXX)
 
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOUIC ON)
 set(CMAKE_AUTOMOC ON)
 
-find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Widgets)
-find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Widgets)
+find_package(Qt6 REQUIRED COMPONENTS Core Widgets Network Concurrent Test)
 
-add_executable(ModernLogin WIN32
-    main.cpp
-    mainwindow.cpp
-    mainwindow.h
-    mainwindow.ui
-    hwiddialog.cpp
-    hwiddialog.h
-    hwiddialog.ui
-)
+enable_testing()
 
-target_link_libraries(ModernLogin PRIVATE Qt${QT_VERSION_MAJOR}::Widgets)
+add_subdirectory(shared)
+add_subdirectory(hwid-obtainer)
+add_subdirectory(license-client)
 

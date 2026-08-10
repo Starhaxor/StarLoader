@@ -1,11 +1,11 @@
-#include "mainwindow.h"
-#include "ui_mainwindow.h"
-#include "hwiddialog.h"
+#include "LoginWindow.h"
+#include "ui_LoginWindow.h"
+#include "HwidDialog.h"
 
 #include <QPushButton>
 
-MainWindow::MainWindow(QWidget *parent)
-    : QMainWindow(parent), ui(new Ui::MainWindow)
+LoginWindow::LoginWindow(QWidget *parent)
+    : QMainWindow(parent), ui(new Ui::LoginWindow)
 {
     ui->setupUi(this);
     setWindowFlags(Qt::Window | Qt::FramelessWindowHint);
@@ -13,15 +13,15 @@ MainWindow::MainWindow(QWidget *parent)
     setFixedSize(size());
 
     connect(ui->hwidButton, &QPushButton::clicked,
-            this, &MainWindow::openHwidDialog);
+            this, &LoginWindow::openHwidDialog);
 }
 
-MainWindow::~MainWindow()
+LoginWindow::~LoginWindow()
 {
     delete ui;
 }
 
-void MainWindow::openHwidDialog()
+void LoginWindow::openHwidDialog()
 {
     HwidDialog dialog(this);
     dialog.exec();
