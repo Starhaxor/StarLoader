@@ -78,13 +78,14 @@ func (s *Store) WithLockedChallenge(ctx context.Context, sessionID string, fn fu
 	if locked.Challenge.ConsumedAt != nil {
 		return domain.ErrChallengeConsumed
 	}
+	lockedChallengeID := locked.Challenge.ID
 	if err := fn(locked); err != nil {
 		return err
 	}
 	tag, err := tx.Exec(ctx, `
 		update device_challenges
 		set consumed_at = now()
-		where id = $1 and consumed_at is null`, locked.Challenge.ID)
+		where id = $1 and consumed_at is null`, lockedChallengeID)
 	if err != nil {
 		return fmt.Errorf("consume challenge: %w", err)
 	}

@@ -16,6 +16,7 @@ import (
 
 func TestUserAndLicenseRoundTrip(t *testing.T) {
 	ctx := context.Background()
+	base := time.Now().UTC().Truncate(time.Microsecond)
 	pool := openTestPool(t, ctx)
 	resetAndMigrate(t, ctx, pool)
 	repository := store.New(pool)
@@ -39,7 +40,7 @@ func TestUserAndLicenseRoundTrip(t *testing.T) {
 		t.Fatalf("FindUserByEmail() = %#v", foundUser)
 	}
 
-	expiresAt := time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC)
+	expiresAt := base.Add(30 * 24 * time.Hour)
 	licenseHMAC := "5c89e0aeacdc0f1e84682f1d9f4b7bc81c279466603fefb87941b21df91f5fd2"
 	createdLicense, err := repository.CreateLicense(ctx, domain.NewLicense{
 		LicenseHMAC: licenseHMAC,
@@ -138,10 +139,11 @@ func TestRepositoryNotFoundErrorsAreTyped(t *testing.T) {
 
 func TestSchemaRejectsInvalidStatusesAndUnprotectedValues(t *testing.T) {
 	ctx := context.Background()
+	base := time.Now().UTC().Truncate(time.Microsecond)
 	pool := openTestPool(t, ctx)
 	resetAndMigrate(t, ctx, pool)
 	repository := store.New(pool)
-	user, license := createUserAndLicense(t, ctx, repository, "constraints@example.com")
+	user, license := createUserAndLicense(t, ctx, repository, "constraints@example.com", base)
 
 	invalidStatements := []struct {
 		name string
@@ -182,7 +184,7 @@ func TestSchemaRejectsInvalidStatusesAndUnprotectedValues(t *testing.T) {
 		{
 			name: "invalid session status",
 			sql:  `insert into auth_sessions (user_id, license_id, status, expires_at) values ($1, $2, 'unknown', $3)`,
-			args: []any{user.ID, license.ID, time.Date(2026, 8, 10, 12, 2, 0, 0, time.UTC)},
+			args: []any{user.ID, license.ID, base.Add(2 * time.Minute)},
 		},
 	}
 
@@ -214,10 +216,11 @@ func TestMigrationDownAndUp(t *testing.T) {
 func TestConcurrentChallengeConsumptionHasExactlyOneConsumer(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
+	base := time.Now().UTC().Truncate(time.Microsecond)
 	pool := openTestPool(t, ctx)
 	resetAndMigrate(t, ctx, pool)
 	repository := store.New(pool)
-	pending := createPendingSession(t, ctx, repository)
+	pending := createPendingSession(t, ctx, repository, base)
 
 	firstConn, err := pool.Acquire(ctx)
 	if err != nil {
@@ -295,10 +298,11 @@ func TestConcurrentChallengeConsumptionHasExactlyOneConsumer(t *testing.T) {
 
 func TestWithLockedChallengeRollsBackCallbackFailure(t *testing.T) {
 	ctx := context.Background()
+	base := time.Now().UTC().Truncate(time.Microsecond)
 	pool := openTestPool(t, ctx)
 	resetAndMigrate(t, ctx, pool)
 	repository := store.New(pool)
-	pending := createPendingSession(t, ctx, repository)
+	pending := createPendingSession(t, ctx, repository, base)
 	callbackErr := errors.New("verification failed")
 
 	err := repository.WithLockedChallenge(ctx, pending.Session.ID, func(*store.LockedChallenge) error {
@@ -330,10 +334,11 @@ func TestWithLockedChallengeRollsBackCallbackFailure(t *testing.T) {
 
 func TestSuccessfulLockedChallengeCallbackAlwaysConsumes(t *testing.T) {
 	ctx := context.Background()
+	base := time.Now().UTC().Truncate(time.Microsecond)
 	pool := openTestPool(t, ctx)
 	resetAndMigrate(t, ctx, pool)
 	repository := store.New(pool)
-	pending := createPendingSession(t, ctx, repository)
+	pending := createPendingSession(t, ctx, repository, base)
 
 	if err := repository.WithLockedChallenge(ctx, pending.Session.ID, func(*store.LockedChallenge) error {
 		return nil
@@ -354,6 +359,53 @@ func TestSuccessfulLockedChallengeCallbackAlwaysConsumes(t *testing.T) {
 	}
 
 	assertChallengeConsumedAfterCreation(t, ctx, pool, pending.Challenge)
+}
+
+func TestLockedChallengeIDMutationCannotRedirectConsumption(t *testing.T) {
+	ctx := context.Background()
+	base := time.Now().UTC().Truncate(time.Microsecond)
+	pool := openTestPool(t, ctx)
+	resetAndMigrate(t, ctx, pool)
+	repository := store.New(pool)
+	original := createPendingSession(t, ctx, repository, base)
+	second, err := repository.CreatePendingSession(ctx, domain.NewPendingSession{
+		UserID:          original.Session.UserID,
+		LicenseID:       original.Session.LicenseID,
+		ChallengeSHA256: bytes.Repeat([]byte{0x6b}, 32),
+		ExpiresAt:       base.Add(3 * time.Minute),
+	})
+	if err != nil {
+		t.Fatalf("CreatePendingSession() second error = %v", err)
+	}
+
+	err = repository.WithLockedChallenge(ctx, original.Session.ID, func(locked *store.LockedChallenge) error {
+		locked.Challenge.ID = second.Challenge.ID
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("WithLockedChallenge() error = %v", err)
+	}
+
+	originalConsumedAt := readChallengeConsumedAt(t, ctx, pool, original.Challenge.ID)
+	secondConsumedAt := readChallengeConsumedAt(t, ctx, pool, second.Challenge.ID)
+	if originalConsumedAt == nil {
+		t.Error("original locked challenge remained unconsumed")
+	}
+	if secondConsumedAt != nil {
+		t.Errorf("callback-selected challenge was consumed at %s", *secondConsumedAt)
+	}
+
+	replayCallbackRan := false
+	err = repository.WithLockedChallenge(ctx, original.Session.ID, func(*store.LockedChallenge) error {
+		replayCallbackRan = true
+		return nil
+	})
+	if !errors.Is(err, domain.ErrChallengeConsumed) {
+		t.Errorf("replay error = %v, want %v", err, domain.ErrChallengeConsumed)
+	}
+	if replayCallbackRan {
+		t.Error("replay callback ran for the original challenge")
+	}
 }
 
 func openTestPool(t *testing.T, ctx context.Context) *pgxpool.Pool {
@@ -448,24 +500,33 @@ func waitForBackendLock(t *testing.T, ctx context.Context, pool *pgxpool.Pool, b
 
 func assertChallengeConsumedAfterCreation(t *testing.T, ctx context.Context, pool *pgxpool.Pool, challenge domain.DeviceChallenge) {
 	t.Helper()
-	var consumedAt time.Time
-	if err := pool.QueryRow(ctx, `select consumed_at from device_challenges where id = $1`, challenge.ID).Scan(&consumedAt); err != nil {
-		t.Fatalf("read consumed_at: %v", err)
+	consumedAt := readChallengeConsumedAt(t, ctx, pool, challenge.ID)
+	if consumedAt == nil {
+		t.Fatal("challenge remained unconsumed")
 	}
 	if consumedAt.Before(challenge.CreatedAt) {
 		t.Fatalf("consumed_at %s is before created_at %s", consumedAt, challenge.CreatedAt)
 	}
 }
 
-func createPendingSession(t *testing.T, ctx context.Context, repository *store.Store) *domain.PendingSession {
+func readChallengeConsumedAt(t *testing.T, ctx context.Context, pool *pgxpool.Pool, challengeID string) *time.Time {
 	t.Helper()
-	user, license := createUserAndLicense(t, ctx, repository, "challenge@example.com")
+	var consumedAt *time.Time
+	if err := pool.QueryRow(ctx, `select consumed_at from device_challenges where id = $1`, challengeID).Scan(&consumedAt); err != nil {
+		t.Fatalf("read consumed_at: %v", err)
+	}
+	return consumedAt
+}
+
+func createPendingSession(t *testing.T, ctx context.Context, repository *store.Store, base time.Time) *domain.PendingSession {
+	t.Helper()
+	user, license := createUserAndLicense(t, ctx, repository, "challenge@example.com", base)
 	challengeSHA256 := bytes.Repeat([]byte{0x5a}, 32)
 	pending, err := repository.CreatePendingSession(ctx, domain.NewPendingSession{
 		UserID:          user.ID,
 		LicenseID:       license.ID,
 		ChallengeSHA256: challengeSHA256,
-		ExpiresAt:       time.Date(2026, 8, 10, 12, 2, 0, 0, time.UTC),
+		ExpiresAt:       base.Add(2 * time.Minute),
 	})
 	if err != nil {
 		t.Fatalf("CreatePendingSession() error = %v", err)
@@ -476,7 +537,7 @@ func createPendingSession(t *testing.T, ctx context.Context, repository *store.S
 	return pending
 }
 
-func createUserAndLicense(t *testing.T, ctx context.Context, repository *store.Store, email string) (*domain.User, *domain.License) {
+func createUserAndLicense(t *testing.T, ctx context.Context, repository *store.Store, email string, base time.Time) (*domain.User, *domain.License) {
 	t.Helper()
 	user, err := repository.CreateUser(ctx, domain.NewUser{
 		Email:        email,
@@ -490,7 +551,7 @@ func createUserAndLicense(t *testing.T, ctx context.Context, repository *store.S
 		UserID:      user.ID,
 		Product:     "StarLoader",
 		MaxDevices:  1,
-		ExpiresAt:   time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC),
+		ExpiresAt:   base.Add(30 * 24 * time.Hour),
 	})
 	if err != nil {
 		t.Fatalf("CreateLicense() error = %v", err)
