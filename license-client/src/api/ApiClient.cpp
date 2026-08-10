@@ -33,8 +33,7 @@ ApiError errorForReply(QNetworkReply *reply, const QByteArray &body, const QStri
 bool loopbackHost(const QString &host)
 {
     QHostAddress address;
-    return host.compare(QStringLiteral("localhost"), Qt::CaseInsensitive) == 0 ||
-        (address.setAddress(host) && address.isLoopback());
+    return address.setAddress(host) && address.isLoopback();
 }
 } // namespace
 

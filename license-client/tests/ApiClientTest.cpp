@@ -16,6 +16,7 @@ private slots:
     void sendsExactDeviceVerificationContract();
     void abortsTimedOutRequest();
     void rejectsNonLoopbackHttpUnlessExplicitlyEnabled();
+    void rejectsLocalhostNameEvenWhenLocalHttpIsEnabled();
 };
 
 void ApiClientTest::sendsExactLoginContractAndParsesReply()
@@ -136,6 +137,16 @@ void ApiClientTest::rejectsNonLoopbackHttpUnlessExplicitlyEnabled()
 {
     qunsetenv("STARLOADER_ALLOW_HTTP_LOCAL");
     ApiClient client(QUrl(QStringLiteral("http://example.com")));
+    QSignalSpy failed(&client, &ApiClient::loginFailed);
+    client.login({QStringLiteral("a@b.c"), QStringLiteral("p"), QStringLiteral("l"), QStringLiteral("f")});
+    if (failed.isEmpty()) QVERIFY(failed.wait(1000));
+    QCOMPARE(failed.at(0).at(0).value<ApiError>().code, QStringLiteral("INSECURE_TRANSPORT"));
+}
+
+void ApiClientTest::rejectsLocalhostNameEvenWhenLocalHttpIsEnabled()
+{
+    qputenv("STARLOADER_ALLOW_HTTP_LOCAL", "1");
+    ApiClient client(QUrl(QStringLiteral("http://localhost:8080")));
     QSignalSpy failed(&client, &ApiClient::loginFailed);
     client.login({QStringLiteral("a@b.c"), QStringLiteral("p"), QStringLiteral("l"), QStringLiteral("f")});
     if (failed.isEmpty()) QVERIFY(failed.wait(1000));
