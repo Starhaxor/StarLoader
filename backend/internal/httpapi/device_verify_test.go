@@ -37,14 +37,16 @@ func TestDeviceVerifyReturnsBoundSessionToken(t *testing.T) {
 	if !response.OK || response.Token != "signed-token" || response.TokenExpiresAt != now.Add(time.Hour).Format(time.RFC3339) || response.LicenseID != "license-1" || response.DeviceID != "device-1" {
 		t.Fatalf("response = %#v", response)
 	}
-	if verification.input.SessionID != "session-1" || verification.input.Hardware.SystemDiskSerial != "disk-raw" || verification.input.ChallengeSignature != "c2lnbmF0dXJl" {
+	if verification.input.SessionID != "11111111-1111-4111-8111-111111111111" || verification.input.Hardware.SystemDiskSerial != "disk-raw" || verification.input.ChallengeSignature != "c2lnbmF0dXJl" {
 		t.Fatalf("Verify() input = %#v", verification.input)
 	}
 }
 
 func TestDeviceVerifyRejectsMalformedRequests(t *testing.T) {
 	missingHardware := strings.Replace(validDeviceVerifyJSON, `"fingerprint":"fingerprint-raw"`, `"fingerprint":""`, 1)
-	unknownField := strings.Replace(validDeviceVerifyJSON, `"session_id":"session-1"`, `"session_id":"session-1","unknown":true`, 1)
+	unknownField := strings.Replace(validDeviceVerifyJSON, `"session_id":"11111111-1111-4111-8111-111111111111"`, `"session_id":"11111111-1111-4111-8111-111111111111","unknown":true`, 1)
+	invalidSessionID := strings.Replace(validDeviceVerifyJSON, "11111111-1111-4111-8111-111111111111", "not-a-uuid", 1)
+	nonCanonicalSessionID := strings.Replace(validDeviceVerifyJSON, "11111111-1111-4111-8111-111111111111", "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA", 1)
 	for _, test := range []struct {
 		name        string
 		body        string
@@ -52,6 +54,8 @@ func TestDeviceVerifyRejectsMalformedRequests(t *testing.T) {
 		status      int
 	}{
 		{name: "missing field", body: missingHardware, contentType: "application/json", status: http.StatusBadRequest},
+		{name: "invalid session UUID", body: invalidSessionID, contentType: "application/json", status: http.StatusBadRequest},
+		{name: "noncanonical session UUID", body: nonCanonicalSessionID, contentType: "application/json", status: http.StatusBadRequest},
 		{name: "unknown field", body: unknownField, contentType: "application/json", status: http.StatusBadRequest},
 		{name: "multiple values", body: validDeviceVerifyJSON + `{}`, contentType: "application/json", status: http.StatusBadRequest},
 		{name: "wrong media type", body: validDeviceVerifyJSON, contentType: "text/plain", status: http.StatusUnsupportedMediaType},
@@ -121,7 +125,7 @@ func TestDeviceVerifyAllowsTenAttemptsPerMinutePerSession(t *testing.T) {
 
 func TestDeviceVerifyRejectsOverlongSessionBeforeRateLimiter(t *testing.T) {
 	router := NewRouter(RouterConfig{Login: &fakeLoginService{}, DeviceVerification: &fakeDeviceVerificationService{}})
-	body := strings.Replace(validDeviceVerifyJSON, "session-1", strings.Repeat("s", 129), 1)
+	body := strings.Replace(validDeviceVerifyJSON, "11111111-1111-4111-8111-111111111111", strings.Repeat("s", 129), 1)
 	recorder := httptest.NewRecorder()
 
 	router.ServeHTTP(recorder, deviceVerifyRequest(body))
@@ -163,7 +167,7 @@ func TestDeviceVerifyRouteRejectsWrongMethod(t *testing.T) {
 	assertErrorResponse(t, recorder, http.StatusMethodNotAllowed, "INVALID_REQUEST")
 }
 
-const validDeviceVerifyJSON = `{"session_id":"session-1","challenge":"Y2hhbGxlbmdl","challenge_signature":"c2lnbmF0dXJl","tpm_public_key":"cHVibGljLWtleQ==","hardware":{"smbios_uuid":"smbios-raw","motherboard_serial":"board-raw","bios_serial":"bios-raw","system_disk_serial":"disk-raw","machine_guid":"guid-raw","fingerprint":"fingerprint-raw"}}`
+const validDeviceVerifyJSON = `{"session_id":"11111111-1111-4111-8111-111111111111","challenge":"Y2hhbGxlbmdl","challenge_signature":"c2lnbmF0dXJl","tpm_public_key":"cHVibGljLWtleQ==","hardware":{"smbios_uuid":"smbios-raw","motherboard_serial":"board-raw","bios_serial":"bios-raw","system_disk_serial":"disk-raw","machine_guid":"guid-raw","fingerprint":"fingerprint-raw"}}`
 
 type fakeDeviceVerificationService struct {
 	verified   service.VerifiedSession

@@ -181,7 +181,8 @@ func validateClaims(claims SessionClaims, issuer, audience, product string, now 
 	if claims.Subject == "" || claims.LicenseID == "" || claims.DeviceID == "" ||
 		claims.Issuer != issuer || claims.Audience != audience || claims.Product != product ||
 		claims.IssuedAt.IsZero() || claims.ExpiresAt.IsZero() || claims.IssuedAt.After(now) ||
-		!claims.ExpiresAt.After(now) || !claims.ExpiresAt.After(claims.IssuedAt) {
+		!claims.ExpiresAt.After(now) || !claims.ExpiresAt.After(claims.IssuedAt) ||
+		claims.ExpiresAt.Sub(claims.IssuedAt) != time.Hour {
 		return ErrInvalidSessionToken
 	}
 	return nil

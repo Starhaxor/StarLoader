@@ -4,6 +4,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/json"
 	"reflect"
 	"strings"
 	"testing"
@@ -166,4 +167,96 @@ func TestEd25519ConfigurationRejectsInconsistentExpandedPrivateKey(t *testing.T)
 	if _, err := ParseEd25519PrivateKey(encoded); err == nil {
 		t.Fatal("ParseEd25519PrivateKey() accepted an inconsistent expanded private key")
 	}
+}
+
+func TestTokenIssuerRequiresExactOneHourLifetime(t *testing.T) {
+	_, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(1_786_350_600, 0).UTC()
+	issuer, err := NewTokenIssuer(privateKey, "starloader", "client", "StarLoader")
+	if err != nil {
+		t.Fatal(err)
+	}
+	issuer.now = func() time.Time { return now }
+	for _, test := range []struct {
+		name     string
+		lifetime time.Duration
+		wantOK   bool
+	}{
+		{name: "59 minutes", lifetime: 59 * time.Minute},
+		{name: "exact hour", lifetime: time.Hour, wantOK: true},
+		{name: "61 minutes", lifetime: 61 * time.Minute},
+		{name: "one day", lifetime: 24 * time.Hour},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := issuer.Issue(requiredTokenClaims(now, test.lifetime))
+			if test.wantOK && err != nil {
+				t.Fatalf("Issue() error = %v", err)
+			}
+			if !test.wantOK && err == nil {
+				t.Fatalf("Issue() accepted lifetime %s", test.lifetime)
+			}
+		})
+	}
+}
+
+func TestTokenVerifierRequiresExactOneHourLifetime(t *testing.T) {
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(1_786_350_600, 0).UTC()
+	verifier, err := NewTokenVerifier(publicKey, "starloader", "client", "StarLoader")
+	if err != nil {
+		t.Fatal(err)
+	}
+	verifier.now = func() time.Time { return now }
+	for _, test := range []struct {
+		name     string
+		lifetime time.Duration
+		wantOK   bool
+	}{
+		{name: "59 minutes", lifetime: 59 * time.Minute},
+		{name: "exact hour", lifetime: time.Hour, wantOK: true},
+		{name: "61 minutes", lifetime: 61 * time.Minute},
+		{name: "one day", lifetime: 24 * time.Hour},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			token := signSessionClaimsForTest(t, privateKey, requiredTokenClaims(now, test.lifetime))
+			_, err := verifier.Verify(token)
+			if test.wantOK && err != nil {
+				t.Fatalf("Verify() error = %v", err)
+			}
+			if !test.wantOK && err == nil {
+				t.Fatalf("Verify() accepted lifetime %s", test.lifetime)
+			}
+		})
+	}
+}
+
+func requiredTokenClaims(issuedAt time.Time, lifetime time.Duration) SessionClaims {
+	return SessionClaims{
+		Subject: "user", LicenseID: "license", DeviceID: "device", Product: "StarLoader",
+		Features: []string{}, Issuer: "starloader", Audience: "client",
+		IssuedAt: issuedAt, ExpiresAt: issuedAt.Add(lifetime),
+	}
+}
+
+func signSessionClaimsForTest(t *testing.T, privateKey ed25519.PrivateKey, claims SessionClaims) string {
+	t.Helper()
+	headerJSON, err := json.Marshal(tokenHeader{Algorithm: "EdDSA", Type: "JWT"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	payloadJSON, err := json.Marshal(claimsToWire(claims))
+	if err != nil {
+		t.Fatal(err)
+	}
+	header := base64.RawURLEncoding.EncodeToString(headerJSON)
+	payload := base64.RawURLEncoding.EncodeToString(payloadJSON)
+	signingInput := header + "." + payload
+	signature := ed25519.Sign(privateKey, []byte(signingInput))
+	return signingInput + "." + base64.RawURLEncoding.EncodeToString(signature)
 }

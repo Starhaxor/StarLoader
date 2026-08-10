@@ -18,6 +18,7 @@
 - Application tokens are Ed25519-signed and expire after one hour.
 - Challenges contain 32 random bytes, expire after two minutes, and are single-use.
 - Device matching weights are TPM 50, SMBIOS UUID 20, motherboard 15, BIOS 5, system disk 5, MachineGuid 5; the acceptance threshold is 70.
+- Request IDs and every server-generated database primary key use canonical UUIDv7; database constraints reject other UUID versions.
 - Never log passwords, full license keys, tokens, complete TPM public keys, or raw hardware serial values.
 - Preserve the user's current uncommitted Qt UI work while moving it into the new repository layout.
 

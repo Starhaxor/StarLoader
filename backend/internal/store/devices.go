@@ -49,7 +49,8 @@ func (locked *LockedChallenge) ListDevices(ctx context.Context) ([]domain.Device
 		select `+deviceColumns+`
 		from devices
 		where license_id = $1 and user_id = $2
-		order by created_at, id`, locked.licenseID, locked.userID)
+		order by created_at, id
+		for update`, locked.licenseID, locked.userID)
 	if err != nil {
 		return nil, fmt.Errorf("list verification devices: %w", err)
 	}

@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -111,8 +112,20 @@ func decodeDeviceVerifyRequest(writer http.ResponseWriter, request *http.Request
 
 func validDeviceVerifyBody(body deviceVerifyRequestBody) bool {
 	sessionID := strings.TrimSpace(body.SessionID)
-	return sessionID != "" && len(sessionID) <= maxDeviceSessionIDBytes && body.Challenge != "" && body.ChallengeSignature != "" &&
+	return sessionID == body.SessionID && len(sessionID) <= maxDeviceSessionIDBytes && validCanonicalUUID(sessionID) && body.Challenge != "" && body.ChallengeSignature != "" &&
 		body.TPMPublicKey != "" && strings.TrimSpace(body.Hardware.Fingerprint) != ""
+}
+
+func validCanonicalUUID(value string) bool {
+	if len(value) != 36 || value[8] != '-' || value[13] != '-' || value[18] != '-' || value[23] != '-' || value != strings.ToLower(value) {
+		return false
+	}
+	compact := strings.NewReplacer("-", "").Replace(value)
+	if len(compact) != 32 {
+		return false
+	}
+	_, err := hex.DecodeString(compact)
+	return err == nil
 }
 
 func (router *Router) writeDeviceVerifyError(writer http.ResponseWriter, request *http.Request, err error) {

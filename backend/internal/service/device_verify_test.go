@@ -112,6 +112,9 @@ func TestDeviceVerifyFailuresDoNotConsumeChallenge(t *testing.T) {
 		{name: "expired challenge", mutate: func(repository *fakeDeviceRepository, _ *VerifyInput) {
 			repository.transaction.challenge.ExpiresAt = now
 		}, want: ErrChallengeExpired},
+		{name: "session explicitly expired", mutate: func(repository *fakeDeviceRepository, _ *VerifyInput) {
+			repository.transaction.session.Status = domain.SessionStatusExpired
+		}, want: ErrChallengeExpired},
 		{name: "revoked license", mutate: func(repository *fakeDeviceRepository, _ *VerifyInput) {
 			repository.transaction.license.Status = domain.LicenseStatusRevoked
 		}, want: ErrLicenseRevoked},
@@ -189,6 +192,41 @@ func TestDeviceVerifyRejectsOversizedOrNonCanonicalBase64BeforeTransaction(t *te
 		if repository.calls != 0 {
 			t.Fatal("invalid encoding reached transaction")
 		}
+	}
+}
+
+func TestDeviceVerifyUsesFullPrecisionPolicyClock(t *testing.T) {
+	base := time.Now().UTC().Truncate(time.Second)
+	now := base.Add(750 * time.Millisecond)
+	alreadyExpired := base.Add(500 * time.Millisecond)
+	for _, test := range []struct {
+		name   string
+		mutate func(*fakeDeviceTransaction)
+		want   error
+	}{
+		{name: "session expired earlier in same second", mutate: func(transaction *fakeDeviceTransaction) {
+			transaction.session.ExpiresAt = alreadyExpired
+		}, want: ErrChallengeExpired},
+		{name: "challenge expired earlier in same second", mutate: func(transaction *fakeDeviceTransaction) {
+			transaction.challenge.ExpiresAt = alreadyExpired
+		}, want: ErrChallengeExpired},
+		{name: "license expired earlier in same second", mutate: func(transaction *fakeDeviceTransaction) {
+			transaction.license.ExpiresAt = alreadyExpired
+		}, want: ErrLicenseExpired},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			repository, input := newVerificationFixture(t, now, 1)
+			test.mutate(repository.transaction)
+			service, _ := newTestDeviceService(t, repository, now)
+
+			_, err := service.Verify(context.Background(), input)
+			if !errors.Is(err, test.want) {
+				t.Fatalf("Verify() error = %v, want %v", err, test.want)
+			}
+			if repository.consumed {
+				t.Fatal("subsecond expiry consumed challenge")
+			}
+		})
 	}
 }
 

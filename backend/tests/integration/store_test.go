@@ -12,6 +12,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"net/http/httptest"
@@ -218,6 +219,119 @@ func TestDeviceVerificationAcceptanceMatrix(t *testing.T) {
 	})
 }
 
+func TestGeneratedDatabaseIDsUseUUIDv7(t *testing.T) {
+	fixture := newPostgresVerificationFixture(t, 1)
+	input := fixture.newInput(t, generateP256Key(t), acceptanceHardware("uuid-v7"), fixture.now.Add(time.Minute))
+	verified, err := fixture.deviceService.Verify(fixture.ctx, input)
+	if err != nil {
+		t.Fatalf("Verify() error = %v", err)
+	}
+	var challengeID string
+	if err := fixture.pool.QueryRow(fixture.ctx, `select id::text from device_challenges where session_id = $1`, input.SessionID).Scan(&challengeID); err != nil {
+		t.Fatalf("read challenge ID: %v", err)
+	}
+	for name, value := range map[string]string{
+		"user": fixture.user.ID, "license": fixture.license.ID, "session": input.SessionID,
+		"challenge": challengeID, "device": verified.DeviceID,
+	} {
+		t.Run(name, func(t *testing.T) { assertUUIDv7(t, value) })
+	}
+}
+
+func assertUUIDv7(t *testing.T, value string) {
+	t.Helper()
+	if len(value) != 36 || value[8] != '-' || value[13] != '-' || value[18] != '-' || value[23] != '-' || value[14] != '7' || !strings.ContainsRune("89ab", rune(value[19])) {
+		t.Fatalf("ID %q is not canonical UUIDv7", value)
+	}
+}
+
+func TestVerificationLocksDeviceRowsAgainstConcurrentRevocation(t *testing.T) {
+	fixture := newPostgresVerificationFixture(t, 1)
+	key := generateP256Key(t)
+	hardware := acceptanceHardware("row-lock")
+	activated, err := fixture.deviceService.Verify(
+		fixture.ctx,
+		fixture.newInput(t, key, hardware, fixture.now.Add(time.Minute)),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pending := fixture.newInput(t, key, hardware, fixture.now.Add(time.Minute))
+
+	verificationConn, err := fixture.pool.Acquire(fixture.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer verificationConn.Release()
+	revocationConn, err := fixture.pool.Acquire(fixture.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer revocationConn.Release()
+	var revocationPID int
+	if err := revocationConn.QueryRow(fixture.ctx, `select pg_backend_pid()`).Scan(&revocationPID); err != nil {
+		t.Fatal(err)
+	}
+
+	decisionRepository := store.New(verificationConn)
+	rowsLocked := make(chan struct{})
+	releaseDecision := make(chan struct{})
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(releaseDecision) }) }
+	defer release()
+	decisionErr := errors.New("decision complete without commit")
+	decisionResult := make(chan error, 1)
+	go func() {
+		decisionResult <- decisionRepository.WithLockedChallenge(fixture.ctx, pending.SessionID, func(locked *store.LockedChallenge) error {
+			if _, err := locked.LockLicense(fixture.ctx); err != nil {
+				return err
+			}
+			devices, err := locked.ListDevices(fixture.ctx)
+			if err != nil {
+				return err
+			}
+			if len(devices) != 1 || devices[0].ID != activated.DeviceID {
+				return fmt.Errorf("locked devices = %#v", devices)
+			}
+			close(rowsLocked)
+			select {
+			case <-releaseDecision:
+				return decisionErr
+			case <-fixture.ctx.Done():
+				return fixture.ctx.Err()
+			}
+		})
+	}()
+	waitForSignal(t, fixture.ctx, rowsLocked, "verification transaction to read device rows")
+
+	const revocationMarker = "/* task9:concurrent-device-revocation */"
+	revocationResult := make(chan error, 1)
+	go func() {
+		_, err := revocationConn.Exec(fixture.ctx, `
+			update `+revocationMarker+` devices
+			set status = 'revoked'
+			where id = $1`, activated.DeviceID)
+		revocationResult <- err
+	}()
+	waitForBackendQueryLockOrCompletion(t, fixture.ctx, fixture.pool, revocationPID, revocationMarker, revocationResult)
+	release()
+
+	if err := receiveResult(t, fixture.ctx, decisionResult); !errors.Is(err, decisionErr) {
+		t.Fatalf("verification decision error = %v, want %v", err, decisionErr)
+	}
+	if err := receiveResult(t, fixture.ctx, revocationResult); err != nil {
+		t.Fatalf("revocation update error = %v", err)
+	}
+	assertChallengeUnconsumed(t, fixture, pending.SessionID)
+	var status domain.DeviceStatus
+	if err := fixture.pool.QueryRow(fixture.ctx, `select status from devices where id = $1`, activated.DeviceID).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status != domain.DeviceStatusRevoked {
+		t.Fatalf("device status = %s, want revoked", status)
+	}
+}
+
 func TestUserAndLicenseRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	base := time.Now().UTC().Truncate(time.Microsecond)
@@ -357,6 +471,10 @@ func TestSchemaRejectsInvalidStatusesAndUnprotectedValues(t *testing.T) {
 		{
 			name: "unnormalized email",
 			sql:  `insert into users (email, password_hash) values ('Mixed@Example.COM', 'hash')`,
+		},
+		{
+			name: "UUIDv4 identifier",
+			sql:  `insert into users (id, email, password_hash) values ('550e8400-e29b-41d4-a716-446655440000', 'uuidv4@example.com', 'hash')`,
 		},
 		{
 			name: "invalid user status",
@@ -698,6 +816,38 @@ func waitForBackendLock(t *testing.T, ctx context.Context, pool *pgxpool.Pool, b
 		case <-poll.C:
 		case <-ctx.Done():
 			t.Fatalf("second backend %d never reported a marked Lock wait: %v", backendPID, ctx.Err())
+		}
+	}
+}
+
+func waitForBackendQueryLockOrCompletion(t *testing.T, ctx context.Context, pool *pgxpool.Pool, backendPID int, marker string, completed <-chan error) {
+	t.Helper()
+	poll := time.NewTicker(10 * time.Millisecond)
+	defer poll.Stop()
+
+	for {
+		select {
+		case err := <-completed:
+			t.Fatalf("query completed before the verification decision released its device rows: %v", err)
+		default:
+		}
+		var waiting bool
+		if err := pool.QueryRow(ctx, `
+			select exists (
+				select 1 from pg_stat_activity
+				where pid = $1 and wait_event_type = 'Lock' and query like '%' || $2 || '%'
+			)`, backendPID, marker).Scan(&waiting); err != nil {
+			t.Fatalf("inspect device-row lock wait: %v", err)
+		}
+		if waiting {
+			return
+		}
+		select {
+		case <-poll.C:
+		case err := <-completed:
+			t.Fatalf("query completed before the verification decision released its device rows: %v", err)
+		case <-ctx.Done():
+			t.Fatalf("backend %d never reported device-row lock wait: %v", backendPID, ctx.Err())
 		}
 	}
 }

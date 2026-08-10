@@ -147,7 +147,7 @@ func (service *DeviceService) Verify(ctx context.Context, input VerifyInput) (Ve
 	if presented.FingerprintHMAC == "" {
 		return VerifiedSession{}, ErrInvalidVerifyRequest
 	}
-	now := service.now().UTC().Truncate(time.Second)
+	policyNow := service.now().UTC()
 	var deviceID, licenseID, userID string
 	err = service.repository.WithLockedChallenge(ctx, sessionID, func(transaction DeviceTransaction) error {
 		session := transaction.PendingSession()
@@ -155,10 +155,13 @@ func (service *DeviceService) Verify(ctx context.Context, input VerifyInput) (Ve
 		if session.ID != sessionID || deviceChallenge.SessionID != sessionID {
 			return ErrInvalidVerifyRequest
 		}
+		if session.Status == domain.SessionStatusExpired {
+			return ErrChallengeExpired
+		}
 		if session.Status != domain.SessionStatusPending {
 			return domain.ErrChallengeConsumed
 		}
-		if !session.ExpiresAt.After(now) || !deviceChallenge.ExpiresAt.After(now) {
+		if !session.ExpiresAt.After(policyNow) || !deviceChallenge.ExpiresAt.After(policyNow) {
 			return ErrChallengeExpired
 		}
 		digest := sha256.Sum256(challenge)
@@ -179,7 +182,7 @@ func (service *DeviceService) Verify(ctx context.Context, input VerifyInput) (Ve
 		if license.Status == domain.LicenseStatusRevoked {
 			return ErrLicenseRevoked
 		}
-		if license.Status == domain.LicenseStatusExpired || !license.ExpiresAt.After(now) {
+		if license.Status == domain.LicenseStatusExpired || !license.ExpiresAt.After(policyNow) {
 			return ErrLicenseExpired
 		}
 		if license.Status != domain.LicenseStatusActive {
@@ -199,7 +202,7 @@ func (service *DeviceService) Verify(ctx context.Context, input VerifyInput) (Ve
 				ID: matched.ID, SMBIOSUUIDHMAC: presented.SMBIOSUUIDHMAC,
 				MotherboardSerialHMAC: presented.MotherboardSerialHMAC, BIOSSerialHMAC: presented.BIOSSerialHMAC,
 				SystemDiskSerialHMAC: presented.SystemDiskSerialHMAC, MachineGuidHMAC: presented.MachineGuidHMAC,
-				FingerprintHMAC: presented.FingerprintHMAC, SeenAt: now,
+				FingerprintHMAC: presented.FingerprintHMAC, SeenAt: policyNow,
 			}); err != nil {
 				return fmt.Errorf("update verified device: %w", err)
 			}
@@ -213,7 +216,7 @@ func (service *DeviceService) Verify(ctx context.Context, input VerifyInput) (Ve
 				TPMPublicKey: publicKey, TPMPublicKeySHA256: presented.TPMPublicKeySHA256,
 				SMBIOSUUIDHMAC: presented.SMBIOSUUIDHMAC, MotherboardSerialHMAC: presented.MotherboardSerialHMAC,
 				BIOSSerialHMAC: presented.BIOSSerialHMAC, SystemDiskSerialHMAC: presented.SystemDiskSerialHMAC,
-				MachineGuidHMAC: presented.MachineGuidHMAC, FingerprintHMAC: presented.FingerprintHMAC, SeenAt: now,
+				MachineGuidHMAC: presented.MachineGuidHMAC, FingerprintHMAC: presented.FingerprintHMAC, SeenAt: policyNow,
 			})
 			if err != nil {
 				return fmt.Errorf("create verified device: %w", err)
@@ -223,7 +226,7 @@ func (service *DeviceService) Verify(ctx context.Context, input VerifyInput) (Ve
 			}
 			deviceID = device.ID
 		}
-		if err := transaction.MarkSessionVerified(ctx, now); err != nil {
+		if err := transaction.MarkSessionVerified(ctx, policyNow); err != nil {
 			return fmt.Errorf("mark verified session: %w", err)
 		}
 		licenseID = license.ID
@@ -234,11 +237,12 @@ func (service *DeviceService) Verify(ctx context.Context, input VerifyInput) (Ve
 		return VerifiedSession{}, err
 	}
 
-	expiresAt := now.Add(sessionTokenLifetime)
+	issuedAt := policyNow.Truncate(time.Second)
+	expiresAt := issuedAt.Add(sessionTokenLifetime)
 	token, err := service.tokenIssuer.Issue(security.SessionClaims{
 		Subject: userID, LicenseID: licenseID, DeviceID: deviceID, Product: service.product,
 		Features: []string{}, Issuer: service.issuer, Audience: service.audience,
-		IssuedAt: now, ExpiresAt: expiresAt,
+		IssuedAt: issuedAt, ExpiresAt: expiresAt,
 	})
 	if err != nil {
 		return VerifiedSession{}, fmt.Errorf("issue verified session token: %w", err)

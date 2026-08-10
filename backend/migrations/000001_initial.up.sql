@@ -1,7 +1,31 @@
 create extension if not exists pgcrypto;
 
+create or replace function starloader_uuid_v7()
+returns uuid
+language plpgsql
+volatile
+set search_path = pg_catalog, public
+as $$
+declare
+    unix_milliseconds bigint;
+    value bytea := public.gen_random_bytes(16);
+begin
+    unix_milliseconds := floor(extract(epoch from clock_timestamp()) * 1000)::bigint;
+    value := set_byte(value, 0, ((unix_milliseconds >> 40) & 255)::integer);
+    value := set_byte(value, 1, ((unix_milliseconds >> 32) & 255)::integer);
+    value := set_byte(value, 2, ((unix_milliseconds >> 24) & 255)::integer);
+    value := set_byte(value, 3, ((unix_milliseconds >> 16) & 255)::integer);
+    value := set_byte(value, 4, ((unix_milliseconds >> 8) & 255)::integer);
+    value := set_byte(value, 5, (unix_milliseconds & 255)::integer);
+    value := set_byte(value, 6, (get_byte(value, 6) & 15) | 112);
+    value := set_byte(value, 8, (get_byte(value, 8) & 63) | 128);
+    return encode(value, 'hex')::uuid;
+end;
+$$;
+
 create table users (
-    id uuid primary key default gen_random_uuid(),
+    id uuid primary key default starloader_uuid_v7()
+        constraint users_id_uuid_v7_check check ((get_byte(uuid_send(id), 6) >> 4) = 7),
     email text not null,
     password_hash text not null,
     status text not null default 'active'
@@ -13,7 +37,8 @@ create table users (
 );
 
 create table licenses (
-    id uuid primary key default gen_random_uuid(),
+    id uuid primary key default starloader_uuid_v7()
+        constraint licenses_id_uuid_v7_check check ((get_byte(uuid_send(id), 6) >> 4) = 7),
     license_hmac text not null,
     user_id uuid not null references users(id) on delete restrict,
     product text not null,
@@ -34,7 +59,8 @@ create index licenses_user_product_status_idx on licenses (user_id, product, sta
 create index licenses_status_expires_at_idx on licenses (status, expires_at);
 
 create table devices (
-    id uuid primary key default gen_random_uuid(),
+    id uuid primary key default starloader_uuid_v7()
+        constraint devices_id_uuid_v7_check check ((get_byte(uuid_send(id), 6) >> 4) = 7),
     user_id uuid not null references users(id) on delete restrict,
     license_id uuid not null,
     tpm_public_key bytea not null,
@@ -68,7 +94,8 @@ create index devices_user_id_idx on devices (user_id);
 create index devices_license_status_idx on devices (license_id, status);
 
 create table auth_sessions (
-    id uuid primary key default gen_random_uuid(),
+    id uuid primary key default starloader_uuid_v7()
+        constraint auth_sessions_id_uuid_v7_check check ((get_byte(uuid_send(id), 6) >> 4) = 7),
     user_id uuid not null references users(id) on delete restrict,
     license_id uuid not null,
     status text not null default 'pending'
@@ -85,7 +112,8 @@ create index auth_sessions_license_id_idx on auth_sessions (license_id);
 create index auth_sessions_status_expires_at_idx on auth_sessions (status, expires_at);
 
 create table device_challenges (
-    id uuid primary key default gen_random_uuid(),
+    id uuid primary key default starloader_uuid_v7()
+        constraint device_challenges_id_uuid_v7_check check ((get_byte(uuid_send(id), 6) >> 4) = 7),
     session_id uuid not null references auth_sessions(id) on delete cascade,
     challenge_sha256 bytea not null
         constraint device_challenges_sha256_length_check check (octet_length(challenge_sha256) = 32),
