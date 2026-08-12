@@ -55,7 +55,7 @@ public:
     AuthState state() const;
     QString sessionToken() const;
     QString deviceDisplayId() const;
-    void login(const QString &email, const QString &password, const QString &licenseKey);
+    void login(const QString &email, const QString &password);
     void cancelAndWait();
 
 signals:
@@ -82,7 +82,7 @@ private:
     QString sessionToken_;
     struct CollectionResult { quint64 attempt = 0; bool success = false; HardwareIdentity identity; QString error; };
     struct SigningResult { quint64 attempt = 0; bool success = false; QByteArray signature; QByteArray publicKey; QString encodedChallenge; QString requestId; QString error; };
-    struct PendingLogin { QString email; QString password; QString licenseKey; };
+    struct PendingLogin { QString email; QString password; };
     QFutureWatcher<CollectionResult> collectionWatcher_;
     QFutureWatcher<SigningResult> signingWatcher_;
     PendingLogin pendingLogin_;

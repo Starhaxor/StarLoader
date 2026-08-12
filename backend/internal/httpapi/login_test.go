@@ -25,7 +25,7 @@ func TestLoginReturnsChallengeAndCorrelatedUUIDv7RequestID(t *testing.T) {
 		ExpiresAt: expiresAt,
 	}}
 	router := NewRouter(RouterConfig{Login: login})
-	req := loginRequest(`{"email":" PERSON@Example.COM ","password":"secret","license_key":"aaaa-bbbb","device_fingerprint":"fingerprint"}`)
+	req := loginRequest(`{"email":" PERSON@Example.COM ","password":"secret","device_fingerprint":"fingerprint"}`)
 	rr := httptest.NewRecorder()
 
 	router.ServeHTTP(rr, req)
@@ -45,14 +45,24 @@ func TestLoginReturnsChallengeAndCorrelatedUUIDv7RequestID(t *testing.T) {
 	if !response.OK || response.SessionID != "session-1" || response.Challenge != base64.StdEncoding.EncodeToString(login.pending.Challenge) || response.ChallengeExpiresAt != "2026-08-10T09:32:00Z" {
 		t.Fatalf("response = %#v", response)
 	}
-	if login.input.Email != " PERSON@Example.COM " || login.input.LicenseKey != "aaaa-bbbb" {
+	if login.input.Email != " PERSON@Example.COM " || login.input.Password != "secret" || login.input.DeviceFingerprint != "fingerprint" {
 		t.Fatalf("Login() input = %#v", login.input)
 	}
 }
 
+func TestLoginRejectsLegacyLicenseKeyField(t *testing.T) {
+	router := NewRouter(RouterConfig{Login: &fakeLoginService{}})
+	req := loginRequest(`{"email":"a@b.c","password":"x","device_fingerprint":"F","license_key":"K"}`)
+	rr := httptest.NewRecorder()
+
+	router.ServeHTTP(rr, req)
+
+	assertErrorResponse(t, rr, http.StatusBadRequest, "INVALID_REQUEST")
+}
+
 func TestLoginRejectsUnknownJSONField(t *testing.T) {
 	router := NewRouter(RouterConfig{Login: &fakeLoginService{}})
-	req := loginRequest(`{"email":"a@b.c","password":"x","license_key":"K","device_fingerprint":"F","extra":true}`)
+	req := loginRequest(`{"email":"a@b.c","password":"x","device_fingerprint":"F","extra":true}`)
 	rr := httptest.NewRecorder()
 
 	router.ServeHTTP(rr, req)
@@ -62,7 +72,7 @@ func TestLoginRejectsUnknownJSONField(t *testing.T) {
 
 func TestLoginRejectsMultipleJSONValues(t *testing.T) {
 	router := NewRouter(RouterConfig{Login: &fakeLoginService{}})
-	req := loginRequest(`{"email":"a@b.c","password":"x","license_key":"K","device_fingerprint":"F"} {}`)
+	req := loginRequest(`{"email":"a@b.c","password":"x","device_fingerprint":"F"} {}`)
 	rr := httptest.NewRecorder()
 
 	router.ServeHTTP(rr, req)
@@ -100,7 +110,7 @@ func TestLoginAcceptsJSONMediaTypeParameters(t *testing.T) {
 
 func TestLoginRejectsBodyLargerThan64KiB(t *testing.T) {
 	router := NewRouter(RouterConfig{Login: &fakeLoginService{}})
-	req := loginRequest(`{"email":"a@b.c","password":"` + strings.Repeat("x", 64*1024) + `","license_key":"K","device_fingerprint":"F"}`)
+	req := loginRequest(`{"email":"a@b.c","password":"` + strings.Repeat("x", 64*1024) + `","device_fingerprint":"F"}`)
 	rr := httptest.NewRecorder()
 
 	router.ServeHTTP(rr, req)
@@ -110,10 +120,9 @@ func TestLoginRejectsBodyLargerThan64KiB(t *testing.T) {
 
 func TestLoginRejectsMissingRequiredFields(t *testing.T) {
 	for _, body := range []string{
-		`{"email":"","password":"x","license_key":"K","device_fingerprint":"F"}`,
-		`{"email":"a@b.c","password":"","license_key":"K","device_fingerprint":"F"}`,
-		`{"email":"a@b.c","password":"x","license_key":" ","device_fingerprint":"F"}`,
-		`{"email":"a@b.c","password":"x","license_key":"K","device_fingerprint":" "}`,
+		`{"email":"","password":"x","device_fingerprint":"F"}`,
+		`{"email":"a@b.c","password":"","device_fingerprint":"F"}`,
+		`{"email":"a@b.c","password":"x","device_fingerprint":" "}`,
 	} {
 		t.Run(body, func(t *testing.T) {
 			router := NewRouter(RouterConfig{Login: &fakeLoginService{}})
@@ -329,7 +338,7 @@ func TestHealthzBoundsDependencyCheckDuration(t *testing.T) {
 	}
 }
 
-const validLoginJSON = `{"email":"a@b.c","password":"x","license_key":"K","device_fingerprint":"F"}`
+const validLoginJSON = `{"email":"a@b.c","password":"x","device_fingerprint":"F"}`
 
 type fakeLoginService struct {
 	pending    service.PendingChallenge

@@ -1,5 +1,7 @@
 package domain
 
+import "errors"
+
 // NotFoundError identifies a missing domain entity without exposing database
 // implementation details.
 type NotFoundError struct {
@@ -11,9 +13,10 @@ func (e *NotFoundError) Error() string {
 }
 
 var (
-	ErrUserNotFound      = &NotFoundError{Entity: "user"}
-	ErrLicenseNotFound   = &NotFoundError{Entity: "license"}
-	ErrChallengeNotFound = &NotFoundError{Entity: "challenge"}
+	ErrUserNotFound         = &NotFoundError{Entity: "user"}
+	ErrLicenseNotFound      = &NotFoundError{Entity: "license"}
+	ErrLicenseAlreadyExists = errors.New("license already exists for user and product")
+	ErrChallengeNotFound    = &NotFoundError{Entity: "challenge"}
 )
 
 // ChallengeConsumedError marks the single-use challenge conflict while

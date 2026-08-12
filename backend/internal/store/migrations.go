@@ -9,17 +9,36 @@ import (
 	"github.com/starloader/backend/migrations"
 )
 
-const (
-	initialMigrationVersion int64 = 1
-	migrationAdvisoryLock   int64 = 0x535441524c4f4144 // "STARLOAD"
-)
+const migrationAdvisoryLock int64 = 0x535441524c4f4144 // "STARLOAD"
+
+type migration struct {
+	version int64
+	up      string
+	down    string
+}
+
+var versionedMigrations = []migration{
+	{version: 1, up: "000001_initial.up.sql", down: "000001_initial.down.sql"},
+	{version: 2, up: "000002_single_license_per_product.up.sql", down: "000002_single_license_per_product.down.sql"},
+}
 
 func MigrateUp(ctx context.Context, pool *pgxpool.Pool) error {
-	return executeVersionedMigration(ctx, pool, initialMigrationVersion, "000001_initial.up.sql", true)
+	for _, migration := range versionedMigrations {
+		if err := executeVersionedMigration(ctx, pool, migration.version, migration.up, true); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func MigrateDown(ctx context.Context, pool *pgxpool.Pool) error {
-	return executeVersionedMigration(ctx, pool, initialMigrationVersion, "000001_initial.down.sql", false)
+	for i := len(versionedMigrations) - 1; i >= 0; i-- {
+		migration := versionedMigrations[i]
+		if err := executeVersionedMigration(ctx, pool, migration.version, migration.down, false); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func executeVersionedMigration(ctx context.Context, pool *pgxpool.Pool, version int64, name string, up bool) error {

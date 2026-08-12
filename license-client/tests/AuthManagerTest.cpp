@@ -115,8 +115,9 @@ void AuthManagerTest::reachesAuthenticatedOnlyAfterVerifiedDeviceToken()
     FakeApiClient api; FakeHardwareCollector collector; FakeDeviceSigner signer;
     AuthManager manager(api, collector, signer, verifier());
     QSignalSpy states(&manager, &AuthManager::stateChanged);
-    manager.login(QStringLiteral("person@example.com"), QStringLiteral("password"), QStringLiteral("license-key"));
+    manager.login(QStringLiteral("person@example.com"), QStringLiteral("password"));
     QTRY_COMPARE(api.loginCount, 1);
+    QCOMPARE(api.lastLogin.email, QStringLiteral("person@example.com"));
     QCOMPARE(api.lastLogin.deviceFingerprint, QStringLiteral("ABCDEF1234567890"));
     api.completeLogin(challengeResponse());
     QTRY_COMPARE(api.verifyCount, 1);
@@ -136,7 +137,7 @@ void AuthManagerTest::failsBeforeNetworkWhenTpmIsUnavailable()
 {
     FakeApiClient api; FakeHardwareCollector collector; FakeDeviceSigner signer; collector.succeeds = false;
     AuthManager manager(api, collector, signer, verifier());
-    manager.login(QStringLiteral("a@b.c"), QStringLiteral("p"), QStringLiteral("l"));
+    manager.login(QStringLiteral("a@b.c"), QStringLiteral("p"));
     QTRY_COMPARE(manager.state(), AuthState::Failed);
     QCOMPARE(api.loginCount, 0);
     QCOMPARE(manager.state(), AuthState::Failed);
@@ -146,19 +147,19 @@ void AuthManagerTest::failsForLoginChallengeSigningAndDeviceErrors()
 {
     FakeApiClient api; FakeHardwareCollector collector; FakeDeviceSigner signer;
     AuthManager manager(api, collector, signer, verifier());
-    manager.login(QStringLiteral("a@b.c"), QStringLiteral("p"), QStringLiteral("l"));
+    manager.login(QStringLiteral("a@b.c"), QStringLiteral("p"));
     QTRY_COMPARE(api.loginCount, 1);
     api.rejectLogin({QStringLiteral("INVALID_CREDENTIALS"), {}, {}});
     QCOMPARE(manager.state(), AuthState::Failed);
-    manager.login(QStringLiteral("a@b.c"), QStringLiteral("p"), QStringLiteral("l"));
+    manager.login(QStringLiteral("a@b.c"), QStringLiteral("p"));
     QTRY_COMPARE(api.loginCount, 2);
     api.completeLogin({QStringLiteral("session"), QStringLiteral("bad-base64"), {}, {}});
     QCOMPARE(manager.state(), AuthState::Failed);
-    manager.login(QStringLiteral("a@b.c"), QStringLiteral("p"), QStringLiteral("l"));
+    manager.login(QStringLiteral("a@b.c"), QStringLiteral("p"));
     QTRY_COMPARE(api.loginCount, 3);
     signer.succeeds = false; api.completeLogin(challengeResponse());
     QTRY_COMPARE(manager.state(), AuthState::Failed);
-    signer.succeeds = true; manager.login(QStringLiteral("a@b.c"), QStringLiteral("p"), QStringLiteral("l")); QTRY_COMPARE(api.loginCount, 4);
+    signer.succeeds = true; manager.login(QStringLiteral("a@b.c"), QStringLiteral("p")); QTRY_COMPARE(api.loginCount, 4);
     api.completeLogin(challengeResponse()); QTRY_COMPARE(api.verifyCount, 1); api.rejectVerify({QStringLiteral("DEVICE_REVOKED"), {}, {}});
     QCOMPARE(manager.state(), AuthState::Failed);
 }
@@ -167,7 +168,7 @@ void AuthManagerTest::failsForInvalidTokenWithoutAuthenticatedState()
 {
     FakeApiClient api; FakeHardwareCollector collector; FakeDeviceSigner signer;
     AuthManager manager(api, collector, signer, verifier()); QSignalSpy states(&manager, &AuthManager::stateChanged);
-    manager.login(QStringLiteral("a@b.c"), QStringLiteral("p"), QStringLiteral("l")); QTRY_COMPARE(api.loginCount, 1); api.completeLogin(challengeResponse()); QTRY_COMPARE(api.verifyCount, 1);
+    manager.login(QStringLiteral("a@b.c"), QStringLiteral("p")); QTRY_COMPARE(api.loginCount, 1); api.completeLogin(challengeResponse()); QTRY_COMPARE(api.verifyCount, 1);
     QJsonObject claims = validClaims(); claims[QStringLiteral("device_id")] = QStringLiteral("other-device");
     api.completeVerify(verifiedResponse(tokenFor(claims)));
     QCOMPARE(manager.state(), AuthState::Failed);
@@ -192,7 +193,7 @@ void AuthManagerTest::signsDeviceChallengeWithoutBlockingManagerThread()
 {
     FakeApiClient api; FakeHardwareCollector collector; BlockingDeviceSigner signer;
     AuthManager manager(api, collector, signer, verifier());
-    manager.login(QStringLiteral("a@b.c"), QStringLiteral("p"), QStringLiteral("l"));
+    manager.login(QStringLiteral("a@b.c"), QStringLiteral("p"));
     QTRY_COMPARE(api.loginCount, 1);
 
     std::thread releaser([&signer] { QThread::msleep(200); signer.release.release(); });
@@ -203,7 +204,7 @@ void AuthManagerTest::signsDeviceChallengeWithoutBlockingManagerThread()
 
     QVERIFY2(deliveryMilliseconds < 100, qPrintable(QStringLiteral("challenge delivery blocked for %1 ms").arg(deliveryMilliseconds)));
     QCOMPARE(manager.state(), AuthState::VerifyingDevice);
-    manager.login(QStringLiteral("other@b.c"), QStringLiteral("other"), QStringLiteral("other"));
+    manager.login(QStringLiteral("other@b.c"), QStringLiteral("other"));
     QCOMPARE(api.loginCount, 1);
     QTRY_COMPARE(api.verifyCount, 1);
 }
@@ -212,7 +213,7 @@ void AuthManagerTest::destructionWaitsForInFlightSigning()
 {
     FakeApiClient api; FakeHardwareCollector collector; BlockingDeviceSigner signer;
     auto manager = std::make_unique<AuthManager>(api, collector, signer, verifier());
-    manager->login(QStringLiteral("a@b.c"), QStringLiteral("p"), QStringLiteral("l"));
+    manager->login(QStringLiteral("a@b.c"), QStringLiteral("p"));
     QTRY_COMPARE(api.loginCount, 1);
     api.completeLogin(challengeResponse());
     QVERIFY(signer.entered.tryAcquire(1, 1000));

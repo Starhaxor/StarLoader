@@ -102,7 +102,7 @@
       <item>
        <widget class="QLineEdit" name="emailLineEdit">
         <property name="placeholderText">
-         <string>E-posta</string>
+         <string>Email address</string>
         </property>
         <property name="clearButtonEnabled">
          <bool>true</bool>
@@ -116,23 +116,6 @@
         </property>
         <property name="placeholderText">
          <string>Password</string>
-        </property>
-       </widget>
-      </item>
-      <item>
-       <widget class="QLineEdit" name="licenseKeyLineEdit">
-        <property name="placeholderText">
-         <string>Lisans anahtarı</string>
-        </property>
-       </widget>
-      </item>
-      <item>
-       <widget class="QLineEdit" name="deviceIdLineEdit">
-        <property name="readOnly">
-         <bool>true</bool>
-        </property>
-        <property name="placeholderText">
-         <string>Cihaz kimliği</string>
         </property>
        </widget>
       </item>
@@ -152,7 +135,7 @@
       <item>
        <widget class="QLabel" name="statusLabel">
         <property name="text">
-         <string>Giriş bilgilerinizi girin.</string>
+         <string>Enter your email address and password.</string>
         </property>
         <property name="alignment">
          <set>Qt::AlignmentFlag::AlignCenter</set>
@@ -176,6 +159,25 @@
         </property>
        </widget>
       </item>
+      <item>
+       <widget class="QLabel" name="hwidLink">
+        <property name="text">
+         <string>&lt;a href=&quot;hwid&quot;&gt;View device ID&lt;/a&gt;</string>
+        </property>
+        <property name="textFormat">
+         <enum>Qt::TextFormat::RichText</enum>
+        </property>
+        <property name="textInteractionFlags">
+         <set>Qt::TextInteractionFlag::LinksAccessibleByKeyboard|Qt::TextInteractionFlag::LinksAccessibleByMouse</set>
+        </property>
+        <property name="openExternalLinks">
+         <bool>false</bool>
+        </property>
+        <property name="alignment">
+         <set>Qt::AlignmentFlag::AlignCenter</set>
+        </property>
+       </widget>
+      </item>
       </layout>
      </widget>
     </item>
@@ -185,7 +187,6 @@
  <tabstops>
   <tabstop>emailLineEdit</tabstop>
   <tabstop>passwordLineEdit</tabstop>
-  <tabstop>licenseKeyLineEdit</tabstop>
   <tabstop>loginButton</tabstop>
  </tabstops>
  <resources/>

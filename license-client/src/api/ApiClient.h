@@ -15,7 +15,7 @@ struct HardwareSignals
     QString fingerprint;
 };
 
-struct LoginRequest { QString email; QString password; QString licenseKey; QString deviceFingerprint; };
+struct LoginRequest { QString email; QString password; QString deviceFingerprint; };
 struct LoginResponse { QString sessionId; QString challenge; QString challengeExpiresAt; QString requestId; };
 struct DeviceVerifyRequest { QString sessionId; QString challenge; QString challengeSignature; QString tpmPublicKey; HardwareSignals hardware; };
 struct DeviceVerifyResponse { QString token; QString tokenExpiresAt; QString licenseId; QString deviceId; QString requestId; };
