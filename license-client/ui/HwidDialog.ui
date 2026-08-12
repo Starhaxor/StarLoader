@@ -5,9 +5,6 @@
   <property name="windowModality">
    <enum>Qt::WindowModality::ApplicationModal</enum>
   </property>
-  <property name="enabled">
-   <bool>false</bool>
-  </property>
   <property name="geometry">
    <rect>
     <x>0</x>
@@ -60,7 +57,7 @@
    <item>
     <widget class="QLabel" name="descriptionLabel">
      <property name="text">
-      <string>This code is unique to your device. Only share it with support.</string>
+      <string>Calculating device ID…</string>
      </property>
      <property name="wordWrap">
       <bool>true</bool>
@@ -97,9 +94,12 @@
        <property name="cursor">
         <cursorShape>PointingHandCursor</cursorShape>
        </property>
-       <property name="text">
-        <string>Copy code</string>
-       </property>
+      <property name="text">
+       <string>Copy code</string>
+      </property>
+      <property name="enabled">
+       <bool>false</bool>
+      </property>
        <property name="default">
         <bool>true</bool>
        </property>
