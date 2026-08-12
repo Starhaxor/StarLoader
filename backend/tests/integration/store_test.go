@@ -28,6 +28,7 @@ import (
 	"github.com/starloader/backend/internal/security"
 	"github.com/starloader/backend/internal/service"
 	"github.com/starloader/backend/internal/store"
+	"github.com/starloader/backend/migrations"
 )
 
 func TestDeviceVerificationAcceptanceMatrix(t *testing.T) {
@@ -371,12 +372,32 @@ func TestUserAndLicenseRoundTrip(t *testing.T) {
 		t.Fatalf("CreateLicense() error = %v", err)
 	}
 
-	foundLicense, err := repository.FindLicenseByHMAC(ctx, licenseHMAC)
+	foundLicense, err := repository.FindLicenseByUserAndProduct(ctx, createdUser.ID, "StarLoader")
 	if err != nil {
-		t.Fatalf("FindLicenseByHMAC() error = %v", err)
+		t.Fatalf("FindLicenseByUserAndProduct() error = %v", err)
 	}
 	if foundLicense.ID != createdLicense.ID || foundLicense.UserID != createdUser.ID || foundLicense.LicenseHMAC != licenseHMAC || foundLicense.Product != "StarLoader" || foundLicense.Status != domain.LicenseStatusActive || foundLicense.MaxDevices != 2 || !foundLicense.ExpiresAt.Equal(expiresAt) {
-		t.Fatalf("FindLicenseByHMAC() = %#v", foundLicense)
+		t.Fatalf("FindLicenseByUserAndProduct() = %#v", foundLicense)
+	}
+}
+
+func TestSingleLicensePerUserProduct(t *testing.T) {
+	ctx := context.Background()
+	base := time.Now().UTC().Truncate(time.Microsecond)
+	pool := openTestPool(t, ctx)
+	resetAndMigrate(t, ctx, pool)
+	repository := store.New(pool)
+	user, _ := createUserAndLicense(t, ctx, repository, "single-license@example.com", base)
+
+	_, err := repository.CreateLicense(ctx, domain.NewLicense{
+		LicenseHMAC: "cf038a1bf56e961e35dc7252eb82f800553db70ab311e7f88d85afc739128e7e",
+		UserID:      user.ID,
+		Product:     "StarLoader",
+		MaxDevices:  2,
+		ExpiresAt:   base.Add(60 * 24 * time.Hour),
+	})
+	if !errors.Is(err, domain.ErrLicenseAlreadyExists) {
+		t.Fatalf("CreateLicense() error = %v, want %v", err, domain.ErrLicenseAlreadyExists)
 	}
 }
 
@@ -548,11 +569,64 @@ func TestMigrationUpIsIdempotentAndTracked(t *testing.T) {
 		t.Fatalf("second MigrateUp() error = %v", err)
 	}
 	var applied int
-	if err := pool.QueryRow(ctx, `select count(*) from schema_migrations where version = 1`).Scan(&applied); err != nil {
+	if err := pool.QueryRow(ctx, `select count(*) from schema_migrations where version in (1, 2)`).Scan(&applied); err != nil {
 		t.Fatalf("read schema migration version: %v", err)
 	}
-	if applied != 1 {
-		t.Fatalf("applied migration rows = %d, want 1", applied)
+	if applied != 2 {
+		t.Fatalf("applied migration rows = %d, want 2", applied)
+	}
+}
+
+func TestMigrationUpgradesVersionOneSchema(t *testing.T) {
+	ctx := context.Background()
+	pool := openTestPool(t, ctx)
+	resetToVersionOne(t, ctx, pool)
+
+	if err := store.MigrateUp(ctx, pool); err != nil {
+		t.Fatalf("MigrateUp() error = %v", err)
+	}
+
+	var applied int
+	if err := pool.QueryRow(ctx, `select count(*) from schema_migrations where version in (1, 2)`).Scan(&applied); err != nil {
+		t.Fatalf("read schema migration versions: %v", err)
+	}
+	if applied != 2 {
+		t.Fatalf("applied migration rows = %d, want 2", applied)
+	}
+}
+
+func TestMigrationVersionTwoRejectsExistingDuplicateLicenses(t *testing.T) {
+	ctx := context.Background()
+	pool := openTestPool(t, ctx)
+	resetToVersionOne(t, ctx, pool)
+	repository := store.New(pool)
+	user, _ := createUserAndLicense(t, ctx, repository, "duplicate-migration@example.com", time.Now().UTC())
+	if _, err := repository.CreateLicense(ctx, domain.NewLicense{
+		LicenseHMAC: "9a2d43a5aaafcab6f63b9ec10fbe45d47b628d39cf1fd4f00bf21a4e6123a941",
+		UserID:      user.ID,
+		Product:     "StarLoader",
+		MaxDevices:  1,
+		ExpiresAt:   time.Now().UTC().Add(24 * time.Hour),
+	}); err != nil {
+		t.Fatalf("create duplicate fixture: %v", err)
+	}
+
+	if err := store.MigrateUp(ctx, pool); err == nil {
+		t.Fatal("MigrateUp() unexpectedly accepted duplicate user/product licenses")
+	}
+	var licenseCount int
+	if err := pool.QueryRow(ctx, `select count(*) from licenses where user_id = $1 and product = 'StarLoader'`, user.ID).Scan(&licenseCount); err != nil {
+		t.Fatalf("count duplicate licenses: %v", err)
+	}
+	if licenseCount != 2 {
+		t.Fatalf("duplicate licenses after rejected migration = %d, want 2", licenseCount)
+	}
+	var versionTwoApplied bool
+	if err := pool.QueryRow(ctx, `select exists(select 1 from schema_migrations where version = 2)`).Scan(&versionTwoApplied); err != nil {
+		t.Fatalf("read migration version 2: %v", err)
+	}
+	if versionTwoApplied {
+		t.Fatal("failed version 2 migration was recorded as applied")
 	}
 }
 
@@ -578,11 +652,11 @@ func TestConcurrentMigrationUpIsSerialized(t *testing.T) {
 		}
 	}
 	var applied int
-	if err := pool.QueryRow(ctx, `select count(*) from schema_migrations where version = 1`).Scan(&applied); err != nil {
+	if err := pool.QueryRow(ctx, `select count(*) from schema_migrations where version in (1, 2)`).Scan(&applied); err != nil {
 		t.Fatal(err)
 	}
-	if applied != 1 {
-		t.Fatalf("applied migration rows = %d, want 1", applied)
+	if applied != 2 {
+		t.Fatalf("applied migration rows = %d, want 2", applied)
 	}
 }
 
@@ -805,6 +879,28 @@ func resetAndMigrate(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 	}
 	if err := store.MigrateUp(ctx, pool); err != nil {
 		t.Fatalf("MigrateUp() error = %v", err)
+	}
+}
+
+func resetToVersionOne(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
+	t.Helper()
+	if _, err := pool.Exec(ctx, "drop schema public cascade; create schema public"); err != nil {
+		t.Fatalf("reset schema: %v", err)
+	}
+	initialSQL, err := migrations.Files.ReadFile("000001_initial.up.sql")
+	if err != nil {
+		t.Fatalf("read initial migration: %v", err)
+	}
+	if _, err := pool.Exec(ctx, string(initialSQL)); err != nil {
+		t.Fatalf("execute initial migration: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		create table schema_migrations (
+			version bigint primary key,
+			applied_at timestamptz not null default clock_timestamp()
+		);
+		insert into schema_migrations (version) values (1)`); err != nil {
+		t.Fatalf("record initial migration: %v", err)
 	}
 }
 
