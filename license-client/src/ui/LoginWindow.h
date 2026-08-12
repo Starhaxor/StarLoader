@@ -32,7 +32,7 @@ private:
     void startLogin();
     void applyState(AuthState state);
     void showFailure(const ApiError &error);
-    static QString safeTurkishMessage(const ApiError &error);
+    static QString safeMessage(const ApiError &error);
 };
 
 #endif

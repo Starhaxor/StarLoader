@@ -27,6 +27,7 @@ LoginWindow::LoginWindow(QWidget *parent)
     authManager_ = new AuthManager(*apiClient_, *hardwareCollector_, *deviceSigner_, verifier, this);
 
     connect(ui->loginButton, &QPushButton::clicked, this, &LoginWindow::startLogin);
+    connect(ui->hwidLink, &QLabel::linkActivated, this, &LoginWindow::openHwidDialog);
     connect(authManager_, &AuthManager::stateChanged, this, &LoginWindow::applyState);
     connect(authManager_, &AuthManager::statusChanged, ui->statusLabel, &QLabel::setText);
     connect(authManager_, &AuthManager::failed, this, &LoginWindow::showFailure);
@@ -40,7 +41,9 @@ LoginWindow::~LoginWindow()
 
 void LoginWindow::openHwidDialog()
 {
-    HwidDialog dialog(this);
+    if (!ui->hwidLink->isEnabled()) return;
+
+    HwidDialog dialog(*hardwareCollector_, this);
     dialog.exec();
 }
 
@@ -50,7 +53,7 @@ void LoginWindow::startLogin()
     ui->statusLabel->style()->unpolish(ui->statusLabel);
     ui->statusLabel->style()->polish(ui->statusLabel);
     ui->requestIdLabel->clear();
-    authManager_->login(ui->emailLineEdit->text(), ui->passwordLineEdit->text(), ui->licenseKeyLineEdit->text());
+    authManager_->login(ui->emailLineEdit->text(), ui->passwordLineEdit->text());
 }
 
 void LoginWindow::applyState(AuthState state)
@@ -58,21 +61,20 @@ void LoginWindow::applyState(AuthState state)
     const bool busy = state == AuthState::CollectingDevice || state == AuthState::Authenticating || state == AuthState::WaitingForDeviceChallenge || state == AuthState::VerifyingDevice;
     ui->emailLineEdit->setEnabled(!busy);
     ui->passwordLineEdit->setEnabled(!busy);
-    ui->licenseKeyLineEdit->setEnabled(!busy);
     ui->loginButton->setEnabled(!busy);
-    if (!authManager_->deviceDisplayId().isEmpty()) ui->deviceIdLineEdit->setText(authManager_->deviceDisplayId());
+    ui->hwidLink->setEnabled(!busy);
 }
 
-QString LoginWindow::safeTurkishMessage(const ApiError &error)
+QString LoginWindow::safeMessage(const ApiError &error)
 {
-    if (error.code == QStringLiteral("INVALID_CREDENTIALS")) return QStringLiteral("E-posta veya parola hatalı.");
-    if (error.code == QStringLiteral("LICENSE_EXPIRED")) return QStringLiteral("Lisansın süresi dolmuş.");
-    if (error.code == QStringLiteral("LICENSE_REVOKED")) return QStringLiteral("Lisans devre dışı bırakılmış.");
-    if (error.code == QStringLiteral("DEVICE_LIMIT_REACHED")) return QStringLiteral("Cihaz sınırına ulaşıldı.");
-    if (error.code == QStringLiteral("DEVICE_REVOKED")) return QStringLiteral("Bu cihaz devre dışı bırakılmış.");
-    if (error.code == QStringLiteral("RATE_LIMITED")) return QStringLiteral("Çok fazla deneme yapıldı. Lütfen bekleyin.");
-    if (error.code == QStringLiteral("TPM_UNAVAILABLE")) return QStringLiteral("TPM güvenlik donanımı kullanılamıyor.");
-    return QStringLiteral("Giriş tamamlanamadı. Lütfen tekrar deneyin.");
+    if (error.code == QStringLiteral("INVALID_CREDENTIALS")) return QStringLiteral("Email address or password is incorrect.");
+    if (error.code == QStringLiteral("LICENSE_EXPIRED")) return QStringLiteral("Your license has expired.");
+    if (error.code == QStringLiteral("LICENSE_REVOKED")) return QStringLiteral("Your license has been revoked.");
+    if (error.code == QStringLiteral("DEVICE_LIMIT_REACHED")) return QStringLiteral("The device limit has been reached.");
+    if (error.code == QStringLiteral("DEVICE_REVOKED")) return QStringLiteral("This device has been revoked.");
+    if (error.code == QStringLiteral("RATE_LIMITED")) return QStringLiteral("Too many attempts. Please wait and try again.");
+    if (error.code == QStringLiteral("TPM_UNAVAILABLE")) return QStringLiteral("Device security hardware is unavailable.");
+    return QStringLiteral("Sign-in could not be completed. Please try again.");
 }
 
 void LoginWindow::showFailure(const ApiError &error)
@@ -80,6 +82,6 @@ void LoginWindow::showFailure(const ApiError &error)
     ui->statusLabel->setProperty("state", "error");
     ui->statusLabel->style()->unpolish(ui->statusLabel);
     ui->statusLabel->style()->polish(ui->statusLabel);
-    ui->statusLabel->setText(safeTurkishMessage(error));
-    ui->requestIdLabel->setText(error.requestId.isEmpty() ? QString() : QStringLiteral("Destek kodu: %1").arg(error.requestId));
+    ui->statusLabel->setText(safeMessage(error));
+    ui->requestIdLabel->setText(error.requestId.isEmpty() ? QString() : QStringLiteral("Support code: %1").arg(error.requestId));
 }

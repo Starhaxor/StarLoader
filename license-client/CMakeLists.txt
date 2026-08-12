@@ -71,6 +71,11 @@ qt_add_executable(HwidDialogTest
     tests/HwidDialogTest.cpp
 )
 
+qt_add_executable(LoginWindowUiTest
+    ui/LoginWindow.ui
+    tests/LoginWindowUiTest.cpp
+)
+
 target_link_libraries(LicenseClient PRIVATE
     DeviceIdentityShared
     Qt6::Core
@@ -89,6 +94,7 @@ target_link_libraries(ApiClientTest PRIVATE Qt6::Core Qt6::Network Qt6::Test)
 target_link_libraries(AuthManagerTest PRIVATE DeviceIdentityShared Qt6::Core Qt6::Network Qt6::Concurrent Qt6::Test OpenSSL::Crypto)
 target_link_libraries(SessionTokenVerifierTest PRIVATE Qt6::Core Qt6::Test OpenSSL::Crypto)
 target_link_libraries(HwidDialogTest PRIVATE DeviceIdentityShared Qt6::Widgets Qt6::Concurrent Qt6::Test)
+target_link_libraries(LoginWindowUiTest PRIVATE Qt6::Widgets Qt6::Test)
 
 target_include_directories(ApiClientTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_include_directories(AuthManagerTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_SOURCE_DIR}/shared)
@@ -99,16 +105,22 @@ add_test(NAME ApiClientTest COMMAND ApiClientTest)
 add_test(NAME AuthManagerTest COMMAND AuthManagerTest)
 add_test(NAME SessionTokenVerifierTest COMMAND SessionTokenVerifierTest)
 add_test(NAME HwidDialogTest COMMAND HwidDialogTest)
-foreach(test_name IN ITEMS ApiClientTest AuthManagerTest SessionTokenVerifierTest HwidDialogTest)
+add_test(NAME LoginWindowUiTest COMMAND LoginWindowUiTest)
+foreach(test_name IN ITEMS ApiClientTest AuthManagerTest SessionTokenVerifierTest HwidDialogTest LoginWindowUiTest)
     set_tests_properties(${test_name} PROPERTIES
         ENVIRONMENT "PATH=$<TARGET_FILE_DIR:Qt6::Core>\\;${OPENSSL_CRYPTO_RUNTIME_DIR}\\;$ENV{PATH}")
 endforeach()
 set_property(TEST HwidDialogTest APPEND PROPERTY ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+set_property(TEST LoginWindowUiTest APPEND PROPERTY ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
 set_target_properties(LicenseClient PROPERTIES
     AUTOUIC_SEARCH_PATHS "${CMAKE_CURRENT_SOURCE_DIR}/ui"
 )
 
 set_target_properties(HwidDialogTest PROPERTIES
+    AUTOUIC_SEARCH_PATHS "${CMAKE_CURRENT_SOURCE_DIR}/ui"
+)
+
+set_target_properties(LoginWindowUiTest PROPERTIES
     AUTOUIC_SEARCH_PATHS "${CMAKE_CURRENT_SOURCE_DIR}/ui"
 )
