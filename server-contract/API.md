@@ -20,10 +20,11 @@ Veritabanı hazır değilse `503 SERVER_ERROR` döner.
 {
   "email": "user@example.com",
   "password": "example-only",
-  "license_key": "01234567-89ABCDEF-FEDCBA98-76543210",
   "device_fingerprint": "64-character-client-fingerprint"
 }
 ```
+
+Sunucu parolayı doğruladıktan sonra lisansı doğrulanmış kullanıcı ve yapılandırılmış ürün üzerinden bulur. Kullanıcı ve ürün çifti başına tek lisans bulunur.
 
 Başarılı yanıt (`200`):
 

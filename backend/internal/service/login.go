@@ -31,7 +31,6 @@ var (
 type LoginInput struct {
 	Email             string
 	Password          string
-	LicenseKey        string
 	DeviceFingerprint string
 }
 
@@ -43,23 +42,21 @@ type PendingChallenge struct {
 
 type LoginRepository interface {
 	FindUserByEmail(context.Context, string) (*domain.User, error)
-	FindLicenseByHMAC(context.Context, string) (*domain.License, error)
+	FindLicenseByUserAndProduct(context.Context, string, string) (*domain.License, error)
 	CreatePendingSession(context.Context, domain.NewPendingSession) (*domain.PendingSession, error)
 }
 
 type LoginService struct {
 	repository     LoginRepository
-	licenseHMACKey []byte
 	product        string
 	random         io.Reader
 	now            func() time.Time
 	verifyPassword func(string, string) (bool, error)
 }
 
-func NewLoginService(repository LoginRepository, licenseHMACKey []byte, product string) *LoginService {
+func NewLoginService(repository LoginRepository, product string) *LoginService {
 	return &LoginService{
 		repository:     repository,
-		licenseHMACKey: append([]byte(nil), licenseHMACKey...),
 		product:        product,
 		random:         rand.Reader,
 		now:            time.Now,
@@ -95,9 +92,7 @@ func (service *LoginService) Login(ctx context.Context, input LoginInput) (Pendi
 		return PendingChallenge{}, ErrInvalidCredentials
 	}
 
-	normalizedLicense := security.NormalizeLicense(input.LicenseKey)
-	licenseHMAC := security.HMACHex(service.licenseHMACKey, normalizedLicense)
-	license, err := service.repository.FindLicenseByHMAC(ctx, licenseHMAC)
+	license, err := service.repository.FindLicenseByUserAndProduct(ctx, user.ID, service.product)
 	if errors.Is(err, domain.ErrLicenseNotFound) {
 		return PendingChallenge{}, ErrLicenseNotFound
 	}

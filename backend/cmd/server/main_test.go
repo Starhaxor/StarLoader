@@ -95,7 +95,7 @@ func TestApplicationContextCancellationStopsActiveLoginHandler(t *testing.T) {
 		LoginTimeout: time.Hour,
 	})
 	server := newHTTPServer(":0", router, applicationCtx)
-	req := httptest.NewRequest(http.MethodPost, "/v1/auth/login", strings.NewReader(`{"email":"a@b.c","password":"x","license_key":"K","device_fingerprint":"F"}`))
+	req := httptest.NewRequest(http.MethodPost, "/v1/auth/login", strings.NewReader(`{"email":"a@b.c","password":"x","device_fingerprint":"F"}`))
 	req.Header.Set("Content-Type", "application/json")
 	req = req.WithContext(server.BaseContext(nil))
 	rr := httptest.NewRecorder()

@@ -19,7 +19,6 @@ const maxRequestBodyBytes = 64 * 1024
 type loginRequestBody struct {
 	Email             string `json:"email"`
 	Password          string `json:"password"`
-	LicenseKey        string `json:"license_key"`
 	DeviceFingerprint string `json:"device_fingerprint"`
 }
 
@@ -54,7 +53,7 @@ func (router *Router) handleLogin(writer http.ResponseWriter, request *http.Requ
 		writeError(writer, request, http.StatusBadRequest, "INVALID_REQUEST", "invalid request")
 		return
 	}
-	if strings.TrimSpace(body.Email) == "" || body.Password == "" || strings.TrimSpace(body.LicenseKey) == "" || strings.TrimSpace(body.DeviceFingerprint) == "" {
+	if strings.TrimSpace(body.Email) == "" || body.Password == "" || strings.TrimSpace(body.DeviceFingerprint) == "" {
 		writeError(writer, request, http.StatusBadRequest, "INVALID_REQUEST", "invalid request")
 		return
 	}
@@ -66,7 +65,6 @@ func (router *Router) handleLogin(writer http.ResponseWriter, request *http.Requ
 	pending, err := router.login.Login(request.Context(), service.LoginInput{
 		Email:             body.Email,
 		Password:          body.Password,
-		LicenseKey:        body.LicenseKey,
 		DeviceFingerprint: body.DeviceFingerprint,
 	})
 	if err != nil {

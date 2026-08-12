@@ -25,7 +25,6 @@ func TestProductionServerLoginDeviceAndReplay(t *testing.T) {
 	}
 	email := requiredEnvironment(t, "STARLOADER_SMOKE_EMAIL")
 	password := requiredEnvironment(t, "STARLOADER_SMOKE_PASSWORD")
-	licenseKey := requiredEnvironment(t, "STARLOADER_SMOKE_LICENSE")
 	publicKeyEncoded := requiredEnvironment(t, "STARLOADER_SMOKE_ED25519_PUBLIC_KEY")
 	publicKey, err := base64.StdEncoding.DecodeString(publicKeyEncoded)
 	if err != nil || len(publicKey) != ed25519.PublicKeySize {
@@ -46,7 +45,7 @@ func TestProductionServerLoginDeviceAndReplay(t *testing.T) {
 	}
 
 	loginResponse := postJSON(t, baseURL+"/v1/auth/login", map[string]any{
-		"email": email, "password": password, "license_key": licenseKey,
+		"email": email, "password": password,
 		"device_fingerprint": "blackbox-device-fingerprint",
 	})
 	if loginResponse.status != http.StatusOK {

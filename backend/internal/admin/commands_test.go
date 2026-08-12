@@ -4,8 +4,11 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/starloader/backend/internal/domain"
 )
 
 func TestCreateUserHashesPasswordBeforeStoring(t *testing.T) {
@@ -69,6 +72,18 @@ func TestCreateLicenseDoesNotPrintPlaintextWhenRepositoryFails(t *testing.T) {
 	}
 	if output.Len() != 0 {
 		t.Fatalf("output = %q", output.String())
+	}
+}
+
+func TestCreateLicenseDoesNotPrintPlaintextWhenUserProductLicenseAlreadyExists(t *testing.T) {
+	repository := &fakeLicenses{err: domain.ErrLicenseAlreadyExists}
+	var output bytes.Buffer
+	err := Run(context.Background(), []string{"create-license", "--user", "user@example.com", "--product", "StarLoader", "--days", "1", "--max-devices", "1"}, &output, nil, repository, nil, bytes.NewReader(make([]byte, 16)), time.Now)
+	if err == nil || !strings.Contains(err.Error(), "license already exists for user and product") {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if output.Len() != 0 || strings.Contains(output.String(), "00000000-00000000-00000000-00000000") {
+		t.Fatalf("output contains plaintext license: %q", output.String())
 	}
 }
 

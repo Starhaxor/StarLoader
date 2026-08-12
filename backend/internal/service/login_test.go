@@ -21,7 +21,6 @@ func TestLoginCreatesShortLivedHashedChallenge(t *testing.T) {
 	pending, err := service.Login(context.Background(), LoginInput{
 		Email:             "  PERSON@Example.COM ",
 		Password:          "correct horse battery staple",
-		LicenseKey:        " aaaa-bbbb-cccc-dddd ",
 		DeviceFingerprint: "fingerprint",
 	})
 	if err != nil {
@@ -31,9 +30,8 @@ func TestLoginCreatesShortLivedHashedChallenge(t *testing.T) {
 	if repository.foundEmail != "person@example.com" {
 		t.Fatalf("FindUserByEmail() email = %q", repository.foundEmail)
 	}
-	wantLicenseHMAC := security.HMACHex([]byte("license-secret"), "AAAABBBBCCCCDDDD")
-	if repository.foundLicenseHMAC != wantLicenseHMAC {
-		t.Fatalf("FindLicenseByHMAC() HMAC = %q, want %q", repository.foundLicenseHMAC, wantLicenseHMAC)
+	if repository.foundLicenseUserID != "user-1" || repository.foundLicenseProduct != "StarLoader" {
+		t.Fatalf("FindLicenseByUserAndProduct() arguments = %q, %q", repository.foundLicenseUserID, repository.foundLicenseProduct)
 	}
 	wantDigest := sha256.Sum256(randomChallenge)
 	if !bytes.Equal(repository.pendingInput.ChallengeSHA256, wantDigest[:]) {
@@ -190,13 +188,12 @@ func validLoginInput() LoginInput {
 	return LoginInput{
 		Email:             "person@example.com",
 		Password:          "correct horse battery staple",
-		LicenseKey:        "AAAA-BBBB-CCCC-DDDD",
 		DeviceFingerprint: "fingerprint",
 	}
 }
 
 func newTestLoginService(repository *fakeLoginRepository, random *bytes.Reader, now time.Time) *LoginService {
-	service := NewLoginService(repository, []byte("license-secret"), "StarLoader")
+	service := NewLoginService(repository, "StarLoader")
 	service.random = random
 	service.now = func() time.Time { return now }
 	service.verifyPassword = func(_, password string) (bool, error) {
@@ -225,16 +222,17 @@ func validLoginRepository(now time.Time) *fakeLoginRepository {
 }
 
 type fakeLoginRepository struct {
-	user               *domain.User
-	userErr            error
-	license            *domain.License
-	licenseErr         error
-	pending            *domain.PendingSession
-	pendingErr         error
-	foundEmail         string
-	foundLicenseHMAC   string
-	pendingInput       domain.NewPendingSession
-	createPendingCalls int
+	user                *domain.User
+	userErr             error
+	license             *domain.License
+	licenseErr          error
+	pending             *domain.PendingSession
+	pendingErr          error
+	foundEmail          string
+	foundLicenseUserID  string
+	foundLicenseProduct string
+	pendingInput        domain.NewPendingSession
+	createPendingCalls  int
 }
 
 func (repository *fakeLoginRepository) FindUserByEmail(_ context.Context, email string) (*domain.User, error) {
@@ -242,8 +240,9 @@ func (repository *fakeLoginRepository) FindUserByEmail(_ context.Context, email 
 	return repository.user, repository.userErr
 }
 
-func (repository *fakeLoginRepository) FindLicenseByHMAC(_ context.Context, licenseHMAC string) (*domain.License, error) {
-	repository.foundLicenseHMAC = licenseHMAC
+func (repository *fakeLoginRepository) FindLicenseByUserAndProduct(_ context.Context, userID, product string) (*domain.License, error) {
+	repository.foundLicenseUserID = userID
+	repository.foundLicenseProduct = product
 	return repository.license, repository.licenseErr
 }
 

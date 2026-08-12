@@ -144,7 +144,7 @@ func runServer() error {
 	}
 
 	repository := store.New(pool)
-	loginService := service.NewLoginService(repository, []byte(configuration.LicenseHMACKey), configuration.Product)
+	loginService := service.NewLoginService(repository, configuration.Product)
 	privateKey, err := security.ParseEd25519PrivateKey(configuration.Ed25519PrivateKey)
 	if err != nil {
 		return fmt.Errorf("configuration error: %w", err)
