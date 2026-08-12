@@ -1,0 +1,173 @@
+{
+  "Version": 1,
+  "WorkspaceRootPath": "C:\\Users\\pc\\Desktop\\Projelerim\\StarLoader\\",
+  "Documents": [
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|C:\\Users\\pc\\Desktop\\Projelerim\\StarLoader\\license-client\\CMakeLists.txt||{3B902123-F8A7-4915-9F01-361F908088D0}",
+      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:license-client\\CMakeLists.txt||{3B902123-F8A7-4915-9F01-361F908088D0}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|C:\\Users\\pc\\Desktop\\Projelerim\\StarLoader\\server-contract\\API.md||{EFC0BB08-EA7D-40C6-A696-C870411A895B}",
+      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:server-contract\\API.md||{EFC0BB08-EA7D-40C6-A696-C870411A895B}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|C:\\Users\\pc\\Desktop\\Projelerim\\StarLoader\\backend\\internal\\admin\\commands_test.go||{3B902123-F8A7-4915-9F01-361F908088D0}",
+      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:backend\\internal\\admin\\commands_test.go||{3B902123-F8A7-4915-9F01-361F908088D0}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|C:\\Users\\pc\\Desktop\\Projelerim\\StarLoader\\backend\\internal\\admin\\commands.go||{3B902123-F8A7-4915-9F01-361F908088D0}",
+      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:backend\\internal\\admin\\commands.go||{3B902123-F8A7-4915-9F01-361F908088D0}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|C:\\Users\\pc\\Desktop\\Projelerim\\StarLoader\\backend\\migrations\\embed.go||{3B902123-F8A7-4915-9F01-361F908088D0}",
+      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:backend\\migrations\\embed.go||{3B902123-F8A7-4915-9F01-361F908088D0}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|C:\\Users\\pc\\Desktop\\Projelerim\\StarLoader\\backend\\go.mod||{8B382828-6202-11D1-8870-0000F87579D2}",
+      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:backend\\go.mod||{8B382828-6202-11D1-8870-0000F87579D2}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|C:\\Users\\pc\\Desktop\\Projelerim\\StarLoader\\backend\\go.sum||{8B382828-6202-11D1-8870-0000F87579D2}",
+      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:backend\\go.sum||{8B382828-6202-11D1-8870-0000F87579D2}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|C:\\Users\\pc\\Desktop\\Projelerim\\StarLoader\\.env.example||{8B382828-6202-11D1-8870-0000F87579D2}",
+      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:.env.example||{8B382828-6202-11D1-8870-0000F87579D2}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|C:\\Users\\pc\\Desktop\\Projelerim\\StarLoader\\CMakeLists.txt||{3B902123-F8A7-4915-9F01-361F908088D0}",
+      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:CMakeLists.txt||{3B902123-F8A7-4915-9F01-361F908088D0}"
+    }
+  ],
+  "DocumentGroupContainers": [
+    {
+      "Orientation": 0,
+      "VerticalTabListWidth": 256,
+      "DocumentGroups": [
+        {
+          "DockedWidth": 200,
+          "SelectedChildIndex": 0,
+          "Children": [
+            {
+              "$type": "Document",
+              "DocumentIndex": 0,
+              "Title": "CMakeLists.txt",
+              "DocumentMoniker": "C:\\Users\\pc\\Desktop\\Projelerim\\StarLoader\\license-client\\CMakeLists.txt",
+              "RelativeDocumentMoniker": "license-client\\CMakeLists.txt",
+              "ToolTip": "C:\\Users\\pc\\Desktop\\Projelerim\\StarLoader\\license-client\\CMakeLists.txt",
+              "RelativeToolTip": "license-client\\CMakeLists.txt",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.003109|",
+              "WhenOpened": "2026-08-10T18:39:05.429Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 1,
+              "Title": "API.md",
+              "DocumentMoniker": "C:\\Users\\pc\\Desktop\\Projelerim\\StarLoader\\server-contract\\API.md",
+              "RelativeDocumentMoniker": "server-contract\\API.md",
+              "ToolTip": "C:\\Users\\pc\\Desktop\\Projelerim\\StarLoader\\server-contract\\API.md",
+              "RelativeToolTip": "server-contract\\API.md",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.001818|",
+              "WhenOpened": "2026-08-10T18:39:00.292Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 2,
+              "Title": "commands_test.go",
+              "DocumentMoniker": "C:\\Users\\pc\\Desktop\\Projelerim\\StarLoader\\backend\\internal\\admin\\commands_test.go",
+              "RelativeDocumentMoniker": "backend\\internal\\admin\\commands_test.go",
+              "ToolTip": "C:\\Users\\pc\\Desktop\\Projelerim\\StarLoader\\backend\\internal\\admin\\commands_test.go",
+              "RelativeToolTip": "backend\\internal\\admin\\commands_test.go",
+              "ViewState": "AgIAAA8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.001001|",
+              "WhenOpened": "2026-08-10T18:38:49.349Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 3,
+              "Title": "commands.go",
+              "DocumentMoniker": "C:\\Users\\pc\\Desktop\\Projelerim\\StarLoader\\backend\\internal\\admin\\commands.go",
+              "RelativeDocumentMoniker": "backend\\internal\\admin\\commands.go",
+              "ToolTip": "C:\\Users\\pc\\Desktop\\Projelerim\\StarLoader\\backend\\internal\\admin\\commands.go",
+              "RelativeToolTip": "backend\\internal\\admin\\commands.go",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.001001|",
+              "WhenOpened": "2026-08-10T18:38:47.949Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 4,
+              "Title": "embed.go",
+              "DocumentMoniker": "C:\\Users\\pc\\Desktop\\Projelerim\\StarLoader\\backend\\migrations\\embed.go",
+              "RelativeDocumentMoniker": "backend\\migrations\\embed.go",
+              "ToolTip": "C:\\Users\\pc\\Desktop\\Projelerim\\StarLoader\\backend\\migrations\\embed.go",
+              "RelativeToolTip": "backend\\migrations\\embed.go",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.001001|",
+              "WhenOpened": "2026-08-10T18:38:43.267Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 6,
+              "Title": "go.sum",
+              "DocumentMoniker": "C:\\Users\\pc\\Desktop\\Projelerim\\StarLoader\\backend\\go.sum",
+              "RelativeDocumentMoniker": "backend\\go.sum",
+              "ToolTip": "C:\\Users\\pc\\Desktop\\Projelerim\\StarLoader\\backend\\go.sum",
+              "RelativeToolTip": "backend\\go.sum",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAAA0AAABWAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.001001|",
+              "WhenOpened": "2026-08-10T18:38:38.777Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 5,
+              "Title": "go.mod",
+              "DocumentMoniker": "C:\\Users\\pc\\Desktop\\Projelerim\\StarLoader\\backend\\go.mod",
+              "RelativeDocumentMoniker": "backend\\go.mod",
+              "ToolTip": "C:\\Users\\pc\\Desktop\\Projelerim\\StarLoader\\backend\\go.mod",
+              "RelativeToolTip": "backend\\go.mod",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
+              "Icon": "00000000-0000-0000-0000-000000000000.000000|iVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAYAAADgdz34AAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAANaSURBVEhLtZVRaJtVFMd/SZY06TZcv7aWJaV5KN1Ll9iH\u002BSl7WMxjURn4ptmTw4etWwbVyaRqy3DZVkfHZocPgqSQMRiSPnbii1jBF2lLwNFttYpZWp1tcM2yZDG5x4f0C1\u002BSr3UD/cHl45577vmfc\u002B79uPB/IiKNpv8cm3kyNzcnDocDthEXEVwuF/l8vjw6OvrmzMzMV40\u002BW5JKpeRpyaTT8v3sbG5wcPBwYxwzdvNkq6ytaPF4sNntu6ampqYOhUKvN64b1AkYiMi2A6BUKmG32\u002Bns7Hzu5o0b8XA4/GpjHLYSeBrsdjvpdJrl5WX\u002BVko7H4vF29vbDzT67Wg0mBmJXQbgj99XazYRePzoEV17uyiXK/j9fnK5HH19fR0tbvdB4C6wYfhbVmBuRWxkGPcLB2g7epy2o8fRjkXZ9fJBrpwfA0DXdUKhED09PbQ4nXuA3eZY9YdsfE0CH3xyiZ3FIh0PC3Q8LOD4y4UqOhk6/RGiFEopjKvtcDqbEm4w1CSAqkhs5F32/vATgWvTBK5Ns\u002BfLm6gfF5gcP4tSChGFUpXqLlFN17BeYHNZxBjCmbOX\u002BObxb0yWUkyWUnz75yw/r6Y4NjxCRVVqvub9ZppKMrIHQZRw4eP3WNMj3I4kuB1JUHhtktbgG3w\u002BcY5qwsawplmgln21gtNjF/CqdYLuBwTdD9jp3UFlt4N3Tr0PIvUVWNAsYK5AFJ\u002BOnUHL/cq\u002B7Bz7snM8n8/iKpX44so4FVX51wqa/gNzRkophj88x\u002BriHVYX71TXEfIbG7w9tLh5yPX7t2VhYUFUpSxPnhSfeYiI9Pb2jgI\u002Bc8ymCiYmLtOmtRGJRLh4cZxgMMC9e0sAeDwewuFXSCSuo2ka0ehJkskk9\u002B9n8Pv9lo2yOANYX8\u002BSzWbrbNHoyZpN0zR0XSeTyVAoFDhy5C0GBgbq/A2aBAQIBPaTSFxH11\u002Bs9fjq1c8IhQ4hImiaRne3DxHB7fawtrZOPB63PGzL9yAQCJDNZvH5fLVNJ04Moes6IsLS0hLJ5DRerxcQbt36mtbWVnMoa\u002Bbn5xsfrmeiv78/BnSbY9a9yZqmveRwOA7bbLZfRKQDKJvXt8PlcrlWVlaWReQ7IGPY6wQ2512bfWmxbOrW2AAFrAFFw/gPBPgsmItutrUAAAAASUVORK5CYII=",
+              "WhenOpened": "2026-08-10T18:38:37.74Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 7,
+              "Title": ".env.example",
+              "DocumentMoniker": "C:\\Users\\pc\\Desktop\\Projelerim\\StarLoader\\.env.example",
+              "RelativeDocumentMoniker": ".env.example",
+              "ToolTip": "C:\\Users\\pc\\Desktop\\Projelerim\\StarLoader\\.env.example",
+              "RelativeToolTip": ".env.example",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAABMAAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.001001|",
+              "WhenOpened": "2026-08-10T18:38:26.187Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 8,
+              "Title": "CMakeLists.txt",
+              "DocumentMoniker": "C:\\Users\\pc\\Desktop\\Projelerim\\StarLoader\\CMakeLists.txt",
+              "RelativeDocumentMoniker": "CMakeLists.txt",
+              "ToolTip": "C:\\Users\\pc\\Desktop\\Projelerim\\StarLoader\\CMakeLists.txt",
+              "RelativeToolTip": "CMakeLists.txt",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.003109|",
+              "WhenOpened": "2026-08-10T18:38:23.395Z",
+              "EditorCaption": ""
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

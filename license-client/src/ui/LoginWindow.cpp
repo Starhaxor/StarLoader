@@ -25,8 +25,6 @@ LoginWindow::LoginWindow(QWidget *parent)
         QStringLiteral("starloader"), QStringLiteral("starloader-client"), QStringLiteral("StarLoader"));
     authManager_ = new AuthManager(*apiClient_, *hardwareCollector_, *deviceSigner_, verifier, this);
 
-    connect(ui->hwidButton, &QPushButton::clicked,
-            this, &LoginWindow::openHwidDialog);
     connect(ui->loginButton, &QPushButton::clicked, this, &LoginWindow::startLogin);
     connect(authManager_, &AuthManager::stateChanged, this, &LoginWindow::applyState);
     connect(authManager_, &AuthManager::statusChanged, ui->statusLabel, &QLabel::setText);
@@ -58,7 +56,6 @@ void LoginWindow::applyState(AuthState state)
     ui->passwordLineEdit->setEnabled(!busy);
     ui->licenseKeyLineEdit->setEnabled(!busy);
     ui->loginButton->setEnabled(!busy);
-    ui->hwidButton->setEnabled(!busy);
     if (!authManager_->deviceDisplayId().isEmpty()) ui->deviceIdLineEdit->setText(authManager_->deviceDisplayId());
 }
 

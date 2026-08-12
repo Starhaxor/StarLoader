@@ -1,0 +1,12 @@
+{
+  "ExpandedNodes": [
+    "",
+    "\\backend\\internal",
+    "\\backend\\internal\\admin",
+    "\\backend\\migrations",
+    "\\build",
+    "\\license-client"
+  ],
+  "SelectedNode": "\\license-client\\CMakeLists.txt",
+  "PreviewInSolutionExplorer": false
+}
