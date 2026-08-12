@@ -77,11 +77,11 @@ void AuthManager::fail(const ApiError &error)
     emit failed(error);
 }
 
-void AuthManager::login(const QString &email, const QString &password, const QString &licenseKey)
+void AuthManager::login(const QString &email, const QString &password)
 {
     if (state_ == AuthState::CollectingDevice || state_ == AuthState::Authenticating || state_ == AuthState::WaitingForDeviceChallenge || state_ == AuthState::VerifyingDevice) return;
     sessionToken_.clear();
-    pendingLogin_ = {email, password, licenseKey};
+    pendingLogin_ = {email, password};
     const quint64 attempt = ++attempt_;
     transition(AuthState::CollectingDevice, QStringLiteral("Collecting device identity."));
     IHardwareCollector *collector = &hardwareCollector_;
@@ -109,9 +109,8 @@ void AuthManager::completeCollection()
     hardware_ = result.identity;
     if (!verifier_.isConfigured()) { fail({QStringLiteral("TOKEN_VERIFIER_UNAVAILABLE"), QStringLiteral("Client security configuration is unavailable."), {}}); return; }
     transition(AuthState::Authenticating, QStringLiteral("Authenticating."));
-    apiClient_.login({pendingLogin_.email, pendingLogin_.password, pendingLogin_.licenseKey, hardware_.finalFingerprint});
+    apiClient_.login({pendingLogin_.email, pendingLogin_.password, hardware_.finalFingerprint});
     pendingLogin_.password.clear();
-    pendingLogin_.licenseKey.clear();
 }
 
 void AuthManager::handleLoginSucceeded(const LoginResponse &response)

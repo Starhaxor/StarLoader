@@ -61,7 +61,7 @@ void ApiClient::login(const LoginRequest &request)
 {
     postJson(QStringLiteral("/v1/auth/login"), {
         {QStringLiteral("email"), request.email}, {QStringLiteral("password"), request.password},
-        {QStringLiteral("license_key"), request.licenseKey}, {QStringLiteral("device_fingerprint"), request.deviceFingerprint},
+        {QStringLiteral("device_fingerprint"), request.deviceFingerprint},
     }, false);
 }
 
