@@ -13,7 +13,7 @@
     <property name="rightMargin"><number>20</number></property>
     <property name="bottomMargin"><number>20</number></property>
     <property name="spacing"><number>10</number></property>
-    <item><widget class="QLabel" name="titleLabel"><property name="text"><string>Device Identity Diagnostics</string></property><property name="styleSheet"><string notr="true">font-size: 18px; font-weight: 700;</string></property></widget></item>
+    <item><widget class="QLabel" name="titleLabel"><property name="text"><string>Device Identity Diagnostics</string></property></widget></item>
     <item><widget class="QLabel" name="descriptionLabel"><property name="text"><string>Collect local hardware signals and verify the TPM-backed device key.</string></property><property name="wordWrap"><bool>true</bool></property></widget></item>
     <item>
      <layout class="QFormLayout" name="signalsFormLayout">

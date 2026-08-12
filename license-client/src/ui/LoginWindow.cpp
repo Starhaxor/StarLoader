@@ -7,14 +7,15 @@
 
 #include <QPushButton>
 #include <QLabel>
+#include <QStyle>
 #include <QUrl>
 
 LoginWindow::LoginWindow(QWidget *parent)
     : QMainWindow(parent), ui(new Ui::LoginWindow)
 {
     ui->setupUi(this);
-    setWindowFlags(Qt::Window | Qt::FramelessWindowHint);
-    setAttribute(Qt::WA_TranslucentBackground);
+    ui->loginButton->setProperty("suggested", true);
+    ui->loginCard->setAutoFillBackground(true);
     setFixedSize(size());
 
     apiClient_ = new ApiClient(QUrl(qEnvironmentVariable("STARLOADER_API_URL", "https://api.starloader.example")), ApiClient::RequestTimeoutMs, this);
@@ -45,6 +46,9 @@ void LoginWindow::openHwidDialog()
 
 void LoginWindow::startLogin()
 {
+    ui->statusLabel->setProperty("state", QVariant());
+    ui->statusLabel->style()->unpolish(ui->statusLabel);
+    ui->statusLabel->style()->polish(ui->statusLabel);
     ui->requestIdLabel->clear();
     authManager_->login(ui->emailLineEdit->text(), ui->passwordLineEdit->text(), ui->licenseKeyLineEdit->text());
 }
@@ -73,6 +77,9 @@ QString LoginWindow::safeTurkishMessage(const ApiError &error)
 
 void LoginWindow::showFailure(const ApiError &error)
 {
+    ui->statusLabel->setProperty("state", "error");
+    ui->statusLabel->style()->unpolish(ui->statusLabel);
+    ui->statusLabel->style()->polish(ui->statusLabel);
     ui->statusLabel->setText(safeTurkishMessage(error));
     ui->requestIdLabel->setText(error.requestId.isEmpty() ? QString() : QStringLiteral("Destek kodu: %1").arg(error.requestId));
 }

@@ -13,6 +13,7 @@ HwidDialog::HwidDialog(QWidget *parent)
 {
     ui->setupUi(this);
     setFixedSize(size());
+    ui->copyButton->setProperty("suggested", true);
     ui->hwidLineEdit->setText(createHwidCode());
 
     connect(ui->copyButton, &QPushButton::clicked,

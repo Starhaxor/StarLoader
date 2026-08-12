@@ -12,6 +12,8 @@ add_library(DeviceIdentityShared STATIC
     security/HardwareNormalization.cpp
     security/TpmIdentity.cpp
     security/TpmKeyLifecycle.cpp
+    theme/ThemeManager.cpp
+    theme/theme.qrc
 )
 
 target_include_directories(DeviceIdentityShared PUBLIC
@@ -21,6 +23,7 @@ target_include_directories(DeviceIdentityShared PUBLIC
 target_link_libraries(DeviceIdentityShared PUBLIC
     Qt6::Core
     Qt6::Network
+    Qt6::Widgets
 )
 
 if(WIN32)
