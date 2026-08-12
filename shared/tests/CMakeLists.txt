@@ -18,6 +18,10 @@ qt_add_executable(HardwareJsonTest
     HardwareJsonTest.cpp
 )
 
+qt_add_executable(ThemeManagerTest
+    ThemeManagerTest.cpp
+)
+
 target_link_libraries(SharedTests PRIVATE
     DeviceIdentityShared
     Qt6::Core
@@ -48,11 +52,18 @@ target_link_libraries(HardwareJsonTest PRIVATE
     Qt6::Test
 )
 
+target_link_libraries(ThemeManagerTest PRIVATE
+    DeviceIdentityShared
+    Qt6::Widgets
+    Qt6::Test
+)
+
 add_test(NAME FingerprintTest COMMAND SharedTests)
 add_test(NAME SmbiosParserTest COMMAND SmbiosParserTest)
 add_test(NAME HardwareCollectorTest COMMAND HardwareCollectorTest)
 add_test(NAME TpmIdentityTest COMMAND TpmIdentityTest)
 add_test(NAME HardwareJsonTest COMMAND HardwareJsonTest)
+add_test(NAME ThemeManagerTest COMMAND ThemeManagerTest)
 
 set_tests_properties(FingerprintTest PROPERTIES
     ENVIRONMENT "PATH=$<TARGET_FILE_DIR:Qt6::Core>\\;$ENV{PATH}"
@@ -71,5 +82,9 @@ set_tests_properties(TpmIdentityTest PROPERTIES
 )
 
 set_tests_properties(HardwareJsonTest PROPERTIES
+    ENVIRONMENT "PATH=$<TARGET_FILE_DIR:Qt6::Core>\\;$ENV{PATH}"
+)
+
+set_tests_properties(ThemeManagerTest PROPERTIES
     ENVIRONMENT "PATH=$<TARGET_FILE_DIR:Qt6::Core>\\;$ENV{PATH}"
 )
