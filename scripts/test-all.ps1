@@ -109,7 +109,7 @@ try {
     $licenseOutput = & docker run --rm --add-host host.docker.internal:host-gateway `
         -e "DATABASE_URL=$databaseURL" -e LICENSE_HMAC_KEY=verification-license-hmac-key `
         -v "${repoRoot}:/workspace" -w /workspace/backend `
-        golang:1.24 go run ./cmd/server admin create-license --user verification@example.com --product StarLoader --days 1 --max-devices 1
+        golang:1.24 go run ./cmd/server admin create-license --user verification@example.com --product StarLoader --days 1 --max-devices 2
     if ($LASTEXITCODE -ne 0 -or $licenseOutput -notmatch '^[0-9A-F]{8}(?:-[0-9A-F]{8}){3}$') {
         throw 'Administrative license creation failed.'
     }
@@ -148,13 +148,12 @@ try {
         -e "STARLOADER_SMOKE_BASE_URL=http://host.docker.internal:${ApiPort}" `
         -e STARLOADER_SMOKE_EMAIL=verification@example.com `
         -e STARLOADER_SMOKE_PASSWORD=verification-password `
+        -e STARLOADER_SMOKE_MAX_DEVICES=2 `
         -e "STARLOADER_SMOKE_LICENSE=$licenseKey" `
         -e "STARLOADER_SMOKE_ED25519_PUBLIC_KEY=$publicKey" `
         -e "STARLOADER_SMOKE_ED25519_PRIVATE_KEY=$privateKey" `
         -v "${repoRoot}:/workspace" -w /workspace/backend `
         golang:1.24 go test ./tests/blackbox -run TestProductionServerLoginDeviceAndReplay -count=1 -v
-
-    Remove-VerificationContainer -Name $apiContainer
 
     $env:Path = "C:\Qt\Tools\mingw1310_64\bin;C:\Qt\6.11.1\mingw_64\bin;C:\Qt\Tools\Ninja;C:\Qt\Tools\mingw1310_64\opt\bin;$env:Path"
     Invoke-Checked $cmake -S $repoRoot -B $buildDirectory -G Ninja `
@@ -162,12 +161,18 @@ try {
         "-DOPENSSL_ROOT_DIR=$opensslRoot" `
         "-DSTARLOADER_ED25519_PUBLIC_KEY=$publicKey"
     Invoke-Checked $cmake --build $buildDirectory
+    $env:STARLOADER_API_URL = "http://127.0.0.1:${ApiPort}"
+    $env:STARLOADER_ALLOW_HTTP_LOCAL = '1'
+    $env:STARLOADER_NATIVE_LIVE_EMAIL = 'verification@example.com'
+    $env:STARLOADER_NATIVE_LIVE_PASSWORD = 'verification-password'
+    $env:STARLOADER_NATIVE_LIVE_MAX_DEVICES = '2'
     Invoke-Checked $ctest --test-dir $buildDirectory --output-on-failure
 
     Invoke-Checked git diff --check
     Write-Host 'All StarLoader verification checks passed.'
 }
 finally {
+    Remove-Item Env:STARLOADER_API_URL,Env:STARLOADER_ALLOW_HTTP_LOCAL,Env:STARLOADER_NATIVE_LIVE_EMAIL,Env:STARLOADER_NATIVE_LIVE_PASSWORD,Env:STARLOADER_NATIVE_LIVE_MAX_DEVICES -ErrorAction SilentlyContinue
     Pop-Location
     Remove-VerificationContainer -Name $apiContainer
     Remove-VerificationContainer -Name $databaseContainer

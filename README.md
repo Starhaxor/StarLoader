@@ -137,7 +137,7 @@ docker run --rm -v "${PWD}:/workspace" -w /workspace/backend golang:1.24 go run 
 
 The command prints two lines:
 
-- Put `ED25519_PRIVATE_KEY` only in the backend `.env` file or production secret manager.
+- Put `ED25519_PRIVATE_KEY` only in the repository-root `.env` file used by the documented `--env-file .env` commands, or in a production secret manager. Do not create a separate `backend/.env` for this quick-start path.
 - Pass `STARLOADER_ED25519_PUBLIC_KEY` to CMake when building the trusted client.
 
 Never distribute the private key with the desktop applications. Rotating this key requires rebuilding/redeploying clients or implementing an explicit multi-key rotation policy.

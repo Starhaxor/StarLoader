@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -27,6 +28,10 @@ func TestProductionServerLoginDeviceAndReplay(t *testing.T) {
 	}
 	email := requiredEnvironment(t, "STARLOADER_SMOKE_EMAIL")
 	password := requiredEnvironment(t, "STARLOADER_SMOKE_PASSWORD")
+	maxDevices, err := strconv.Atoi(requiredEnvironment(t, "STARLOADER_SMOKE_MAX_DEVICES"))
+	if err != nil || maxDevices <= 0 {
+		t.Fatal("STARLOADER_SMOKE_MAX_DEVICES is invalid")
+	}
 	publicKeyEncoded := requiredEnvironment(t, "STARLOADER_SMOKE_ED25519_PUBLIC_KEY")
 	privateKeyEncoded := requiredEnvironment(t, "STARLOADER_SMOKE_ED25519_PRIVATE_KEY")
 	publicKey, err := base64.StdEncoding.DecodeString(publicKeyEncoded)
@@ -122,20 +127,37 @@ func TestProductionServerLoginDeviceAndReplay(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !profile.OK || profile.Email != email || profile.AccountStatus != "active" || profile.Product != claims.Product ||
-		profile.LicenseStatus != "active" || profile.LicenseExpiresAt == "" || profile.MaxDevices != 1 ||
+		profile.LicenseStatus != "active" || profile.MaxDevices != maxDevices ||
 		profile.DeviceID != verified.DeviceID || profile.DeviceID != claims.DeviceID || profile.DeviceStatus != "active" ||
 		profile.SessionExpiresAt != claims.ExpiresAt.UTC().Format(time.RFC3339) {
 		t.Fatalf("profile is not bound to the verified account, license, device, and session")
+	}
+	licenseExpiresAt, err := time.Parse(time.RFC3339, profile.LicenseExpiresAt)
+	if err != nil || time.Until(licenseExpiresAt) < 23*time.Hour || time.Until(licenseExpiresAt) > 25*time.Hour {
+		t.Fatal("profile license expiry does not match the one-day verification license")
 	}
 	assertExactJSONKeys(t, profileResponse.body, []string{
 		"account_status", "device_id", "device_status", "email", "license_expires_at",
 		"license_status", "max_devices", "ok", "product", "session_expires_at",
 	})
 
+	otherLicenseClaims := claims
+	otherLicenseClaims.LicenseID = "00000000-0000-7000-8000-000000000001"
+	otherLicenseToken := signedSessionToken(t, privateKeyEncoded, otherLicenseClaims)
+	verifiedOtherLicenseClaims, err := verifier.Verify(otherLicenseToken)
+	if err != nil || verifiedOtherLicenseClaims.LicenseID != otherLicenseClaims.LicenseID {
+		t.Fatal("alternate-license token is not correctly signed and unexpired")
+	}
+	otherLicenseResponse := getWithBearer(t, baseURL+"/v1/me", otherLicenseToken)
+	assertSessionTokenRejected(t, otherLicenseResponse)
+
 	invalidResponse := getWithBearer(t, baseURL+"/v1/me", "invalid-session-token")
 	assertSessionTokenRejected(t, invalidResponse)
 
-	expired := expiredSessionToken(t, privateKeyEncoded, claims)
+	expiredClaims := claims
+	expiredClaims.ExpiresAt = time.Now().UTC().Add(-time.Hour).Truncate(time.Second)
+	expiredClaims.IssuedAt = expiredClaims.ExpiresAt.Add(-time.Hour)
+	expired := signedSessionToken(t, privateKeyEncoded, expiredClaims)
 	expiredResponse := getWithBearer(t, baseURL+"/v1/me", expired)
 	assertSessionTokenRejected(t, expiredResponse)
 
@@ -199,7 +221,7 @@ func getWithBearer(t *testing.T, url, token string) response {
 	return response{status: result.StatusCode, body: responseBody.Bytes(), requestID: result.Header.Get("X-Request-ID")}
 }
 
-func expiredSessionToken(t *testing.T, privateKeyEncoded string, claims security.SessionClaims) string {
+func signedSessionToken(t *testing.T, privateKeyEncoded string, claims security.SessionClaims) string {
 	t.Helper()
 	privateKey, err := security.ParseEd25519PrivateKey(privateKeyEncoded)
 	if err != nil {
@@ -209,11 +231,10 @@ func expiredSessionToken(t *testing.T, privateKeyEncoded string, claims security
 	if err != nil {
 		t.Fatal(err)
 	}
-	expiresAt := time.Now().UTC().Add(-time.Hour)
 	payloadJSON, err := json.Marshal(map[string]any{
 		"sub": claims.Subject, "license_id": claims.LicenseID, "device_id": claims.DeviceID,
 		"product": claims.Product, "features": claims.Features, "iss": claims.Issuer, "aud": claims.Audience,
-		"iat": expiresAt.Add(-time.Hour).Unix(), "exp": expiresAt.Unix(),
+		"iat": claims.IssuedAt.Unix(), "exp": claims.ExpiresAt.Unix(),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -228,14 +249,24 @@ func expiredSessionToken(t *testing.T, privateKeyEncoded string, claims security
 func assertSessionTokenRejected(t *testing.T, result response) {
 	t.Helper()
 	if result.status != http.StatusUnauthorized {
-		t.Fatalf("session-token rejection status = %d body = %s", result.status, result.body)
+		t.Fatalf("session-token rejection status = %d", result.status)
 	}
 	assertUUIDv7(t, result.requestID)
 	var errorResponse struct {
-		Code string `json:"code"`
+		OK        bool   `json:"ok"`
+		Code      string `json:"code"`
+		Message   string `json:"message"`
+		RequestID string `json:"request_id"`
 	}
-	if err := json.Unmarshal(result.body, &errorResponse); err != nil || errorResponse.Code != "INVALID_SESSION_TOKEN" {
-		t.Fatalf("session-token rejection code = %q parse error = %v", errorResponse.Code, err)
+	if err := json.Unmarshal(result.body, &errorResponse); err != nil {
+		t.Fatalf("decode session-token rejection: %v", err)
+	}
+	assertExactJSONKeys(t, result.body, []string{"code", "message", "ok", "request_id"})
+	if errorResponse.OK || errorResponse.Code != "INVALID_SESSION_TOKEN" || errorResponse.Message != "invalid session token" {
+		t.Fatal("session-token rejection values are not the exact safe contract")
+	}
+	if errorResponse.RequestID != result.requestID {
+		t.Fatal("session-token rejection header/body request IDs do not match")
 	}
 }
 
