@@ -150,6 +150,7 @@ try {
         -e STARLOADER_SMOKE_PASSWORD=verification-password `
         -e "STARLOADER_SMOKE_LICENSE=$licenseKey" `
         -e "STARLOADER_SMOKE_ED25519_PUBLIC_KEY=$publicKey" `
+        -e "STARLOADER_SMOKE_ED25519_PRIVATE_KEY=$privateKey" `
         -v "${repoRoot}:/workspace" -w /workspace/backend `
         golang:1.24 go test ./tests/blackbox -run TestProductionServerLoginDeviceAndReplay -count=1 -v
 
