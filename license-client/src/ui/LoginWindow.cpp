@@ -9,6 +9,7 @@
 
 #include <QPushButton>
 #include <QLabel>
+#include <QMessageBox>
 #include <QStyle>
 #include <QUrl>
 
@@ -117,4 +118,30 @@ void LoginWindow::showFailure(const ApiError &error)
     ui->statusLabel->style()->unpolish(ui->statusLabel);
     ui->statusLabel->style()->polish(ui->statusLabel);
     ui->statusLabel->setText(safeMessage(error));
+    showErrorDialog(error.code, safeMessage(error));
+}
+
+void LoginWindow::showErrorDialog(const QString &code, const QString &text)
+{
+    // Non-modal presentation: QMessageBox::exec() would block the event loop
+    // and freeze offscreen UI tests, so the box is shown without modality and
+    // tracked in errorDialog_ so callers/tests can locate and close it.
+    if (errorDialog_ != nullptr) {
+        errorDialog_->close();
+        errorDialog_->deleteLater();
+    }
+
+    auto *box = new QMessageBox(QMessageBox::Critical, QStringLiteral("Sign-in failed"), QString(), QMessageBox::Ok, this);
+    box->setText(QStringLiteral("<b>%1</b>").arg(text.toHtmlEscaped()));
+    box->setInformativeText(QStringLiteral("Error code: %1").arg(code.toHtmlEscaped()));
+    box->setAttribute(Qt::WA_DeleteOnClose);
+    box->setWindowModality(Qt::NonModal);
+    box->setWindowFlags(
+    Qt::Dialog |
+    Qt::CustomizeWindowHint |
+    Qt::WindowTitleHint |
+    Qt::WindowCloseButtonHint
+);
+    errorDialog_ = box;
+    box->show();
 }

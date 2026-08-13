@@ -31,10 +31,11 @@ QString signedToken(const QJsonObject &claims, QJsonObject header = {{QStringLit
     return QString::fromUtf8(message + '.' + signature.toBase64(QByteArray::Base64UrlEncoding | QByteArray::OmitTrailingEquals));
 }
 
-QJsonObject validClaims()
+QJsonObject validClaims(qint64 iatOffsetSeconds = 0)
 {
     const qint64 now = QDateTime::currentSecsSinceEpoch();
-    return {{QStringLiteral("sub"), QStringLiteral("user-1")}, {QStringLiteral("license_id"), QStringLiteral("license-1")}, {QStringLiteral("device_id"), QStringLiteral("device-1")}, {QStringLiteral("product"), QStringLiteral("StarLoader")}, {QStringLiteral("features"), QJsonArray{}}, {QStringLiteral("iss"), QStringLiteral("starloader")}, {QStringLiteral("aud"), QStringLiteral("starloader-client")}, {QStringLiteral("iat"), now}, {QStringLiteral("exp"), now + 3600}};
+    const qint64 iat = now + iatOffsetSeconds;
+    return {{QStringLiteral("sub"), QStringLiteral("user-1")}, {QStringLiteral("license_id"), QStringLiteral("license-1")}, {QStringLiteral("device_id"), QStringLiteral("device-1")}, {QStringLiteral("product"), QStringLiteral("StarLoader")}, {QStringLiteral("features"), QJsonArray{}}, {QStringLiteral("iss"), QStringLiteral("starloader")}, {QStringLiteral("aud"), QStringLiteral("starloader-client")}, {QStringLiteral("iat"), iat}, {QStringLiteral("exp"), iat + 3600}};
 }
 } // namespace
 
@@ -48,6 +49,9 @@ private slots:
     void rejectsInvalidPublicKeyAtStartup();
     void rejectsMissingOrMalformedFeatures();
     void rejectsUnknownJoseHeadersAndCriticalHeaders();
+    void acceptsTokenWithIatSlightlyInFuture();
+    void acceptsTokenWithIatAtSkewBoundary();
+    void rejectsTokenWithIatBeyondSkew();
 };
 
 void SessionTokenVerifierTest::acceptsKnownValidEd25519Token()
@@ -96,6 +100,29 @@ void SessionTokenVerifierTest::rejectsUnknownJoseHeadersAndCriticalHeaders()
     SessionTokenVerifier verifier(testPublicKey(), QStringLiteral("starloader"), QStringLiteral("starloader-client"), QStringLiteral("StarLoader"));
     QVERIFY(!verifier.verify(signedToken(validClaims(), {{QStringLiteral("alg"), QStringLiteral("EdDSA")}, {QStringLiteral("typ"), QStringLiteral("JWT")}, {QStringLiteral("kid"), QStringLiteral("unexpected")}}), QStringLiteral("device-1"), QStringLiteral("license-1")).valid);
     QVERIFY(!verifier.verify(signedToken(validClaims(), {{QStringLiteral("alg"), QStringLiteral("EdDSA")}, {QStringLiteral("typ"), QStringLiteral("JWT")}, {QStringLiteral("crit"), QJsonArray{QStringLiteral("exp")}}}), QStringLiteral("device-1"), QStringLiteral("license-1")).valid);
+}
+
+void SessionTokenVerifierTest::acceptsTokenWithIatSlightlyInFuture()
+{
+    SessionTokenVerifier verifier(testPublicKey(), QStringLiteral("starloader"), QStringLiteral("starloader-client"), QStringLiteral("StarLoader"));
+    const VerificationResult result = verifier.verify(signedToken(validClaims(7)), QStringLiteral("device-1"), QStringLiteral("license-1"));
+    QVERIFY(result.valid);
+}
+
+void SessionTokenVerifierTest::acceptsTokenWithIatAtSkewBoundary()
+{
+    SessionTokenVerifier verifier(testPublicKey(), QStringLiteral("starloader"), QStringLiteral("starloader-client"), QStringLiteral("StarLoader"));
+    const VerificationResult result = verifier.verify(signedToken(validClaims(60)), QStringLiteral("device-1"), QStringLiteral("license-1"));
+    QVERIFY(result.valid);
+}
+
+void SessionTokenVerifierTest::rejectsTokenWithIatBeyondSkew()
+{
+    SessionTokenVerifier verifier(testPublicKey(), QStringLiteral("starloader"), QStringLiteral("starloader-client"), QStringLiteral("StarLoader"));
+    const VerificationResult justBeyond = verifier.verify(signedToken(validClaims(61)), QStringLiteral("device-1"), QStringLiteral("license-1"));
+    QVERIFY(!justBeyond.valid);
+    QCOMPARE(justBeyond.error, QStringLiteral("Invalid session token."));
+    QVERIFY(!verifier.verify(signedToken(validClaims(120)), QStringLiteral("device-1"), QStringLiteral("license-1")).valid);
 }
 
 QTEST_MAIN(SessionTokenVerifierTest)

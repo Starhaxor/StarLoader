@@ -9,7 +9,7 @@
       "cacheVariables": {
         "CMAKE_PREFIX_PATH": "C:/Qt/6.11.1/mingw_64",
         "OPENSSL_ROOT_DIR": "C:/Qt/Tools/mingw1310_64/opt",
-        "STARLOADER_ED25519_PUBLIC_KEY": "S9lbmX639b+01IJBdfyEGCxrviCTYrmIMTA9x3JHWAs="
+        "STARLOADER_ED25519_PUBLIC_KEY": "uKdB8wzftgicnr/edD29CvZbPHVEeFZTAONflBs5wNA="
       }
     }
   ],

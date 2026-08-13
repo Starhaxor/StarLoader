@@ -13,6 +13,7 @@ class AuthManager;
 class IHardwareCollector;
 class IDeviceSigner;
 class UserDashboard;
+class QMessageBox;
 struct ApiError;
 enum class AuthState;
 
@@ -31,13 +32,17 @@ private:
     ApiClient *apiClient_ = nullptr;
     AuthManager *authManager_ = nullptr;
     QPointer<UserDashboard> dashboard_;
+    QPointer<QMessageBox> errorDialog_;
     void openHwidDialog();
     void startLogin();
     void showDashboard();
     void signOut();
     void applyState(AuthState state);
-    void showFailure(const ApiError &error);
     static QString safeMessage(const ApiError &error);
+    void showErrorDialog(const QString &code, const QString &text);
+
+private slots:
+    void showFailure(const ApiError &error);
 };
 
 #endif

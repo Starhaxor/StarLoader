@@ -10,6 +10,14 @@
 SessionTokenVerifier::SessionTokenVerifier(QByteArray publicKey, QString issuer, QString audience, QString product)
     : publicKey_(std::move(publicKey)), issuer_(std::move(issuer)), audience_(std::move(audience)), product_(std::move(product)) {}
 
+// Client clocks can lag behind the issuing server (NTP drift, VM/host clock
+// differences). A freshly issued token must not be rejected as "from the
+// future" because of a few seconds of skew; the expiry check still bounds the
+// token lifetime, so a bounded iat leeway does not weaken replay protection.
+// Tokens issued up to maxClockSkewSeconds ahead of the local clock
+// (inclusive) are accepted.
+constexpr qint64 maxClockSkewSeconds = 60;
+
 SessionTokenVerifier SessionTokenVerifier::fromBase64(const QString &encodedPublicKey, QString issuer, QString audience, QString product)
 {
     const QByteArray input = encodedPublicKey.trimmed().toUtf8();
@@ -34,7 +42,7 @@ VerificationResult SessionTokenVerifier::verify(const QString &token, const QStr
     const QJsonValue features = claims.value(QStringLiteral("features"));
     if (!features.isArray()) return {false, QStringLiteral("Invalid session token."), {}};
     for (const QJsonValue &feature : features.toArray()) if (!feature.isString()) return {false, QStringLiteral("Invalid session token."), {}};
-    if (claims.value(QStringLiteral("iss")).toString() != issuer_ || claims.value(QStringLiteral("aud")).toString() != audience_ || claims.value(QStringLiteral("product")).toString() != product_ || claims.value(QStringLiteral("device_id")).toString() != expectedDevice || claims.value(QStringLiteral("license_id")).toString() != expectedLicense || claims.value(QStringLiteral("sub")).toString().isEmpty() || iat < 0 || exp <= now || iat > now || exp - iat != 3600) return {false, QStringLiteral("Invalid session token."), {}};
+    if (claims.value(QStringLiteral("iss")).toString() != issuer_ || claims.value(QStringLiteral("aud")).toString() != audience_ || claims.value(QStringLiteral("product")).toString() != product_ || claims.value(QStringLiteral("device_id")).toString() != expectedDevice || claims.value(QStringLiteral("license_id")).toString() != expectedLicense || claims.value(QStringLiteral("sub")).toString().isEmpty() || iat < 0 || exp <= now || iat > now + maxClockSkewSeconds || exp - iat != 3600) return {false, QStringLiteral("Invalid session token."), {}};
     return {true, {}, QDateTime::fromSecsSinceEpoch(exp, QTimeZone::UTC)};
 }
 
