@@ -33,6 +33,8 @@ if(WIN32)
         Ncrypt
         Ole32
         OleAut32
+        Dwmapi
+        User32
         Wbemuuid
     )
 endif()

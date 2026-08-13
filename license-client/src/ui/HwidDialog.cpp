@@ -2,24 +2,56 @@
 #include "ui_HwidDialog.h"
 
 #include "auth/AuthManager.h"
+#include "theme/ThemeManager.h"
 
 #include <QApplication>
 #include <QClipboard>
-#include <QPushButton>
+#include <QPainter>
 #include <QTimer>
+#include <QToolButton>
 #include <QtConcurrentRun>
+
+namespace {
+
+QIcon copyIcon(const QColor &color)
+{
+    QPixmap pixmap(16, 16);
+    pixmap.fill(Qt::transparent);
+
+    QPainter painter(&pixmap);
+    painter.setRenderHint(QPainter::Antialiasing);
+    painter.setPen(QPen(color, 1.5));
+    painter.setBrush(Qt::NoBrush);
+    painter.drawRoundedRect(QRectF(2.5, 4.5, 8, 9), 1.2, 1.2);
+    painter.drawRoundedRect(QRectF(5.5, 1.5, 8, 9), 1.2, 1.2);
+    return QIcon(pixmap);
+}
+
+QIcon copiedIcon(const QColor &color)
+{
+    QPixmap pixmap(16, 16);
+    pixmap.fill(Qt::transparent);
+
+    QPainter painter(&pixmap);
+    painter.setRenderHint(QPainter::Antialiasing);
+    painter.setPen(QPen(color, 1.8, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+    painter.drawPolyline(QPolygonF{QPointF(2.5, 8.5), QPointF(6.5, 12), QPointF(13.5, 4)});
+    return QIcon(pixmap);
+}
+
+} // namespace
 
 HwidDialog::HwidDialog(IHardwareCollector &hardwareCollector, QWidget *parent)
     : QDialog(parent), hardwareCollector_(hardwareCollector), ui(new Ui::HwidDialog)
 {
     ui->setupUi(this);
     setFixedSize(size());
-    ui->copyButton->setProperty("suggested", true);
+    ThemeManager::applyWindowTheme(this);
+    ui->copyButton->setIcon(copyIcon(ui->copyButton->palette().color(QPalette::ButtonText)));
+    ui->copyButton->setIconSize(QSize(16, 16));
 
-    connect(ui->copyButton, &QPushButton::clicked,
+    connect(ui->copyButton, &QToolButton::clicked,
             this, &HwidDialog::copyCode);
-    connect(ui->closeButton, &QPushButton::clicked,
-            this, &QDialog::accept);
     connect(&collectionWatcher_, &QFutureWatcher<CollectionResult>::finished,
             this, &HwidDialog::collectionFinished);
 
@@ -55,11 +87,14 @@ void HwidDialog::collectionFinished()
 void HwidDialog::copyCode()
 {
     QApplication::clipboard()->setText(ui->hwidLineEdit->text());
-    ui->copyButton->setText(QStringLiteral("Copied"));
+    const QColor iconColor = ui->copyButton->palette().color(QPalette::ButtonText);
+    ui->copyButton->setIcon(copiedIcon(iconColor));
+    ui->copyButton->setToolTip(QStringLiteral("Copied"));
     ui->copyButton->setEnabled(false);
 
-    QTimer::singleShot(1300, this, [this] {
-        ui->copyButton->setText(QStringLiteral("Copy code"));
+    QTimer::singleShot(1300, this, [this, iconColor] {
+        ui->copyButton->setIcon(copyIcon(iconColor));
+        ui->copyButton->setToolTip(QStringLiteral("Copy HWID"));
         ui->copyButton->setEnabled(true);
     });
 }

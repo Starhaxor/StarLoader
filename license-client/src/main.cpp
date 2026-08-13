@@ -6,7 +6,7 @@
 int main(int argc, char **argv)
 {
     QApplication application(argc, argv);
-    application.setApplicationName(QStringLiteral("Modern Login"));
+    application.setApplicationName(QStringLiteral("StarLoader"));
 
     ThemeManager::applyTheme();
 

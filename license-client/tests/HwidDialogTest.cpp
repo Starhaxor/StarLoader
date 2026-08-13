@@ -5,8 +5,8 @@
 #include <QClipboard>
 #include <QLabel>
 #include <QLineEdit>
-#include <QPushButton>
 #include <QTest>
+#include <QToolButton>
 
 class FakeHardwareCollector final : public IHardwareCollector
 {
@@ -31,9 +31,28 @@ class HwidDialogTest final : public QObject
     Q_OBJECT
 
 private slots:
+    void usesCompactHorizontalLayout();
     void showsOnlyFinalFingerprintAndCopiesIt();
     void showsSafeErrorWhenCollectionFails();
 };
+
+void HwidDialogTest::usesCompactHorizontalLayout()
+{
+    FakeHardwareCollector collector;
+    HwidDialog dialog(collector);
+
+    auto *copyButton = dialog.findChild<QToolButton *>(QStringLiteral("copyButton"));
+    QVERIFY(copyButton);
+    QCOMPARE(dialog.windowTitle(), QStringLiteral("HWID Obtainer Tool"));
+    QVERIFY(dialog.width() <= 420);
+    QVERIFY(dialog.height() <= 96);
+    QVERIFY(!dialog.findChild<QLabel *>(QStringLiteral("titleLabel")));
+    QVERIFY(dialog.findChild<QLabel *>(QStringLiteral("descriptionLabel")));
+    QVERIFY(copyButton->width() <= 36);
+    QVERIFY(copyButton->text().isEmpty());
+    QVERIFY(!copyButton->icon().isNull());
+    QVERIFY(!dialog.findChild<QWidget *>(QStringLiteral("closeButton")));
+}
 
 void HwidDialogTest::showsOnlyFinalFingerprintAndCopiesIt()
 {
@@ -52,7 +71,7 @@ void HwidDialogTest::showsOnlyFinalFingerprintAndCopiesIt()
     dialog.show();
 
     auto *hwidLineEdit = dialog.findChild<QLineEdit *>(QStringLiteral("hwidLineEdit"));
-    auto *copyButton = dialog.findChild<QPushButton *>(QStringLiteral("copyButton"));
+    auto *copyButton = dialog.findChild<QToolButton *>(QStringLiteral("copyButton"));
     QVERIFY(hwidLineEdit);
     QVERIFY(copyButton);
 
@@ -85,7 +104,7 @@ void HwidDialogTest::showsSafeErrorWhenCollectionFails()
     HwidDialog dialog(collector);
     dialog.show();
 
-    auto *copyButton = dialog.findChild<QPushButton *>(QStringLiteral("copyButton"));
+    auto *copyButton = dialog.findChild<QToolButton *>(QStringLiteral("copyButton"));
     auto *descriptionLabel = dialog.findChild<QLabel *>(QStringLiteral("descriptionLabel"));
     QVERIFY(copyButton);
     QVERIFY(descriptionLabel);

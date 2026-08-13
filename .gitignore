@@ -84,4 +84,6 @@ CMakeLists.txt.user*
 /.qtcreator/
 /.worktrees/
 /.superpowers/
-/.env
+# Local secrets (at any directory depth)
+.env
+!.env.example
