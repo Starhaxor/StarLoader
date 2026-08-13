@@ -25,10 +25,6 @@
   <property name="windowTitle">
    <string>StarLoader</string>
   </property>
-  <property name="windowIcon">
-   <iconset resource="../../shared/theme/theme.qrc">
-    <normaloff>:/theme/AdwaitaDark.qss</normaloff>:/theme/AdwaitaDark.qss</iconset>
-  </property>
   <widget class="QWidget" name="centralwidget">
    <layout class="QVBoxLayout" name="pageLayout">
     <property name="leftMargin">
@@ -168,8 +164,6 @@
   <tabstop>passwordLineEdit</tabstop>
   <tabstop>loginButton</tabstop>
  </tabstops>
- <resources>
-  <include location="../../shared/theme/theme.qrc"/>
- </resources>
+ <resources/>
  <connections/>
 </ui>

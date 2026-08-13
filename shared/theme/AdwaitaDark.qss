@@ -14,6 +14,49 @@ QMainWindow, QDialog {
     background-color: #353535;
 }
 
+/* Icon-free custom window chrome */
+QWidget#windowTitleBar {
+    background-color: #353535;
+    border-bottom: 1px solid #202020;
+}
+
+QLabel#windowTitleText {
+    color: #eeeeec;
+    font-size: 11px;
+    font-weight: 600;
+}
+
+QToolButton#windowMinimizeButton,
+QToolButton#windowCloseButton {
+    background-color: transparent;
+    color: #eeeeec;
+    border: none;
+    border-radius: 3px;
+    min-width: 26px;
+    max-width: 26px;
+    min-height: 26px;
+    max-height: 26px;
+    padding: 0;
+    font-size: 16px;
+}
+
+QToolButton#windowMinimizeButton:hover {
+    background-color: #454545;
+}
+
+QToolButton#windowCloseButton:hover {
+    background-color: #c01c28;
+    color: #ffffff;
+}
+
+QToolButton#windowMinimizeButton:pressed {
+    background-color: #202020;
+}
+
+QToolButton#windowCloseButton:pressed {
+    background-color: #96151d;
+}
+
 QLabel {
     background: transparent;
     color: #eeeeec;

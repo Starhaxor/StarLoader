@@ -1,8 +1,8 @@
 #include "HwidDialog.h"
 #include "ui_HwidDialog.h"
+#include "WindowTitleBar.h"
 
 #include "auth/AuthManager.h"
-#include "theme/ThemeManager.h"
 
 #include <QApplication>
 #include <QClipboard>
@@ -45,8 +45,8 @@ HwidDialog::HwidDialog(IHardwareCollector &hardwareCollector, QWidget *parent)
     : QDialog(parent), hardwareCollector_(hardwareCollector), ui(new Ui::HwidDialog)
 {
     ui->setupUi(this);
-    setFixedSize(size());
-    ThemeManager::applyWindowTheme(this);
+    ui->dialogLayout->insertWidget(0, new WindowTitleBar(this, windowTitle(), false, this));
+    setFixedSize(width(), ui->dialogLayout->sizeHint().height());
     ui->copyButton->setIcon(copyIcon(ui->copyButton->palette().color(QPalette::ButtonText)));
     ui->copyButton->setIconSize(QSize(16, 16));
 

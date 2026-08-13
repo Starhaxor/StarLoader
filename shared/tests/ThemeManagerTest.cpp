@@ -1,9 +1,6 @@
 #include "theme/ThemeManager.h"
 
 #include <QApplication>
-#include <QIcon>
-#include <QPixmap>
-#include <QWidget>
 #include <QtTest>
 
 class ThemeManagerTest final : public QObject
@@ -12,7 +9,7 @@ class ThemeManagerTest final : public QObject
 private slots:
     void loadsEmbeddedAdwaitaTheme();
     void appliesThemeToApplication();
-    void appliesIconlessWindowTheme();
+    void stylesCustomWindowChrome();
 };
 
 void ThemeManagerTest::loadsEmbeddedAdwaitaTheme()
@@ -30,24 +27,15 @@ void ThemeManagerTest::appliesThemeToApplication()
     QCOMPARE(qApp->styleSheet(), ThemeManager::themeStyleSheet());
 }
 
-void ThemeManagerTest::appliesIconlessWindowTheme()
+void ThemeManagerTest::stylesCustomWindowChrome()
 {
-    QPixmap iconPixmap(4, 4);
-    iconPixmap.fill(Qt::red);
-
-    QWidget window;
-    window.setWindowIcon(QIcon(iconPixmap));
-    QVERIFY(!window.windowIcon().isNull());
-
-    ThemeManager::applyWindowTheme(&window);
-    window.show();
-    QCoreApplication::processEvents();
-
-#ifdef Q_OS_WIN
-    QVERIFY(!window.windowIcon().isNull());
-#else
-    QVERIFY(window.windowIcon().isNull());
-#endif
+    const QString theme = ThemeManager::themeStyleSheet();
+    QVERIFY(theme.contains(QStringLiteral("#windowTitleBar")));
+    QVERIFY(theme.contains(QStringLiteral("QLabel#windowTitleText")));
+    QVERIFY(theme.contains(QStringLiteral("QToolButton#windowCloseButton")));
+    QVERIFY(theme.contains(QStringLiteral("QToolButton#windowMinimizeButton")));
+    QVERIFY(theme.contains(QStringLiteral("QToolButton#windowCloseButton:hover")));
+    QVERIFY(theme.contains(QStringLiteral("QToolButton#windowMinimizeButton:pressed")));
 }
 
 QTEST_MAIN(ThemeManagerTest)

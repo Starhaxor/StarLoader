@@ -1,9 +1,9 @@
-#include "ui_LoginWindow.h"
+#include "ui/LoginWindow.h"
 
 #include <QLabel>
 #include <QLineEdit>
-#include <QMainWindow>
 #include <QPushButton>
+#include <QToolButton>
 #include <QtTest>
 
 class LoginWindowUiTest final : public QObject
@@ -13,13 +13,12 @@ class LoginWindowUiTest final : public QObject
 private slots:
     void usesCompactBrandedLayout();
     void exposesOnlyEmailAndPasswordInputs();
+    void usesIconFreeCustomWindowChrome();
 };
 
 void LoginWindowUiTest::usesCompactBrandedLayout()
 {
-    QMainWindow window;
-    Ui::LoginWindow ui;
-    ui.setupUi(&window);
+    LoginWindow window;
 
     QLabel *title = window.findChild<QLabel *>(QStringLiteral("titleLabel"));
     QVERIFY(title);
@@ -33,9 +32,7 @@ void LoginWindowUiTest::usesCompactBrandedLayout()
 
 void LoginWindowUiTest::exposesOnlyEmailAndPasswordInputs()
 {
-    QMainWindow window;
-    Ui::LoginWindow ui;
-    ui.setupUi(&window);
+    LoginWindow window;
 
     QVERIFY(window.findChild<QLineEdit *>(QStringLiteral("emailLineEdit")));
     QVERIFY(window.findChild<QLineEdit *>(QStringLiteral("passwordLineEdit")));
@@ -47,6 +44,27 @@ void LoginWindowUiTest::exposesOnlyEmailAndPasswordInputs()
     QVERIFY(hwidLink);
     QVERIFY(hwidLink->text().contains(QStringLiteral("href=\"hwid\"")));
     QVERIFY(hwidLink->text().contains(QStringLiteral("View HWID")));
+}
+
+void LoginWindowUiTest::usesIconFreeCustomWindowChrome()
+{
+    LoginWindow window;
+
+    QVERIFY(window.windowFlags().testFlag(Qt::FramelessWindowHint));
+    QVERIFY(window.windowIcon().isNull());
+    auto *titleBar = window.findChild<QWidget *>(QStringLiteral("windowTitleBar"));
+    QVERIFY(titleBar);
+    QVERIFY(titleBar->findChild<QLabel *>(QStringLiteral("windowTitleText")));
+    QVERIFY(!titleBar->findChild<QLabel *>(QStringLiteral("windowIcon")));
+
+    auto *minimizeButton = titleBar->findChild<QToolButton *>(QStringLiteral("windowMinimizeButton"));
+    auto *closeButton = titleBar->findChild<QToolButton *>(QStringLiteral("windowCloseButton"));
+    QVERIFY(minimizeButton);
+    QVERIFY(closeButton);
+    QVERIFY(minimizeButton->icon().isNull());
+    QVERIFY(closeButton->icon().isNull());
+    QCOMPARE(minimizeButton->accessibleName(), QStringLiteral("Minimize window"));
+    QCOMPARE(closeButton->accessibleName(), QStringLiteral("Close window"));
 }
 
 QTEST_MAIN(LoginWindowUiTest)

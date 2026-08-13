@@ -1,10 +1,10 @@
 #include "LoginWindow.h"
 #include "ui_LoginWindow.h"
 #include "HwidDialog.h"
+#include "WindowTitleBar.h"
 #include "api/ApiClient.h"
 #include "auth/AuthManager.h"
 #include "ClientSecurityConfig.h"
-#include "theme/ThemeManager.h"
 
 #include <QPushButton>
 #include <QLabel>
@@ -17,8 +17,8 @@ LoginWindow::LoginWindow(QWidget *parent)
     ui->setupUi(this);
     ui->loginButton->setProperty("suggested", true);
     ui->loginCard->setAutoFillBackground(true);
+    ui->pageLayout->insertWidget(0, new WindowTitleBar(this, windowTitle(), true, ui->centralwidget));
     setFixedSize(size());
-    ThemeManager::applyWindowTheme(this);
 
     apiClient_ = new ApiClient(QUrl(qEnvironmentVariable("STARLOADER_API_URL", "https://api.starloader.example")), ApiClient::RequestTimeoutMs, this);
     hardwareCollector_ = std::make_unique<SystemHardwareCollector>();
