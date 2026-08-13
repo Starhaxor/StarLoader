@@ -42,6 +42,7 @@ ApiClient::ApiClient(QUrl baseUrl, int timeoutMs, QObject *parent)
 {
     qRegisterMetaType<LoginResponse>();
     qRegisterMetaType<DeviceVerifyResponse>();
+    qRegisterMetaType<UserProfileResponse>();
     qRegisterMetaType<ApiError>();
 }
 
@@ -73,6 +74,67 @@ void ApiClient::verifyDevice(const DeviceVerifyRequest &request)
         {QStringLiteral("challenge_signature"), request.challengeSignature}, {QStringLiteral("tpm_public_key"), request.tpmPublicKey},
         {QStringLiteral("hardware"), QJsonObject{{QStringLiteral("smbios_uuid"), hardware.smbiosUuid}, {QStringLiteral("motherboard_serial"), hardware.motherboardSerial}, {QStringLiteral("bios_serial"), hardware.biosSerial}, {QStringLiteral("system_disk_serial"), hardware.systemDiskSerial}, {QStringLiteral("machine_guid"), hardware.machineGuid}, {QStringLiteral("fingerprint"), hardware.fingerprint}}},
     }, true);
+}
+
+void ApiClient::loadProfile(const QString &token)
+{
+    const QString requestId = newRequestId();
+    const auto fail = [this](const ApiError &error) { emit profileFailed(error); };
+    if (!isAllowedTransport()) { fail({QStringLiteral("INSECURE_TRANSPORT"), QStringLiteral("Secure transport is required."), requestId}); return; }
+    if (requestActive_) { fail({QStringLiteral("REQUEST_IN_PROGRESS"), QStringLiteral("A request is already in progress."), requestId}); return; }
+    if (token.isEmpty()) { fail({QStringLiteral("INVALID_SESSION_TOKEN"), QStringLiteral("A valid session is required."), requestId}); return; }
+
+    requestActive_ = true;
+    QNetworkRequest networkRequest(baseUrl_.resolved(QUrl(QStringLiteral("/v1/me"))));
+    networkRequest.setRawHeader("Authorization", QByteArrayLiteral("Bearer ") + token.toUtf8());
+    networkRequest.setRawHeader("X-Request-ID", requestId.toUtf8());
+    QNetworkReply *reply = network_.get(networkRequest);
+    reply->setReadBufferSize(MaxResponseBytes);
+    auto *timer = new QTimer(reply);
+    timer->setSingleShot(true);
+    connect(timer, &QTimer::timeout, reply, [reply] { reply->setProperty("starloader.timeout", true); reply->abort(); });
+    timer->start(timeoutMs_);
+    connect(reply, &QNetworkReply::finished, this, [this, reply, requestId, token] {
+        requestActive_ = false;
+        const QByteArray body = reply->readAll();
+        const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        if (body.size() > MaxResponseBytes || reply->error() != QNetworkReply::NoError || status < 200 || status >= 300) {
+            ApiError error = reply->property("starloader.timeout").toBool()
+                ? ApiError{QStringLiteral("TIMEOUT"), QStringLiteral("Network request timed out."), requestId}
+                : errorForReply(reply, body, requestId);
+            if (body.size() > MaxResponseBytes) error = {QStringLiteral("RESPONSE_TOO_LARGE"), QStringLiteral("Server response is too large."), requestId};
+            if (error.message.contains(token)) error.message = QStringLiteral("Profile request failed.");
+            emit profileFailed(error);
+            reply->deleteLater();
+            return;
+        }
+
+        QJsonParseError parseError;
+        const QJsonDocument document = QJsonDocument::fromJson(body, &parseError);
+        const QJsonObject json = document.object();
+        const QDateTime licenseExpiresAt = QDateTime::fromString(json.value(QStringLiteral("license_expires_at")).toString(), Qt::ISODate);
+        const QDateTime sessionExpiresAt = QDateTime::fromString(json.value(QStringLiteral("session_expires_at")).toString(), Qt::ISODate);
+        UserProfileResponse response{
+            json.value(QStringLiteral("email")).toString(),
+            json.value(QStringLiteral("account_status")).toString(),
+            json.value(QStringLiteral("product")).toString(),
+            json.value(QStringLiteral("license_status")).toString(),
+            licenseExpiresAt,
+            json.value(QStringLiteral("max_devices")).toInt(),
+            json.value(QStringLiteral("device_id")).toString(),
+            json.value(QStringLiteral("device_status")).toString(),
+            sessionExpiresAt,
+            QString::fromUtf8(reply->rawHeader("X-Request-ID")),
+        };
+        const bool malformed = parseError.error != QJsonParseError::NoError || !document.isObject()
+            || !json.value(QStringLiteral("ok")).toBool()
+            || response.email.trimmed().isEmpty() || response.accountStatus.trimmed().isEmpty() || response.product.trimmed().isEmpty()
+            || response.licenseStatus.trimmed().isEmpty() || !response.licenseExpiresAt.isValid() || response.maxDevices <= 0
+            || response.deviceId.trimmed().isEmpty() || response.deviceStatus.trimmed().isEmpty() || !response.sessionExpiresAt.isValid();
+        if (malformed) emit profileFailed({QStringLiteral("MALFORMED_RESPONSE"), QStringLiteral("Server response is invalid."), requestId});
+        else emit profileLoaded(response);
+        reply->deleteLater();
+    });
 }
 
 void ApiClient::postJson(const QString &path, const QJsonObject &body, bool deviceRequest)

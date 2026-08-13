@@ -14,6 +14,9 @@ private slots:
     void parsesStructuredFailuresWithoutLeakingCredentials();
     void rejectsMalformedSuccessJson();
     void sendsExactDeviceVerificationContract();
+    void sendsExactProfileContractAndParsesReply();
+    void rejectsMalformedProfileResponses();
+    void profileFailuresNeverExposeBearerToken();
     void abortsTimedOutRequest();
     void rejectsNonLoopbackHttpUnlessExplicitlyEnabled();
     void rejectsLocalhostNameEvenWhenLocalHttpIsEnabled();
@@ -120,6 +123,124 @@ void ApiClientTest::sendsExactDeviceVerificationContract()
     QVERIFY(request.contains("\"challenge_signature\":\"c2lnbmF0dXJl\""));
     QVERIFY(request.contains("\"tpm_public_key\":\"cHVibGljLWtleQ==\""));
     QVERIFY(request.contains("\"hardware\":{\"bios_serial\":\"bios\",\"fingerprint\":\"fingerprint\",\"machine_guid\":\"guid\",\"motherboard_serial\":\"board\",\"smbios_uuid\":\"smbios\",\"system_disk_serial\":\"disk\"}"));
+}
+
+void ApiClientTest::sendsExactProfileContractAndParsesReply()
+{
+    qputenv("STARLOADER_ALLOW_HTTP_LOCAL", "1");
+    QTcpServer server; QVERIFY(server.listen(QHostAddress::LocalHost));
+    QByteArray request;
+    connect(&server, &QTcpServer::newConnection, this, [&] {
+        QTcpSocket *socket = server.nextPendingConnection();
+        connect(socket, &QTcpSocket::readyRead, socket, [&, socket] {
+            request += socket->readAll();
+            if (!request.contains("\r\n\r\n")) return;
+            const QByteArray response = R"({"ok":true,"email":"test2@test.com","account_status":"active","product":"StarLoader","license_status":"active","license_expires_at":"2026-09-12T17:42:56Z","max_devices":1,"device_id":"019ffc3f-0396-7266-b82c-35371486cc4e","device_status":"active","session_expires_at":"2026-08-13T18:50:15Z"})";
+            socket->write("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: " + QByteArray::number(response.size()) + "\r\nX-Request-ID: profile-request\r\n\r\n" + response);
+            socket->disconnectFromHost();
+        });
+    });
+    const QString token = QStringLiteral("header.payload.signature");
+    ApiClient client(QUrl(QStringLiteral("http://127.0.0.1:%1").arg(server.serverPort())));
+    QSignalSpy complete(&client, &ApiClient::profileLoaded);
+    client.loadProfile(token);
+    if (complete.isEmpty()) QVERIFY(complete.wait(3000));
+
+    const qsizetype headerEnd = request.indexOf("\r\n\r\n");
+    QVERIFY(headerEnd >= 0);
+    QCOMPARE(request.left(request.indexOf("\r\n")), QByteArray("GET /v1/me HTTP/1.1"));
+    QCOMPARE(request.mid(headerEnd + 4), QByteArray());
+    const QRegularExpression authorizationPattern(QStringLiteral("(?im)^Authorization: Bearer header\\.payload\\.signature\\r?$"));
+    const QRegularExpressionMatchIterator authorizationHeaders = authorizationPattern.globalMatch(QString::fromLatin1(request));
+    int authorizationCount = 0;
+    for (auto headers = authorizationHeaders; headers.hasNext(); headers.next()) ++authorizationCount;
+    QCOMPARE(authorizationCount, 1);
+
+    const UserProfileResponse profile = complete.at(0).at(0).value<UserProfileResponse>();
+    QCOMPARE(profile.email, QStringLiteral("test2@test.com"));
+    QCOMPARE(profile.accountStatus, QStringLiteral("active"));
+    QCOMPARE(profile.product, QStringLiteral("StarLoader"));
+    QCOMPARE(profile.licenseStatus, QStringLiteral("active"));
+    QCOMPARE(profile.licenseExpiresAt, QDateTime::fromString(QStringLiteral("2026-09-12T17:42:56Z"), Qt::ISODate));
+    QCOMPARE(profile.maxDevices, 1);
+    QCOMPARE(profile.deviceId, QStringLiteral("019ffc3f-0396-7266-b82c-35371486cc4e"));
+    QCOMPARE(profile.deviceStatus, QStringLiteral("active"));
+    QCOMPARE(profile.sessionExpiresAt, QDateTime::fromString(QStringLiteral("2026-08-13T18:50:15Z"), Qt::ISODate));
+    QCOMPARE(profile.requestId, QStringLiteral("profile-request"));
+}
+
+void ApiClientTest::rejectsMalformedProfileResponses()
+{
+    const QJsonObject valid{
+        {QStringLiteral("ok"), true}, {QStringLiteral("email"), QStringLiteral("test2@test.com")},
+        {QStringLiteral("account_status"), QStringLiteral("active")}, {QStringLiteral("product"), QStringLiteral("StarLoader")},
+        {QStringLiteral("license_status"), QStringLiteral("active")}, {QStringLiteral("license_expires_at"), QStringLiteral("2026-09-12T17:42:56Z")},
+        {QStringLiteral("max_devices"), 1}, {QStringLiteral("device_id"), QStringLiteral("device-1")},
+        {QStringLiteral("device_status"), QStringLiteral("active")}, {QStringLiteral("session_expires_at"), QStringLiteral("2026-08-13T18:50:15Z")},
+    };
+    QList<QByteArray> responses;
+    const QStringList requiredFields{
+        QStringLiteral("email"), QStringLiteral("account_status"), QStringLiteral("product"), QStringLiteral("license_status"),
+        QStringLiteral("license_expires_at"), QStringLiteral("max_devices"), QStringLiteral("device_id"),
+        QStringLiteral("device_status"), QStringLiteral("session_expires_at"),
+    };
+    for (const QString &field : requiredFields) {
+        QJsonObject missing = valid;
+        missing.remove(field);
+        responses.append(QJsonDocument(missing).toJson(QJsonDocument::Compact));
+    }
+    for (const QPair<QString, QJsonValue> &mutation : QList<QPair<QString, QJsonValue>>{
+             {QStringLiteral("email"), QStringLiteral("   ")},
+             {QStringLiteral("license_expires_at"), QStringLiteral("not-a-date")},
+             {QStringLiteral("max_devices"), 0},
+             {QStringLiteral("session_expires_at"), QStringLiteral("not-a-date")},
+         }) {
+        QJsonObject malformed = valid;
+        malformed.insert(mutation.first, mutation.second);
+        responses.append(QJsonDocument(malformed).toJson(QJsonDocument::Compact));
+    }
+    for (const QByteArray &response : responses) {
+        qputenv("STARLOADER_ALLOW_HTTP_LOCAL", "1");
+        QTcpServer server; QVERIFY(server.listen(QHostAddress::LocalHost));
+        connect(&server, &QTcpServer::newConnection, this, [&] {
+            QTcpSocket *socket = server.nextPendingConnection();
+            connect(socket, &QTcpSocket::readyRead, socket, [socket, response] {
+                if (!socket->readAll().contains("\r\n\r\n")) return;
+                socket->write("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: " + QByteArray::number(response.size()) + "\r\n\r\n" + response);
+                socket->disconnectFromHost();
+            });
+        });
+        ApiClient client(QUrl(QStringLiteral("http://127.0.0.1:%1").arg(server.serverPort())));
+        QSignalSpy failed(&client, &ApiClient::profileFailed);
+        client.loadProfile(QStringLiteral("valid-token"));
+        if (failed.isEmpty()) QVERIFY(failed.wait(3000));
+        QCOMPARE(failed.at(0).at(0).value<ApiError>().code, QStringLiteral("MALFORMED_RESPONSE"));
+    }
+}
+
+void ApiClientTest::profileFailuresNeverExposeBearerToken()
+{
+    qputenv("STARLOADER_ALLOW_HTTP_LOCAL", "1");
+    QTcpServer server; QVERIFY(server.listen(QHostAddress::LocalHost));
+    const QString token = QStringLiteral("sensitive-bearer-token");
+    connect(&server, &QTcpServer::newConnection, this, [&] {
+        QTcpSocket *socket = server.nextPendingConnection();
+        connect(socket, &QTcpSocket::readyRead, socket, [socket, token] {
+            socket->readAll();
+            const QByteArray response = QJsonDocument(QJsonObject{
+                {QStringLiteral("ok"), false},
+                {QStringLiteral("code"), QStringLiteral("INVALID_SESSION_TOKEN")},
+                {QStringLiteral("message"), QStringLiteral("rejected %1").arg(token)},
+            }).toJson(QJsonDocument::Compact);
+            socket->write("HTTP/1.1 401 Unauthorized\r\nContent-Type: application/json\r\nContent-Length: " + QByteArray::number(response.size()) + "\r\n\r\n" + response);
+            socket->disconnectFromHost();
+        });
+    });
+    ApiClient client(QUrl(QStringLiteral("http://127.0.0.1:%1").arg(server.serverPort())));
+    QSignalSpy failed(&client, &ApiClient::profileFailed);
+    client.loadProfile(token);
+    if (failed.isEmpty()) QVERIFY(failed.wait(3000));
+    QVERIFY(!failed.at(0).at(0).value<ApiError>().message.contains(token));
 }
 
 void ApiClientTest::abortsTimedOutRequest()

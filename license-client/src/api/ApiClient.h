@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QJsonObject>
+#include <QDateTime>
 #include <QNetworkAccessManager>
 #include <QObject>
 #include <QUrl>
@@ -19,10 +20,24 @@ struct LoginRequest { QString email; QString password; QString deviceFingerprint
 struct LoginResponse { QString sessionId; QString challenge; QString challengeExpiresAt; QString requestId; };
 struct DeviceVerifyRequest { QString sessionId; QString challenge; QString challengeSignature; QString tpmPublicKey; HardwareSignals hardware; };
 struct DeviceVerifyResponse { QString token; QString tokenExpiresAt; QString licenseId; QString deviceId; QString requestId; };
+struct UserProfileResponse
+{
+    QString email;
+    QString accountStatus;
+    QString product;
+    QString licenseStatus;
+    QDateTime licenseExpiresAt;
+    int maxDevices = 0;
+    QString deviceId;
+    QString deviceStatus;
+    QDateTime sessionExpiresAt;
+    QString requestId;
+};
 struct ApiError { QString code; QString message; QString requestId; };
 
 Q_DECLARE_METATYPE(LoginResponse)
 Q_DECLARE_METATYPE(DeviceVerifyResponse)
+Q_DECLARE_METATYPE(UserProfileResponse)
 Q_DECLARE_METATYPE(ApiError)
 
 class IApiClient : public QObject
@@ -33,11 +48,14 @@ public:
     ~IApiClient() override = default;
     virtual void login(const LoginRequest &request) = 0;
     virtual void verifyDevice(const DeviceVerifyRequest &request) = 0;
+    virtual void loadProfile(const QString &token) = 0;
 signals:
     void loginSucceeded(const LoginResponse &response);
     void loginFailed(const ApiError &error);
     void deviceVerified(const DeviceVerifyResponse &response);
     void deviceVerificationFailed(const ApiError &error);
+    void profileLoaded(const UserProfileResponse &response);
+    void profileFailed(const ApiError &error);
 };
 
 class ApiClient final : public IApiClient
@@ -48,6 +66,7 @@ public:
     explicit ApiClient(QUrl baseUrl, int timeoutMs = RequestTimeoutMs, QObject *parent = nullptr);
     void login(const LoginRequest &request) override;
     void verifyDevice(const DeviceVerifyRequest &request) override;
+    void loadProfile(const QString &token) override;
 
 private:
     QUrl baseUrl_;
