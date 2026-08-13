@@ -17,6 +17,7 @@ private slots:
     void sendsExactProfileContractAndParsesReply();
     void rejectsMalformedProfileResponses();
     void profileFailuresNeverExposeBearerToken();
+    void cancelledProfileDoesNotBlockNextRequest();
     void abortsTimedOutRequest();
     void rejectsNonLoopbackHttpUnlessExplicitlyEnabled();
     void rejectsLocalhostNameEvenWhenLocalHttpIsEnabled();
@@ -143,7 +144,7 @@ void ApiClientTest::sendsExactProfileContractAndParsesReply()
     const QString token = QStringLiteral("header.payload.signature");
     ApiClient client(QUrl(QStringLiteral("http://127.0.0.1:%1").arg(server.serverPort())));
     QSignalSpy complete(&client, &ApiClient::profileLoaded);
-    client.loadProfile(token);
+    client.loadProfile(token, 42);
     if (complete.isEmpty()) QVERIFY(complete.wait(3000));
 
     const qsizetype headerEnd = request.indexOf("\r\n\r\n");
@@ -167,6 +168,7 @@ void ApiClientTest::sendsExactProfileContractAndParsesReply()
     QCOMPARE(profile.deviceStatus, QStringLiteral("active"));
     QCOMPARE(profile.sessionExpiresAt, QDateTime::fromString(QStringLiteral("2026-08-13T18:50:15Z"), Qt::ISODate));
     QCOMPARE(profile.requestId, QStringLiteral("profile-request"));
+    QCOMPARE(complete.at(0).at(1).toULongLong(), quint64(42));
 }
 
 void ApiClientTest::rejectsMalformedProfileResponses()
@@ -229,8 +231,9 @@ void ApiClientTest::profileFailuresNeverExposeBearerToken()
             socket->readAll();
             const QByteArray response = QJsonDocument(QJsonObject{
                 {QStringLiteral("ok"), false},
-                {QStringLiteral("code"), QStringLiteral("INVALID_SESSION_TOKEN")},
+                {QStringLiteral("code"), token},
                 {QStringLiteral("message"), QStringLiteral("rejected %1").arg(token)},
+                {QStringLiteral("request_id"), token},
             }).toJson(QJsonDocument::Compact);
             socket->write("HTTP/1.1 401 Unauthorized\r\nContent-Type: application/json\r\nContent-Length: " + QByteArray::number(response.size()) + "\r\n\r\n" + response);
             socket->disconnectFromHost();
@@ -238,9 +241,48 @@ void ApiClientTest::profileFailuresNeverExposeBearerToken()
     });
     ApiClient client(QUrl(QStringLiteral("http://127.0.0.1:%1").arg(server.serverPort())));
     QSignalSpy failed(&client, &ApiClient::profileFailed);
-    client.loadProfile(token);
+    client.loadProfile(token, 73);
     if (failed.isEmpty()) QVERIFY(failed.wait(3000));
-    QVERIFY(!failed.at(0).at(0).value<ApiError>().message.contains(token));
+    const ApiError error = failed.at(0).at(0).value<ApiError>();
+    QVERIFY(!error.code.contains(token));
+    QVERIFY(!error.message.contains(token));
+    QVERIFY(!error.requestId.contains(token));
+    QCOMPARE(failed.at(0).at(1).toULongLong(), quint64(73));
+}
+
+void ApiClientTest::cancelledProfileDoesNotBlockNextRequest()
+{
+    qputenv("STARLOADER_ALLOW_HTTP_LOCAL", "1");
+    QTcpServer server; QVERIFY(server.listen(QHostAddress::LocalHost));
+    int connectionCount = 0;
+    QByteArray profileRequest;
+    QByteArray loginRequest;
+    connect(&server, &QTcpServer::newConnection, this, [&] {
+        while (server.hasPendingConnections()) {
+            QTcpSocket *socket = server.nextPendingConnection();
+            const int connection = ++connectionCount;
+            connect(socket, &QTcpSocket::readyRead, socket, [&, socket, connection] {
+                QByteArray &request = connection == 1 ? profileRequest : loginRequest;
+                request += socket->readAll();
+                if (!request.contains("\r\n\r\n") || connection == 1) return;
+                const QByteArray response = R"({"ok":true,"session_id":"0198940d-7cec-7000-8000-000000000001","challenge":"Y2hhbGxlbmdl","challenge_expires_at":"2026-08-10T12:00:00Z"})";
+                socket->write("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: " + QByteArray::number(response.size()) + "\r\n\r\n" + response);
+                socket->disconnectFromHost();
+            });
+        }
+    });
+
+    ApiClient client(QUrl(QStringLiteral("http://127.0.0.1:%1").arg(server.serverPort())));
+    client.loadProfile(QStringLiteral("old-token"), 1);
+    QTRY_VERIFY(profileRequest.startsWith("GET /v1/me HTTP/1.1\r\n"));
+    client.cancelProfile();
+
+    QSignalSpy complete(&client, &ApiClient::loginSucceeded);
+    QSignalSpy failed(&client, &ApiClient::loginFailed);
+    client.login({QStringLiteral("person@example.com"), QStringLiteral("password"), QStringLiteral("fingerprint")});
+    if (complete.isEmpty()) QVERIFY(complete.wait(3000));
+    QCOMPARE(failed.size(), 0);
+    QVERIFY(loginRequest.startsWith("POST /v1/auth/login HTTP/1.1\r\n"));
 }
 
 void ApiClientTest::abortsTimedOutRequest()

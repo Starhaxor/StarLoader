@@ -59,7 +59,7 @@ AuthManager::AuthManager(IApiClient &apiClient, IHardwareCollector &hardwareColl
     connect(&signingWatcher_, &QFutureWatcher<SigningResult>::finished, this, &AuthManager::completeSigning);
 }
 
-AuthManager::~AuthManager() { cancelAndWait(); }
+AuthManager::~AuthManager() { cancelAndWait(); apiClient_.cancelProfile(); clearSession(); }
 
 AuthState AuthManager::state() const { return state_; }
 QString AuthManager::sessionToken() const { return sessionToken_; }
@@ -76,8 +76,10 @@ void AuthManager::transition(AuthState state, const QString &status)
 void AuthManager::fail(const ApiError &error)
 {
     ApiError safeError = error;
-    if (!sessionToken_.isEmpty() && safeError.message.contains(sessionToken_)) {
-        safeError.message = QStringLiteral("Authentication failed.");
+    if (!sessionToken_.isEmpty()) {
+        if (safeError.code.contains(sessionToken_)) safeError.code = QStringLiteral("INVALID_SESSION_TOKEN");
+        if (safeError.message.contains(sessionToken_)) safeError.message = QStringLiteral("Authentication failed.");
+        if (safeError.requestId.contains(sessionToken_)) safeError.requestId.clear();
     }
     clearSession();
     transition(AuthState::Failed, QStringLiteral("Authentication failed."));
@@ -114,6 +116,7 @@ void AuthManager::login(const QString &email, const QString &password)
 void AuthManager::signOut()
 {
     cancelAndWait();
+    apiClient_.cancelProfile();
     clearSession();
     transition(AuthState::LoggedOut, QStringLiteral("Signed out."));
 }
@@ -125,11 +128,16 @@ void AuthManager::cancelAndWait()
     collectionWatcher_.waitForFinished();
     signingWatcher_.cancel();
     signingWatcher_.waitForFinished();
+    collectionWatcher_.setFuture(QFuture<CollectionResult>());
+    signingWatcher_.setFuture(QFuture<SigningResult>());
 }
 
 void AuthManager::completeCollection()
 {
-    const CollectionResult result = collectionWatcher_.result();
+    const QFuture<CollectionResult> future = collectionWatcher_.future();
+    if (!future.isValid()) return;
+    const CollectionResult result = future.result();
+    collectionWatcher_.setFuture(QFuture<CollectionResult>());
     if (result.attempt != attempt_ || state_ != AuthState::CollectingDevice) return;
     if (!result.success) { fail({QStringLiteral("TPM_UNAVAILABLE"), QStringLiteral("Device security is unavailable."), {}}); return; }
     hardware_ = result.identity;
@@ -141,7 +149,7 @@ void AuthManager::completeCollection()
 
 void AuthManager::handleLoginSucceeded(const LoginResponse &response)
 {
-    if (state_ != AuthState::Authenticating) return;
+    if (state_ != AuthState::Authenticating || profileLoading_) return;
     transition(AuthState::WaitingForDeviceChallenge, QStringLiteral("Verifying device challenge."));
     if (!strictBase64(response.challenge, &challenge_)) { fail({QStringLiteral("INVALID_CHALLENGE"), QStringLiteral("Server challenge is invalid."), response.requestId}); return; }
     sessionId_ = response.sessionId;
@@ -163,7 +171,10 @@ void AuthManager::handleLoginSucceeded(const LoginResponse &response)
 
 void AuthManager::completeSigning()
 {
-    const SigningResult result = signingWatcher_.result();
+    const QFuture<SigningResult> future = signingWatcher_.future();
+    if (!future.isValid()) return;
+    const SigningResult result = future.result();
+    signingWatcher_.setFuture(QFuture<SigningResult>());
     if (result.attempt != attempt_ || state_ != AuthState::VerifyingDevice) return;
     if (!result.success) { fail({QStringLiteral("DEVICE_SIGNING_FAILED"), QStringLiteral("Device proof could not be created."), result.requestId}); return; }
     apiClient_.verifyDevice({sessionId_, result.encodedChallenge, QString::fromUtf8(result.signature.toBase64()), QString::fromUtf8(result.publicKey.toBase64()), {hardware_.smbiosUuid, hardware_.motherboardSerial, hardware_.biosSerial, hardware_.systemDiskSerial, hardware_.machineGuid, hardware_.finalFingerprint}});
@@ -180,21 +191,21 @@ void AuthManager::handleDeviceVerified(const DeviceVerifyResponse &response)
     userProfile_ = {};
     profileLoading_ = true;
     transition(AuthState::Authenticating, QStringLiteral("Loading profile."));
-    apiClient_.loadProfile(sessionToken_);
+    apiClient_.loadProfile(sessionToken_, attempt_);
 }
 
 void AuthManager::handleDeviceVerificationFailed(const ApiError &error) { if (state_ == AuthState::VerifyingDevice) fail(error); }
 
-void AuthManager::handleProfileLoaded(const UserProfileResponse &response)
+void AuthManager::handleProfileLoaded(const UserProfileResponse &response, quint64 generation)
 {
-    if (state_ != AuthState::Authenticating || !profileLoading_ || sessionToken_.isEmpty()) return;
+    if (generation != attempt_ || state_ != AuthState::Authenticating || !profileLoading_ || sessionToken_.isEmpty()) return;
     userProfile_ = response;
     profileLoading_ = false;
     transition(AuthState::Authenticated, QStringLiteral("Authenticated."));
     emit authenticated();
 }
 
-void AuthManager::handleProfileFailed(const ApiError &error)
+void AuthManager::handleProfileFailed(const ApiError &error, quint64 generation)
 {
-    if (state_ == AuthState::Authenticating && profileLoading_) fail(error);
+    if (generation == attempt_ && state_ == AuthState::Authenticating && profileLoading_) fail(error);
 }

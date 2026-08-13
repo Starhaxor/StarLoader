@@ -35,6 +35,15 @@ bool loopbackHost(const QString &host)
     QHostAddress address;
     return address.setAddress(host) && address.isLoopback();
 }
+
+ApiError withoutSecret(ApiError error, const QString &secret)
+{
+    if (secret.isEmpty()) return error;
+    if (error.code.contains(secret)) error.code = QStringLiteral("INVALID_SESSION_TOKEN");
+    if (error.message.contains(secret)) error.message = QStringLiteral("Profile request failed.");
+    if (error.requestId.contains(secret)) error.requestId.clear();
+    return error;
+}
 } // namespace
 
 ApiClient::ApiClient(QUrl baseUrl, int timeoutMs, QObject *parent)
@@ -76,10 +85,10 @@ void ApiClient::verifyDevice(const DeviceVerifyRequest &request)
     }, true);
 }
 
-void ApiClient::loadProfile(const QString &token)
+void ApiClient::loadProfile(const QString &token, quint64 generation)
 {
     const QString requestId = newRequestId();
-    const auto fail = [this](const ApiError &error) { emit profileFailed(error); };
+    const auto fail = [this, generation](const ApiError &error) { emit profileFailed(error, generation); };
     if (!isAllowedTransport()) { fail({QStringLiteral("INSECURE_TRANSPORT"), QStringLiteral("Secure transport is required."), requestId}); return; }
     if (requestActive_) { fail({QStringLiteral("REQUEST_IN_PROGRESS"), QStringLiteral("A request is already in progress."), requestId}); return; }
     if (token.isEmpty()) { fail({QStringLiteral("INVALID_SESSION_TOKEN"), QStringLiteral("A valid session is required."), requestId}); return; }
@@ -89,12 +98,18 @@ void ApiClient::loadProfile(const QString &token)
     networkRequest.setRawHeader("Authorization", QByteArrayLiteral("Bearer ") + token.toUtf8());
     networkRequest.setRawHeader("X-Request-ID", requestId.toUtf8());
     QNetworkReply *reply = network_.get(networkRequest);
+    profileReply_ = reply;
     reply->setReadBufferSize(MaxResponseBytes);
     auto *timer = new QTimer(reply);
     timer->setSingleShot(true);
     connect(timer, &QTimer::timeout, reply, [reply] { reply->setProperty("starloader.timeout", true); reply->abort(); });
     timer->start(timeoutMs_);
-    connect(reply, &QNetworkReply::finished, this, [this, reply, requestId, token] {
+    connect(reply, &QNetworkReply::finished, this, [this, reply, requestId, token, generation] {
+        if (reply->property("starloader.cancelled").toBool()) {
+            reply->deleteLater();
+            return;
+        }
+        if (profileReply_ == reply) profileReply_.clear();
         requestActive_ = false;
         const QByteArray body = reply->readAll();
         const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
@@ -103,8 +118,7 @@ void ApiClient::loadProfile(const QString &token)
                 ? ApiError{QStringLiteral("TIMEOUT"), QStringLiteral("Network request timed out."), requestId}
                 : errorForReply(reply, body, requestId);
             if (body.size() > MaxResponseBytes) error = {QStringLiteral("RESPONSE_TOO_LARGE"), QStringLiteral("Server response is too large."), requestId};
-            if (error.message.contains(token)) error.message = QStringLiteral("Profile request failed.");
-            emit profileFailed(error);
+            emit profileFailed(withoutSecret(error, token), generation);
             reply->deleteLater();
             return;
         }
@@ -131,10 +145,20 @@ void ApiClient::loadProfile(const QString &token)
             || response.email.trimmed().isEmpty() || response.accountStatus.trimmed().isEmpty() || response.product.trimmed().isEmpty()
             || response.licenseStatus.trimmed().isEmpty() || !response.licenseExpiresAt.isValid() || response.maxDevices <= 0
             || response.deviceId.trimmed().isEmpty() || response.deviceStatus.trimmed().isEmpty() || !response.sessionExpiresAt.isValid();
-        if (malformed) emit profileFailed({QStringLiteral("MALFORMED_RESPONSE"), QStringLiteral("Server response is invalid."), requestId});
-        else emit profileLoaded(response);
+        if (malformed) emit profileFailed({QStringLiteral("MALFORMED_RESPONSE"), QStringLiteral("Server response is invalid."), requestId}, generation);
+        else emit profileLoaded(response, generation);
         reply->deleteLater();
     });
+}
+
+void ApiClient::cancelProfile()
+{
+    if (profileReply_.isNull()) return;
+    QNetworkReply *reply = profileReply_.data();
+    profileReply_.clear();
+    reply->setProperty("starloader.cancelled", true);
+    requestActive_ = false;
+    reply->abort();
 }
 
 void ApiClient::postJson(const QString &path, const QJsonObject &body, bool deviceRequest)

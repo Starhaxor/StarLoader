@@ -71,10 +71,11 @@ private slots:
     void handleLoginFailed(const ApiError &error);
     void handleDeviceVerified(const DeviceVerifyResponse &response);
     void handleDeviceVerificationFailed(const ApiError &error);
-    void handleProfileLoaded(const UserProfileResponse &response);
-    void handleProfileFailed(const ApiError &error);
+    void handleProfileLoaded(const UserProfileResponse &response, quint64 generation);
+    void handleProfileFailed(const ApiError &error, quint64 generation);
 
 private:
+    friend class AuthManagerTest;
     IApiClient &apiClient_;
     IHardwareCollector &hardwareCollector_;
     IDeviceSigner &deviceSigner_;
