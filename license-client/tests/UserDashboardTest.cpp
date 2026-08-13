@@ -6,14 +6,20 @@
 
 #include <QAbstractButton>
 #include <QApplication>
+#include <QDebug>
+#include <QEvent>
 #include <QFrame>
 #include <QLabel>
 #include <QLineEdit>
 #include <QPointer>
+#include <QProcess>
+#include <QProcessEnvironment>
 #include <QPushButton>
 #include <QRegularExpression>
 #include <QSignalSpy>
+#include <QTextStream>
 #include <QToolButton>
+#include <QTimer>
 #include <QtTest>
 
 class UserDashboardTest final : public QObject
@@ -27,9 +33,33 @@ private slots:
     void validatedAuthenticationShowsExactlyOneDashboard();
     void signOutClearsCredentialsAndReturnsToLogin();
     void closingDashboardDoesNotResurrectLogin();
+    void closingDashboardExitsRealApplicationLoop();
 };
 
 namespace {
+
+constexpr auto DashboardCloseHelperArgument = "--dashboard-close-helper";
+
+class LoginShowCounter final : public QObject
+{
+public:
+    explicit LoginShowCounter(LoginWindow &login) : login_(&login) {}
+
+    int showCount() const { return showCount_; }
+
+protected:
+    bool eventFilter(QObject *watched, QEvent *event) override
+    {
+        if (watched == login_ && event->type() == QEvent::Show) {
+            ++showCount_;
+        }
+        return QObject::eventFilter(watched, event);
+    }
+
+private:
+    LoginWindow *login_;
+    int showCount_ = 0;
+};
 
 UserProfileResponse literalProfile()
 {
@@ -66,6 +96,68 @@ AuthManager *authenticatedManager(LoginWindow &login)
         QCoreApplication::processEvents();
     }
     return manager;
+}
+
+int runDashboardCloseHelper(int argc, char **argv)
+{
+    QApplication application(argc, argv);
+    application.setApplicationName(QStringLiteral("StarLoader dashboard close helper"));
+    application.setAttribute(Qt::AA_Use96Dpi, true);
+
+    LoginWindow login;
+    LoginShowCounter loginShows(login);
+    login.installEventFilter(&loginShows);
+    login.show();
+
+    bool watchdogExpired = false;
+    QTimer watchdog;
+    watchdog.setSingleShot(true);
+    QObject::connect(&watchdog, &QTimer::timeout, &application, [&] {
+        watchdogExpired = true;
+        application.exit(70);
+    });
+    watchdog.start(3'000);
+
+    QTimer::singleShot(0, &application, [&] {
+        AuthManager *manager = login.findChild<AuthManager *>();
+        if (manager == nullptr
+            || !QMetaObject::invokeMethod(manager, "authenticated", Qt::DirectConnection)) {
+            application.exit(71);
+            return;
+        }
+
+        const auto dashboards = openDashboards();
+        if (dashboards.size() != 1 || login.isVisible() || loginShows.showCount() != 1) {
+            application.exit(72);
+            return;
+        }
+
+        QPointer<UserDashboard> dashboard = dashboards.constFirst();
+        QTimer::singleShot(0, dashboard.data(), [dashboard] {
+            if (dashboard != nullptr) {
+                dashboard->close();
+            }
+        });
+    });
+
+    const int eventLoopResult = application.exec();
+    watchdog.stop();
+
+    if (watchdogExpired || eventLoopResult != 0 || login.isVisible()
+        || loginShows.showCount() != 1 || !openDashboards().isEmpty()) {
+        qCritical().noquote()
+            << QStringLiteral("DASHBOARD_CLOSE_HELPER_FAILED result=%1 watchdog=%2 login_visible=%3 show_count=%4 dashboards=%5")
+                   .arg(eventLoopResult)
+                   .arg(watchdogExpired)
+                   .arg(login.isVisible())
+                   .arg(loginShows.showCount())
+                   .arg(openDashboards().size());
+        return eventLoopResult == 0 ? 73 : eventLoopResult;
+    }
+
+    QTextStream output(stdout);
+    output << "DASHBOARD_CLOSE_HELPER_OK show_count=" << loginShows.showCount() << Qt::endl;
+    return 0;
 }
 
 } // namespace
@@ -287,6 +379,41 @@ void UserDashboardTest::closingDashboardDoesNotResurrectLogin()
     QCOMPARE(openDashboards().size(), 0);
 }
 
-QTEST_MAIN(UserDashboardTest)
+void UserDashboardTest::closingDashboardExitsRealApplicationLoop()
+{
+    QProcess helper;
+    QProcessEnvironment environment = QProcessEnvironment::systemEnvironment();
+    environment.insert(QStringLiteral("QT_QPA_PLATFORM"), QStringLiteral("offscreen"));
+    helper.setProcessEnvironment(environment);
+    helper.setProgram(QCoreApplication::applicationFilePath());
+    helper.setArguments({QString::fromLatin1(DashboardCloseHelperArgument)});
+    helper.start();
+
+    QVERIFY2(helper.waitForStarted(2'000), qPrintable(helper.errorString()));
+    if (!helper.waitForFinished(5'000)) {
+        helper.kill();
+        helper.waitForFinished(2'000);
+        QFAIL("Authenticated dashboard close did not exit QApplication::exec() within 5 seconds");
+    }
+
+    const QByteArray output = helper.readAllStandardOutput() + helper.readAllStandardError();
+    QCOMPARE(helper.exitStatus(), QProcess::NormalExit);
+    QCOMPARE(helper.exitCode(), 0);
+    QVERIFY2(output.contains("DASHBOARD_CLOSE_HELPER_OK show_count=1"), output.constData());
+}
+
+int main(int argc, char **argv)
+{
+    for (int index = 1; index < argc; ++index) {
+        if (QByteArrayView(argv[index]) == DashboardCloseHelperArgument) {
+            return runDashboardCloseHelper(argc, argv);
+        }
+    }
+
+    QApplication application(argc, argv);
+    application.setAttribute(Qt::AA_Use96Dpi, true);
+    UserDashboardTest test;
+    return QTest::qExec(&test, argc, argv);
+}
 
 #include "UserDashboardTest.moc"
