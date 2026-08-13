@@ -429,8 +429,10 @@ QFrame#loginCard {
 
 QLabel#titleLabel {
     color: #ffffff;
-    font-size: 18pt;
-    font-weight: 600;
+    font-family: "Palatino Linotype", "Georgia";
+    font-size: 25pt;
+    font-style: italic;
+    font-weight: 500;
 }
 
 QLabel#subtitleLabel,
@@ -445,11 +447,6 @@ QLabel#statusLabel {
 
 QLabel#statusLabel[state="error"] {
     color: #cc0000;
-}
-
-QLabel#requestIdLabel {
-    color: #5b5b5b;
-    font-size: 10px;
 }
 
 QLabel#hwidLink {

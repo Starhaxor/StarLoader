@@ -4,6 +4,7 @@
 #include "api/ApiClient.h"
 #include "auth/AuthManager.h"
 #include "ClientSecurityConfig.h"
+#include "theme/ThemeManager.h"
 
 #include <QPushButton>
 #include <QLabel>
@@ -17,6 +18,7 @@ LoginWindow::LoginWindow(QWidget *parent)
     ui->loginButton->setProperty("suggested", true);
     ui->loginCard->setAutoFillBackground(true);
     setFixedSize(size());
+    ThemeManager::applyWindowTheme(this);
 
     apiClient_ = new ApiClient(QUrl(qEnvironmentVariable("STARLOADER_API_URL", "https://api.starloader.example")), ApiClient::RequestTimeoutMs, this);
     hardwareCollector_ = std::make_unique<SystemHardwareCollector>();
@@ -52,7 +54,6 @@ void LoginWindow::startLogin()
     ui->statusLabel->setProperty("state", QVariant());
     ui->statusLabel->style()->unpolish(ui->statusLabel);
     ui->statusLabel->style()->polish(ui->statusLabel);
-    ui->requestIdLabel->clear();
     authManager_->login(ui->emailLineEdit->text(), ui->passwordLineEdit->text());
 }
 
@@ -83,5 +84,4 @@ void LoginWindow::showFailure(const ApiError &error)
     ui->statusLabel->style()->unpolish(ui->statusLabel);
     ui->statusLabel->style()->polish(ui->statusLabel);
     ui->statusLabel->setText(safeMessage(error));
-    ui->requestIdLabel->setText(error.requestId.isEmpty() ? QString() : QStringLiteral("Support code: %1").arg(error.requestId));
 }
