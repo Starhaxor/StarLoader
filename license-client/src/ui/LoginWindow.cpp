@@ -1,10 +1,11 @@
 #include "LoginWindow.h"
 #include "ui_LoginWindow.h"
 #include "HwidDialog.h"
+#include "UserDashboard.h"
+#include "WindowTitleBar.h"
 #include "api/ApiClient.h"
 #include "auth/AuthManager.h"
 #include "ClientSecurityConfig.h"
-#include "theme/ThemeManager.h"
 
 #include <QPushButton>
 #include <QLabel>
@@ -17,8 +18,8 @@ LoginWindow::LoginWindow(QWidget *parent)
     ui->setupUi(this);
     ui->loginButton->setProperty("suggested", true);
     ui->loginCard->setAutoFillBackground(true);
+    ui->pageLayout->insertWidget(0, new WindowTitleBar(this, windowTitle(), true, ui->centralwidget));
     setFixedSize(size());
-    ThemeManager::applyWindowTheme(this);
 
     apiClient_ = new ApiClient(QUrl(qEnvironmentVariable("STARLOADER_API_URL", "https://api.starloader.example")), ApiClient::RequestTimeoutMs, this);
     hardwareCollector_ = std::make_unique<SystemHardwareCollector>();
@@ -33,10 +34,12 @@ LoginWindow::LoginWindow(QWidget *parent)
     connect(authManager_, &AuthManager::stateChanged, this, &LoginWindow::applyState);
     connect(authManager_, &AuthManager::statusChanged, ui->statusLabel, &QLabel::setText);
     connect(authManager_, &AuthManager::failed, this, &LoginWindow::showFailure);
+    connect(authManager_, &AuthManager::authenticated, this, &LoginWindow::showDashboard);
 }
 
 LoginWindow::~LoginWindow()
 {
+    if (dashboard_ != nullptr) { dashboard_->hide(); delete dashboard_.data(); }
     if (authManager_ != nullptr) { authManager_->cancelAndWait(); delete authManager_; authManager_ = nullptr; }
     delete ui;
 }
@@ -55,6 +58,36 @@ void LoginWindow::startLogin()
     ui->statusLabel->style()->unpolish(ui->statusLabel);
     ui->statusLabel->style()->polish(ui->statusLabel);
     authManager_->login(ui->emailLineEdit->text(), ui->passwordLineEdit->text());
+}
+
+void LoginWindow::showDashboard()
+{
+    if (dashboard_ == nullptr) {
+        dashboard_ = new UserDashboard(authManager_->userProfile(),
+                                       authManager_->deviceDisplayId());
+        connect(dashboard_, &UserDashboard::signOutRequested,
+                this, &LoginWindow::signOut);
+    }
+
+    hide();
+    dashboard_->show();
+}
+
+void LoginWindow::signOut()
+{
+    UserDashboard *dashboard = dashboard_.data();
+    if (dashboard != nullptr) {
+        dashboard->hide();
+    }
+
+    authManager_->signOut();
+    ui->emailLineEdit->clear();
+    ui->passwordLineEdit->clear();
+    show();
+
+    if (dashboard != nullptr) {
+        dashboard->deleteLater();
+    }
 }
 
 void LoginWindow::applyState(AuthState state)

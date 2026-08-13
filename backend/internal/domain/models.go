@@ -23,6 +23,20 @@ type NewUser struct {
 	PasswordHash string
 }
 
+// UserProfile contains the safe account and device information shown to a verified session.
+type UserProfile struct {
+	Email            string
+	AccountStatus    UserStatus
+	Product          string
+	LicenseStatus    LicenseStatus
+	LicenseExpiresAt time.Time
+	MaxDevices       int
+	DeviceID         string
+	DeviceStatus     DeviceStatus
+}
+
+var ErrProfileNotFound = &NotFoundError{Entity: "profile"}
+
 type LicenseStatus string
 
 const (

@@ -32,6 +32,7 @@ class HwidDialogTest final : public QObject
 
 private slots:
     void usesCompactHorizontalLayout();
+    void usesCloseOnlyIconFreeCustomWindowChrome();
     void showsOnlyFinalFingerprintAndCopiesIt();
     void showsSafeErrorWhenCollectionFails();
 };
@@ -45,13 +46,32 @@ void HwidDialogTest::usesCompactHorizontalLayout()
     QVERIFY(copyButton);
     QCOMPARE(dialog.windowTitle(), QStringLiteral("HWID Obtainer Tool"));
     QVERIFY(dialog.width() <= 420);
-    QVERIFY(dialog.height() <= 96);
+    QVERIFY(dialog.height() <= 120);
     QVERIFY(!dialog.findChild<QLabel *>(QStringLiteral("titleLabel")));
     QVERIFY(dialog.findChild<QLabel *>(QStringLiteral("descriptionLabel")));
     QVERIFY(copyButton->width() <= 36);
     QVERIFY(copyButton->text().isEmpty());
     QVERIFY(!copyButton->icon().isNull());
     QVERIFY(!dialog.findChild<QWidget *>(QStringLiteral("closeButton")));
+}
+
+void HwidDialogTest::usesCloseOnlyIconFreeCustomWindowChrome()
+{
+    FakeHardwareCollector collector;
+    HwidDialog dialog(collector);
+
+    QVERIFY(dialog.windowFlags().testFlag(Qt::FramelessWindowHint));
+    QVERIFY(dialog.windowIcon().isNull());
+    auto *titleBar = dialog.findChild<QWidget *>(QStringLiteral("windowTitleBar"));
+    QVERIFY(titleBar);
+    QVERIFY(titleBar->findChild<QLabel *>(QStringLiteral("windowTitleText")));
+    QVERIFY(!titleBar->findChild<QLabel *>(QStringLiteral("windowIcon")));
+    QVERIFY(!titleBar->findChild<QToolButton *>(QStringLiteral("windowMinimizeButton")));
+
+    auto *closeButton = titleBar->findChild<QToolButton *>(QStringLiteral("windowCloseButton"));
+    QVERIFY(closeButton);
+    QVERIFY(closeButton->icon().isNull());
+    QCOMPARE(closeButton->accessibleName(), QStringLiteral("Close window"));
 }
 
 void HwidDialogTest::showsOnlyFinalFingerprintAndCopiesIt()

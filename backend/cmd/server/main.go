@@ -153,6 +153,14 @@ func runServer() error {
 	if err != nil {
 		return errors.New("configuration error: invalid token issuer configuration")
 	}
+	publicKey, ok := privateKey.Public().(ed25519.PublicKey)
+	if !ok {
+		return errors.New("configuration error: invalid token verifier key")
+	}
+	tokenVerifier, err := security.NewTokenVerifier(publicKey, configuration.LicenseIssuer, configuration.LicenseAudience, configuration.Product)
+	if err != nil {
+		return errors.New("configuration error: invalid token verifier configuration")
+	}
 	deviceService := service.NewDeviceService(service.NewStoreDeviceRepository(repository), service.DeviceServiceConfig{
 		HardwareHMACKey: []byte(configuration.HardwareHMACKey),
 		TokenIssuer:     tokenIssuer,
@@ -163,6 +171,8 @@ func runServer() error {
 	router := httpapi.NewRouter(httpapi.RouterConfig{
 		Login:              loginService,
 		DeviceVerification: deviceService,
+		SessionVerifier:    tokenVerifier,
+		Profile:            repository,
 		LoginTimeout:       configuration.LoginTimeout,
 		TrustedProxies:     trustedProxies,
 		Logger:             log.Default(),

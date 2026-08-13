@@ -54,8 +54,10 @@ public:
     ~AuthManager() override;
     AuthState state() const;
     QString sessionToken() const;
+    const UserProfileResponse &userProfile() const;
     QString deviceDisplayId() const;
     void login(const QString &email, const QString &password);
+    void signOut();
     void cancelAndWait();
 
 signals:
@@ -65,12 +67,15 @@ signals:
     void authenticated();
 
 private slots:
-    void handleLoginSucceeded(const LoginResponse &response);
-    void handleLoginFailed(const ApiError &error);
-    void handleDeviceVerified(const DeviceVerifyResponse &response);
-    void handleDeviceVerificationFailed(const ApiError &error);
+    void handleLoginSucceeded(const LoginResponse &response, quint64 generation);
+    void handleLoginFailed(const ApiError &error, quint64 generation);
+    void handleDeviceVerified(const DeviceVerifyResponse &response, quint64 generation);
+    void handleDeviceVerificationFailed(const ApiError &error, quint64 generation);
+    void handleProfileLoaded(const UserProfileResponse &response, quint64 generation);
+    void handleProfileFailed(const ApiError &error, quint64 generation);
 
 private:
+    friend class AuthManagerTest;
     IApiClient &apiClient_;
     IHardwareCollector &hardwareCollector_;
     IDeviceSigner &deviceSigner_;
@@ -80,6 +85,8 @@ private:
     QString sessionId_;
     QByteArray challenge_;
     QString sessionToken_;
+    UserProfileResponse userProfile_;
+    bool profileLoading_ = false;
     struct CollectionResult { quint64 attempt = 0; bool success = false; HardwareIdentity identity; QString error; };
     struct SigningResult { quint64 attempt = 0; bool success = false; QByteArray signature; QByteArray publicKey; QString encodedChallenge; QString requestId; QString error; };
     struct PendingLogin { QString email; QString password; };
@@ -89,6 +96,7 @@ private:
     quint64 attempt_ = 0;
     void transition(AuthState state, const QString &status);
     void fail(const ApiError &error);
+    void clearSession();
     void completeCollection();
     void completeSigning();
 };

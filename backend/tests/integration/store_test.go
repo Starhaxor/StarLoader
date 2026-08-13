@@ -381,6 +381,92 @@ func TestUserAndLicenseRoundTrip(t *testing.T) {
 	}
 }
 
+func TestLoadProfileBindsUserLicenseAndDevice(t *testing.T) {
+	// These cases fail if the profile query omits a claimed identifier or an ownership join.
+	fixture := newPostgresVerificationFixture(t, 1)
+	activated, err := fixture.deviceService.Verify(
+		fixture.ctx,
+		fixture.newInput(t, generateP256Key(t), acceptanceHardware("profile"), fixture.now.Add(time.Minute)),
+	)
+	if err != nil {
+		t.Fatalf("Verify() error = %v", err)
+	}
+
+	profile, err := fixture.repository.LoadProfile(fixture.ctx, fixture.user.ID, fixture.license.ID, activated.DeviceID)
+	if err != nil {
+		t.Fatalf("LoadProfile() error = %v", err)
+	}
+	if profile.Email != "device-verification@example.com" || profile.AccountStatus != domain.UserStatusActive ||
+		profile.Product != "StarLoader" || profile.LicenseStatus != domain.LicenseStatusActive ||
+		!profile.LicenseExpiresAt.Equal(fixture.license.ExpiresAt) || profile.MaxDevices != 1 ||
+		profile.DeviceID != activated.DeviceID || profile.DeviceStatus != domain.DeviceStatusActive {
+		t.Fatalf("LoadProfile() = %#v", profile)
+	}
+
+	otherUser, err := fixture.repository.CreateUser(fixture.ctx, domain.NewUser{
+		Email: "other-profile@example.com", PasswordHash: "$argon2id$v=19$integration-hash",
+	})
+	if err != nil {
+		t.Fatalf("CreateUser() error = %v", err)
+	}
+	otherLicense, err := fixture.repository.CreateLicense(fixture.ctx, domain.NewLicense{
+		LicenseHMAC: strings.Repeat("b", 64), UserID: otherUser.ID, Product: "StarLoader", MaxDevices: 1, ExpiresAt: fixture.now.Add(24 * time.Hour),
+	})
+	if err != nil {
+		t.Fatalf("CreateLicense() error = %v", err)
+	}
+	var otherDeviceID string
+	err = fixture.pool.QueryRow(fixture.ctx, `
+		insert into devices (
+			user_id, license_id, tpm_public_key, tpm_public_key_sha256, fingerprint_hmac, last_seen_at
+		) values ($1, $2, $3, $4, $5, $6)
+		returning id::text`,
+		otherUser.ID, otherLicense.ID, []byte("other-tpm-public-key"), bytes.Repeat([]byte{0x2a}, 32), strings.Repeat("c", 64), fixture.now,
+	).Scan(&otherDeviceID)
+	if err != nil {
+		t.Fatalf("create other device: %v", err)
+	}
+	sameUserLicense, err := fixture.repository.CreateLicense(fixture.ctx, domain.NewLicense{
+		LicenseHMAC: strings.Repeat("d", 64), UserID: fixture.user.ID, Product: "StarLoader Plus", MaxDevices: 2, ExpiresAt: fixture.now.Add(48 * time.Hour),
+	})
+	if err != nil {
+		t.Fatalf("CreateLicense() for same user error = %v", err)
+	}
+	var sameUserDeviceID string
+	err = fixture.pool.QueryRow(fixture.ctx, `
+		insert into devices (
+			user_id, license_id, tpm_public_key, tpm_public_key_sha256, fingerprint_hmac, last_seen_at
+		) values ($1, $2, $3, $4, $5, $6)
+		returning id::text`,
+		fixture.user.ID, sameUserLicense.ID, []byte("same-user-tpm-public-key"), bytes.Repeat([]byte{0x3a}, 32), strings.Repeat("e", 64), fixture.now,
+	).Scan(&sameUserDeviceID)
+	if err != nil {
+		t.Fatalf("create same-user device: %v", err)
+	}
+	if _, err := fixture.repository.LoadProfile(fixture.ctx, fixture.user.ID, sameUserLicense.ID, sameUserDeviceID); err != nil {
+		t.Fatalf("LoadProfile() for same-user alternate license error = %v", err)
+	}
+
+	for _, tt := range []struct {
+		name      string
+		userID    string
+		licenseID string
+		deviceID  string
+	}{
+		{name: "other user", userID: otherUser.ID, licenseID: fixture.license.ID, deviceID: activated.DeviceID},
+		{name: "other license", userID: fixture.user.ID, licenseID: otherLicense.ID, deviceID: otherDeviceID},
+		{name: "other device", userID: fixture.user.ID, licenseID: fixture.license.ID, deviceID: otherDeviceID},
+		{name: "same user alternate device with original license", userID: fixture.user.ID, licenseID: fixture.license.ID, deviceID: sameUserDeviceID},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := fixture.repository.LoadProfile(fixture.ctx, tt.userID, tt.licenseID, tt.deviceID)
+			if !errors.Is(err, domain.ErrProfileNotFound) {
+				t.Fatalf("LoadProfile() error = %v, want %v", err, domain.ErrProfileNotFound)
+			}
+		})
+	}
+}
+
 func TestSingleLicensePerUserProduct(t *testing.T) {
 	ctx := context.Background()
 	base := time.Now().UTC().Truncate(time.Microsecond)

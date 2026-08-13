@@ -2,6 +2,7 @@
 #define LOGINWINDOW_H
 
 #include <QMainWindow>
+#include <QPointer>
 #include <memory>
 
 QT_BEGIN_NAMESPACE
@@ -11,6 +12,7 @@ class ApiClient;
 class AuthManager;
 class IHardwareCollector;
 class IDeviceSigner;
+class UserDashboard;
 struct ApiError;
 enum class AuthState;
 
@@ -28,8 +30,11 @@ private:
     std::unique_ptr<IDeviceSigner> deviceSigner_;
     ApiClient *apiClient_ = nullptr;
     AuthManager *authManager_ = nullptr;
+    QPointer<UserDashboard> dashboard_;
     void openHwidDialog();
     void startLogin();
+    void showDashboard();
+    void signOut();
     void applyState(AuthState state);
     void showFailure(const ApiError &error);
     static QString safeMessage(const ApiError &error);
