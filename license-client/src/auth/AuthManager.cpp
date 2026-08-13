@@ -143,13 +143,13 @@ void AuthManager::completeCollection()
     hardware_ = result.identity;
     if (!verifier_.isConfigured()) { fail({QStringLiteral("TOKEN_VERIFIER_UNAVAILABLE"), QStringLiteral("Client security configuration is unavailable."), {}}); return; }
     transition(AuthState::Authenticating, QStringLiteral("Authenticating."));
-    apiClient_.login({pendingLogin_.email, pendingLogin_.password, hardware_.finalFingerprint});
+    apiClient_.login({pendingLogin_.email, pendingLogin_.password, hardware_.finalFingerprint}, attempt_);
     pendingLogin_.password.clear();
 }
 
-void AuthManager::handleLoginSucceeded(const LoginResponse &response)
+void AuthManager::handleLoginSucceeded(const LoginResponse &response, quint64 generation)
 {
-    if (state_ != AuthState::Authenticating || profileLoading_) return;
+    if (generation != attempt_ || state_ != AuthState::Authenticating || profileLoading_) return;
     transition(AuthState::WaitingForDeviceChallenge, QStringLiteral("Verifying device challenge."));
     if (!strictBase64(response.challenge, &challenge_)) { fail({QStringLiteral("INVALID_CHALLENGE"), QStringLiteral("Server challenge is invalid."), response.requestId}); return; }
     sessionId_ = response.sessionId;
@@ -177,14 +177,14 @@ void AuthManager::completeSigning()
     signingWatcher_.setFuture(QFuture<SigningResult>());
     if (result.attempt != attempt_ || state_ != AuthState::VerifyingDevice) return;
     if (!result.success) { fail({QStringLiteral("DEVICE_SIGNING_FAILED"), QStringLiteral("Device proof could not be created."), result.requestId}); return; }
-    apiClient_.verifyDevice({sessionId_, result.encodedChallenge, QString::fromUtf8(result.signature.toBase64()), QString::fromUtf8(result.publicKey.toBase64()), {hardware_.smbiosUuid, hardware_.motherboardSerial, hardware_.biosSerial, hardware_.systemDiskSerial, hardware_.machineGuid, hardware_.finalFingerprint}});
+    apiClient_.verifyDevice({sessionId_, result.encodedChallenge, QString::fromUtf8(result.signature.toBase64()), QString::fromUtf8(result.publicKey.toBase64()), {hardware_.smbiosUuid, hardware_.motherboardSerial, hardware_.biosSerial, hardware_.systemDiskSerial, hardware_.machineGuid, hardware_.finalFingerprint}}, attempt_);
 }
 
-void AuthManager::handleLoginFailed(const ApiError &error) { if (state_ == AuthState::Authenticating && !profileLoading_) fail(error); }
+void AuthManager::handleLoginFailed(const ApiError &error, quint64 generation) { if (generation == attempt_ && state_ == AuthState::Authenticating && !profileLoading_) fail(error); }
 
-void AuthManager::handleDeviceVerified(const DeviceVerifyResponse &response)
+void AuthManager::handleDeviceVerified(const DeviceVerifyResponse &response, quint64 generation)
 {
-    if (state_ != AuthState::VerifyingDevice) return;
+    if (generation != attempt_ || state_ != AuthState::VerifyingDevice) return;
     const VerificationResult verified = verifier_.verify(response.token, response.deviceId, response.licenseId);
     if (!verified.valid) { fail({QStringLiteral("INVALID_SESSION_TOKEN"), QStringLiteral("Server session token is invalid."), response.requestId}); return; }
     sessionToken_ = response.token;
@@ -194,7 +194,7 @@ void AuthManager::handleDeviceVerified(const DeviceVerifyResponse &response)
     apiClient_.loadProfile(sessionToken_, attempt_);
 }
 
-void AuthManager::handleDeviceVerificationFailed(const ApiError &error) { if (state_ == AuthState::VerifyingDevice) fail(error); }
+void AuthManager::handleDeviceVerificationFailed(const ApiError &error, quint64 generation) { if (generation == attempt_ && state_ == AuthState::VerifyingDevice) fail(error); }
 
 void AuthManager::handleProfileLoaded(const UserProfileResponse &response, quint64 generation)
 {

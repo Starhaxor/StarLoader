@@ -41,7 +41,7 @@ void ApiClientTest::sendsExactLoginContractAndParsesReply()
     });
     ApiClient client(QUrl(QStringLiteral("http://127.0.0.1:%1").arg(server.serverPort())));
     QSignalSpy complete(&client, &ApiClient::loginSucceeded);
-    client.login({QStringLiteral("person@example.com"), QStringLiteral("secret-password"), QStringLiteral("fingerprint")});
+    client.login({QStringLiteral("person@example.com"), QStringLiteral("secret-password"), QStringLiteral("fingerprint")}, 21);
     if (complete.isEmpty()) QVERIFY(complete.wait(3000));
     QVERIFY(request.startsWith("POST /v1/auth/login HTTP/1.1\r\n"));
     QVERIFY(request.contains("Content-Type: application/json"));
@@ -53,6 +53,7 @@ void ApiClientTest::sendsExactLoginContractAndParsesReply()
     QVERIFY(request.contains("\"device_fingerprint\":\"fingerprint\""));
     QVERIFY(!request.contains("license_key"));
     QCOMPARE(complete.at(0).at(0).value<LoginResponse>().sessionId, QStringLiteral("0198940d-7cec-7000-8000-000000000001"));
+    QCOMPARE(complete.at(0).at(1).toULongLong(), quint64(21));
 }
 
 void ApiClientTest::parsesStructuredFailuresWithoutLeakingCredentials()
@@ -71,12 +72,13 @@ void ApiClientTest::parsesStructuredFailuresWithoutLeakingCredentials()
     });
     ApiClient client(QUrl(QStringLiteral("http://127.0.0.1:%1").arg(server.serverPort())));
     QSignalSpy failed(&client, &ApiClient::loginFailed);
-    client.login({QStringLiteral("person@example.com"), QStringLiteral("never-in-error"), QStringLiteral("fingerprint")});
+    client.login({QStringLiteral("person@example.com"), QStringLiteral("never-in-error"), QStringLiteral("fingerprint")}, 22);
     if (failed.isEmpty()) QVERIFY(failed.wait(3000));
     const ApiError error = failed.at(0).at(0).value<ApiError>();
     QCOMPARE(error.code, QStringLiteral("INVALID_CREDENTIALS"));
     QCOMPARE(error.requestId, QStringLiteral("req-body"));
     QVERIFY(!error.message.contains(QStringLiteral("never-in-error")));
+    QCOMPARE(failed.at(0).at(1).toULongLong(), quint64(22));
 }
 
 void ApiClientTest::rejectsMalformedSuccessJson()
@@ -116,7 +118,7 @@ void ApiClientTest::sendsExactDeviceVerificationContract()
     });
     ApiClient client(QUrl(QStringLiteral("http://127.0.0.1:%1").arg(server.serverPort())));
     QSignalSpy complete(&client, &ApiClient::deviceVerified);
-    client.verifyDevice({QStringLiteral("0198940d-7cec-7000-8000-000000000001"), QStringLiteral("Y2hhbGxlbmdl"), QStringLiteral("c2lnbmF0dXJl"), QStringLiteral("cHVibGljLWtleQ=="), {QStringLiteral("smbios"), QStringLiteral("board"), QStringLiteral("bios"), QStringLiteral("disk"), QStringLiteral("guid"), QStringLiteral("fingerprint")}});
+    client.verifyDevice({QStringLiteral("0198940d-7cec-7000-8000-000000000001"), QStringLiteral("Y2hhbGxlbmdl"), QStringLiteral("c2lnbmF0dXJl"), QStringLiteral("cHVibGljLWtleQ=="), {QStringLiteral("smbios"), QStringLiteral("board"), QStringLiteral("bios"), QStringLiteral("disk"), QStringLiteral("guid"), QStringLiteral("fingerprint")}}, 23);
     if (complete.isEmpty()) QVERIFY(complete.wait(3000));
     QVERIFY(request.startsWith("POST /v1/device/verify HTTP/1.1\r\n"));
     QVERIFY(request.contains("\"session_id\":\"0198940d-7cec-7000-8000-000000000001\""));
@@ -124,6 +126,7 @@ void ApiClientTest::sendsExactDeviceVerificationContract()
     QVERIFY(request.contains("\"challenge_signature\":\"c2lnbmF0dXJl\""));
     QVERIFY(request.contains("\"tpm_public_key\":\"cHVibGljLWtleQ==\""));
     QVERIFY(request.contains("\"hardware\":{\"bios_serial\":\"bios\",\"fingerprint\":\"fingerprint\",\"machine_guid\":\"guid\",\"motherboard_serial\":\"board\",\"smbios_uuid\":\"smbios\",\"system_disk_serial\":\"disk\"}"));
+    QCOMPARE(complete.at(0).at(1).toULongLong(), quint64(23));
 }
 
 void ApiClientTest::sendsExactProfileContractAndParsesReply()

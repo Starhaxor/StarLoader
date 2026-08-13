@@ -67,10 +67,10 @@ signals:
     void authenticated();
 
 private slots:
-    void handleLoginSucceeded(const LoginResponse &response);
-    void handleLoginFailed(const ApiError &error);
-    void handleDeviceVerified(const DeviceVerifyResponse &response);
-    void handleDeviceVerificationFailed(const ApiError &error);
+    void handleLoginSucceeded(const LoginResponse &response, quint64 generation);
+    void handleLoginFailed(const ApiError &error, quint64 generation);
+    void handleDeviceVerified(const DeviceVerifyResponse &response, quint64 generation);
+    void handleDeviceVerificationFailed(const ApiError &error, quint64 generation);
     void handleProfileLoaded(const UserProfileResponse &response, quint64 generation);
     void handleProfileFailed(const ApiError &error, quint64 generation);
 

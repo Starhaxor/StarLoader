@@ -47,15 +47,15 @@ class IApiClient : public QObject
 public:
     using QObject::QObject;
     ~IApiClient() override = default;
-    virtual void login(const LoginRequest &request) = 0;
-    virtual void verifyDevice(const DeviceVerifyRequest &request) = 0;
+    virtual void login(const LoginRequest &request, quint64 generation = 0) = 0;
+    virtual void verifyDevice(const DeviceVerifyRequest &request, quint64 generation = 0) = 0;
     virtual void loadProfile(const QString &token, quint64 generation = 0) = 0;
     virtual void cancelProfile() = 0;
 signals:
-    void loginSucceeded(const LoginResponse &response);
-    void loginFailed(const ApiError &error);
-    void deviceVerified(const DeviceVerifyResponse &response);
-    void deviceVerificationFailed(const ApiError &error);
+    void loginSucceeded(const LoginResponse &response, quint64 generation);
+    void loginFailed(const ApiError &error, quint64 generation);
+    void deviceVerified(const DeviceVerifyResponse &response, quint64 generation);
+    void deviceVerificationFailed(const ApiError &error, quint64 generation);
     void profileLoaded(const UserProfileResponse &response, quint64 generation);
     void profileFailed(const ApiError &error, quint64 generation);
 };
@@ -66,8 +66,8 @@ class ApiClient final : public IApiClient
 public:
     static constexpr int RequestTimeoutMs = 15'000;
     explicit ApiClient(QUrl baseUrl, int timeoutMs = RequestTimeoutMs, QObject *parent = nullptr);
-    void login(const LoginRequest &request) override;
-    void verifyDevice(const DeviceVerifyRequest &request) override;
+    void login(const LoginRequest &request, quint64 generation = 0) override;
+    void verifyDevice(const DeviceVerifyRequest &request, quint64 generation = 0) override;
     void loadProfile(const QString &token, quint64 generation = 0) override;
     void cancelProfile() override;
 
@@ -78,6 +78,6 @@ private:
     bool requestActive_ = false;
     QPointer<QNetworkReply> profileReply_;
     bool isAllowedTransport() const;
-    void postJson(const QString &path, const QJsonObject &body, bool deviceRequest);
+    void postJson(const QString &path, const QJsonObject &body, bool deviceRequest, quint64 generation);
     QString newRequestId() const;
 };

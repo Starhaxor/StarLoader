@@ -19,19 +19,25 @@ public:
     LoginRequest lastLogin;
     DeviceVerifyRequest lastVerify;
     QString lastProfileToken;
+    quint64 lastLoginGeneration = 0;
+    quint64 lastVerifyGeneration = 0;
     quint64 lastProfileGeneration = 0;
     int loginCount = 0;
     int verifyCount = 0;
     int profileCount = 0;
     int cancelProfileCount = 0;
-    void login(const LoginRequest &request) override { lastLogin = request; ++loginCount; }
-    void verifyDevice(const DeviceVerifyRequest &request) override { lastVerify = request; ++verifyCount; }
+    void login(const LoginRequest &request, quint64 generation) override { lastLogin = request; lastLoginGeneration = generation; ++loginCount; }
+    void verifyDevice(const DeviceVerifyRequest &request, quint64 generation) override { lastVerify = request; lastVerifyGeneration = generation; ++verifyCount; }
     void loadProfile(const QString &token, quint64 generation) override { lastProfileToken = token; lastProfileGeneration = generation; ++profileCount; }
     void cancelProfile() override { ++cancelProfileCount; }
-    void completeLogin(const LoginResponse &response) { emit loginSucceeded(response); }
-    void rejectLogin(const ApiError &error) { emit loginFailed(error); }
-    void completeVerify(const DeviceVerifyResponse &response) { emit deviceVerified(response); }
-    void rejectVerify(const ApiError &error) { emit deviceVerificationFailed(error); }
+    void completeLogin(const LoginResponse &response) { completeLogin(response, lastLoginGeneration); }
+    void completeLogin(const LoginResponse &response, quint64 generation) { emit loginSucceeded(response, generation); }
+    void rejectLogin(const ApiError &error) { rejectLogin(error, lastLoginGeneration); }
+    void rejectLogin(const ApiError &error, quint64 generation) { emit loginFailed(error, generation); }
+    void completeVerify(const DeviceVerifyResponse &response) { completeVerify(response, lastVerifyGeneration); }
+    void completeVerify(const DeviceVerifyResponse &response, quint64 generation) { emit deviceVerified(response, generation); }
+    void rejectVerify(const ApiError &error) { rejectVerify(error, lastVerifyGeneration); }
+    void rejectVerify(const ApiError &error, quint64 generation) { emit deviceVerificationFailed(error, generation); }
     void completeProfile(const UserProfileResponse &response, quint64 generation) { emit profileLoaded(response, generation); }
     void rejectProfile(const ApiError &error, quint64 generation) { emit profileFailed(error, generation); }
 };
@@ -122,6 +128,7 @@ private slots:
     void profileFailureClearsAuthenticatedSession();
     void signOutClearsSessionAndIgnoresStaleProfileCompletion();
     void staleProfileAndLoginCallbacksCannotCrossAttempts();
+    void staleLoginAndDeviceCallbacksCannotCrossAttempts();
     void failsBeforeNetworkWhenTpmIsUnavailable();
     void failsForLoginChallengeSigningAndDeviceErrors();
     void failsForInvalidTokenWithoutAuthenticatedState();
@@ -264,6 +271,51 @@ void AuthManagerTest::staleProfileAndLoginCallbacksCannotCrossAttempts()
     api.completeProfile(currentProfile, currentGeneration);
     QCOMPARE(manager.state(), AuthState::Authenticated);
     QCOMPARE(manager.userProfile().email, QStringLiteral("second@example.com"));
+    QCOMPARE(authenticated.size(), 1);
+}
+
+void AuthManagerTest::staleLoginAndDeviceCallbacksCannotCrossAttempts()
+{
+    FakeApiClient api; FakeHardwareCollector collector; FakeDeviceSigner signer;
+    AuthManager manager(api, collector, signer, verifier());
+    QSignalSpy authenticated(&manager, &AuthManager::authenticated);
+
+    manager.login(QStringLiteral("first@example.com"), QStringLiteral("p"));
+    QTRY_COMPARE(api.loginCount, 1);
+    const quint64 staleLoginGeneration = api.lastLoginGeneration;
+    manager.signOut();
+
+    manager.login(QStringLiteral("second@example.com"), QStringLiteral("p"));
+    QTRY_COMPARE(api.loginCount, 2);
+    const quint64 secondGeneration = api.lastLoginGeneration;
+    QVERIFY(secondGeneration != staleLoginGeneration);
+    api.rejectLogin({QStringLiteral("INVALID_CREDENTIALS"), {}, {}}, staleLoginGeneration);
+    api.completeLogin(challengeResponse(), staleLoginGeneration);
+    QCOMPARE(manager.state(), AuthState::Authenticating);
+    QCOMPARE(api.verifyCount, 0);
+
+    api.completeLogin(challengeResponse(), secondGeneration);
+    QTRY_COMPARE(api.verifyCount, 1);
+    const quint64 staleDeviceGeneration = api.lastVerifyGeneration;
+    manager.signOut();
+
+    manager.login(QStringLiteral("third@example.com"), QStringLiteral("p"));
+    QTRY_COMPARE(api.loginCount, 3);
+    api.completeLogin(challengeResponse(), api.lastLoginGeneration);
+    QTRY_COMPARE(api.verifyCount, 2);
+    const quint64 currentGeneration = api.lastVerifyGeneration;
+    QVERIFY(currentGeneration != staleDeviceGeneration);
+    api.rejectVerify({QStringLiteral("DEVICE_REVOKED"), {}, {}}, staleDeviceGeneration);
+    api.completeVerify(verifiedResponse(tokenFor(validClaims())), staleDeviceGeneration);
+    QCOMPARE(manager.state(), AuthState::VerifyingDevice);
+    QCOMPARE(api.profileCount, 0);
+    QCOMPARE(authenticated.size(), 0);
+
+    api.completeVerify(verifiedResponse(tokenFor(validClaims())), currentGeneration);
+    QCOMPARE(api.profileCount, 1);
+    QCOMPARE(api.lastProfileGeneration, currentGeneration);
+    api.completeProfile(validProfile(), currentGeneration);
+    QCOMPARE(manager.state(), AuthState::Authenticated);
     QCOMPARE(authenticated.size(), 1);
 }
 
