@@ -76,6 +76,35 @@ Başarılı yanıt (`200`):
 
 Token Ed25519 ile imzalı, kompakt JWS biçimindedir. Başlık tam olarak `alg=EdDSA` ve `typ=JWT` taşır. Zorunlu claim'ler: `sub`, `license_id`, `device_id`, `product`, `features`, `iss`, `aud`, `iat`, `exp`. `exp - iat` tam 3600 saniyedir. İstemci imzayı ve tüm claim'leri kullanmadan önce doğrular.
 
+## `GET /v1/me`
+
+İstek tam olarak bir kimlik doğrulama başlığı taşır:
+
+```http
+Authorization: Bearer <session-token>
+```
+
+Kimlik yalnızca imzası doğrulanmış token'ın `sub`, `license_id` ve `device_id` claim'lerinden seçilir. Sorgu parametreleri veya istek gövdesindeki kimlik değerleri kullanılmaz. Başarılı yanıt (`200`):
+
+```json
+{
+  "ok": true,
+  "email": "test2@test.com",
+  "account_status": "active",
+  "product": "StarLoader",
+  "license_status": "active",
+  "license_expires_at": "2026-09-12T17:42:56Z",
+  "max_devices": 1,
+  "device_id": "019ffc3f-0396-7266-b82c-35371486cc4e",
+  "device_status": "active",
+  "session_expires_at": "2026-08-13T18:50:15Z"
+}
+```
+
+Eksik, bozuk veya kayıtlarla eşleşmeyen token ile devre dışı hesap `401 INVALID_SESSION_TOKEN`; süresi dolmuş lisans `403 LICENSE_EXPIRED`; iptal edilmiş lisans `403 LICENSE_REVOKED`; iptal edilmiş cihaz `403 DEVICE_REVOKED`; depo hatası `500 SERVER_ERROR` döndürür. `GET` dışındaki yöntemler `405 INVALID_REQUEST` döndürür.
+
+Yanıt hiçbir zaman oturum token'ı, parola veya parola hash'i, lisans anahtarı düz metni, HMAC değeri, TPM materyali ya da ham donanım seri numarası içermez.
+
 ## Hata biçimi
 
 ```json
@@ -87,6 +116,6 @@ Token Ed25519 ile imzalı, kompakt JWS biçimindedir. Başlık tam olarak `alg=E
 }
 ```
 
-Tanımlı kodlar: `INVALID_REQUEST`, `INVALID_CREDENTIALS`, `LICENSE_NOT_FOUND`, `LICENSE_EXPIRED`, `LICENSE_REVOKED`, `CHALLENGE_EXPIRED`, `CHALLENGE_CONSUMED`, `INVALID_DEVICE_SIGNATURE`, `DEVICE_LIMIT_REACHED`, `DEVICE_REVOKED`, `RATE_LIMITED`, `SERVER_ERROR`.
+Tanımlı kodlar: `INVALID_REQUEST`, `INVALID_CREDENTIALS`, `INVALID_SESSION_TOKEN`, `LICENSE_NOT_FOUND`, `LICENSE_EXPIRED`, `LICENSE_REVOKED`, `CHALLENGE_EXPIRED`, `CHALLENGE_CONSUMED`, `INVALID_DEVICE_SIGNATURE`, `DEVICE_LIMIT_REACHED`, `DEVICE_REVOKED`, `RATE_LIMITED`, `SERVER_ERROR`.
 
 Yanıt gövdeleri parola, lisans anahtarı, ham donanım verisi veya iç hata ayrıntısı içermez. Destek kayıtlarında yalnızca `request_id` kullanılmalıdır.

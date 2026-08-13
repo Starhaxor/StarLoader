@@ -22,6 +22,8 @@ type DeviceVerificationService interface {
 type RouterConfig struct {
 	Login               LoginService
 	DeviceVerification  DeviceVerificationService
+	SessionVerifier     BearerVerifier
+	Profile             ProfileRepository
 	HealthCheck         func(context.Context) error
 	HealthCheckTimeout  time.Duration
 	LoginTimeout        time.Duration
@@ -35,6 +37,7 @@ type RouterConfig struct {
 type Router struct {
 	login               LoginService
 	deviceVerification  DeviceVerificationService
+	profile             ProfileRepository
 	healthCheck         func(context.Context) error
 	healthCheckTimeout  time.Duration
 	loginTimeout        time.Duration
@@ -42,6 +45,8 @@ type Router struct {
 	trustedProxies      []netip.Prefix
 	loginLimiter        *ipRateLimiter
 	sessionLimiter      *ipRateLimiter
+	now                 func() time.Time
+	meHandler           http.Handler
 	handler             http.Handler
 }
 
@@ -62,9 +67,14 @@ func NewRouter(config RouterConfig) *Router {
 	if deviceVerifyTimeout <= 0 {
 		deviceVerifyTimeout = 10 * time.Second
 	}
+	now := config.Now
+	if now == nil {
+		now = time.Now
+	}
 	router := &Router{
 		login:               config.Login,
 		deviceVerification:  config.DeviceVerification,
+		profile:             config.Profile,
 		healthCheck:         config.HealthCheck,
 		healthCheckTimeout:  healthCheckTimeout,
 		loginTimeout:        loginTimeout,
@@ -72,7 +82,9 @@ func NewRouter(config RouterConfig) *Router {
 		trustedProxies:      append([]netip.Prefix(nil), config.TrustedProxies...),
 		loginLimiter:        newIPRateLimiter(5, time.Minute, config.RateLimitMaxKeys, config.Now),
 		sessionLimiter:      newIPRateLimiter(10, time.Minute, config.RateLimitMaxKeys, config.Now),
+		now:                 now,
 	}
+	router.meHandler = RequireSession(config.SessionVerifier, http.HandlerFunc(router.handleMe))
 	router.handler = requestIDMiddleware(recoveryMiddleware(logger, http.HandlerFunc(router.route)))
 	return router
 }
@@ -89,7 +101,9 @@ func (router *Router) route(writer http.ResponseWriter, request *http.Request) {
 		router.handleDeviceVerify(writer, request)
 	case request.Method == http.MethodGet && request.URL.Path == "/healthz":
 		router.handleHealth(writer, request)
-	case request.URL.Path == "/v1/auth/login" || request.URL.Path == "/v1/device/verify" || request.URL.Path == "/healthz":
+	case request.Method == http.MethodGet && request.URL.Path == "/v1/me":
+		router.meHandler.ServeHTTP(writer, request)
+	case request.URL.Path == "/v1/auth/login" || request.URL.Path == "/v1/device/verify" || request.URL.Path == "/healthz" || request.URL.Path == "/v1/me":
 		writeError(writer, request, http.StatusMethodNotAllowed, "INVALID_REQUEST", "method not allowed")
 	default:
 		writeError(writer, request, http.StatusNotFound, "INVALID_REQUEST", "not found")
