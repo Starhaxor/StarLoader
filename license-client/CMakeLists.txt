@@ -37,6 +37,9 @@ qt_add_executable(LicenseClient WIN32
     src/ui/LoginWindow.h
     src/ui/WindowTitleBar.cpp
     src/ui/WindowTitleBar.h
+    src/ui/UserDashboard.cpp
+    src/ui/UserDashboard.h
+    ui/UserDashboard.ui
     ui/LoginWindow.ui
     src/ui/HwidDialog.cpp
     src/ui/HwidDialog.h
@@ -89,8 +92,11 @@ qt_add_executable(LoginWindowUiTest
     src/ui/HwidDialog.h
     src/ui/WindowTitleBar.cpp
     src/ui/WindowTitleBar.h
+    src/ui/UserDashboard.cpp
+    src/ui/UserDashboard.h
     ui/LoginWindow.ui
     ui/HwidDialog.ui
+    ui/UserDashboard.ui
     tests/LoginWindowUiTest.cpp
 )
 
@@ -98,6 +104,28 @@ qt_add_executable(WindowTitleBarTest
     src/ui/WindowTitleBar.cpp
     src/ui/WindowTitleBar.h
     tests/WindowTitleBarTest.cpp
+)
+
+qt_add_executable(UserDashboardTest
+    src/api/ApiClient.cpp
+    src/api/ApiClient.h
+    src/auth/AuthManager.cpp
+    src/auth/AuthManager.h
+    src/auth/AuthState.h
+    src/security/SessionTokenVerifier.cpp
+    src/security/SessionTokenVerifier.h
+    src/ui/LoginWindow.cpp
+    src/ui/LoginWindow.h
+    src/ui/HwidDialog.cpp
+    src/ui/HwidDialog.h
+    src/ui/UserDashboard.cpp
+    src/ui/UserDashboard.h
+    src/ui/WindowTitleBar.cpp
+    src/ui/WindowTitleBar.h
+    ui/LoginWindow.ui
+    ui/HwidDialog.ui
+    ui/UserDashboard.ui
+    tests/UserDashboardTest.cpp
 )
 
 target_link_libraries(LicenseClient PRIVATE
@@ -120,6 +148,7 @@ target_link_libraries(SessionTokenVerifierTest PRIVATE Qt6::Core Qt6::Test OpenS
 target_link_libraries(HwidDialogTest PRIVATE DeviceIdentityShared Qt6::Widgets Qt6::Concurrent Qt6::Test)
 target_link_libraries(LoginWindowUiTest PRIVATE DeviceIdentityShared Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Test OpenSSL::Crypto)
 target_link_libraries(WindowTitleBarTest PRIVATE Qt6::Widgets Qt6::Test)
+target_link_libraries(UserDashboardTest PRIVATE DeviceIdentityShared Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Test OpenSSL::Crypto)
 
 target_include_directories(ApiClientTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_include_directories(AuthManagerTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_SOURCE_DIR}/shared)
@@ -130,6 +159,10 @@ target_include_directories(LoginWindowUiTest PRIVATE
     ${CMAKE_CURRENT_BINARY_DIR}/generated
 )
 target_include_directories(WindowTitleBarTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_include_directories(UserDashboardTest PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_BINARY_DIR}/generated
+)
 
 add_test(NAME ApiClientTest COMMAND ApiClientTest)
 add_test(NAME AuthManagerTest COMMAND AuthManagerTest)
@@ -137,13 +170,15 @@ add_test(NAME SessionTokenVerifierTest COMMAND SessionTokenVerifierTest)
 add_test(NAME HwidDialogTest COMMAND HwidDialogTest)
 add_test(NAME LoginWindowUiTest COMMAND LoginWindowUiTest)
 add_test(NAME WindowTitleBarTest COMMAND WindowTitleBarTest)
-foreach(test_name IN ITEMS ApiClientTest AuthManagerTest SessionTokenVerifierTest HwidDialogTest LoginWindowUiTest WindowTitleBarTest)
+add_test(NAME UserDashboardTest COMMAND UserDashboardTest)
+foreach(test_name IN ITEMS ApiClientTest AuthManagerTest SessionTokenVerifierTest HwidDialogTest LoginWindowUiTest WindowTitleBarTest UserDashboardTest)
     set_tests_properties(${test_name} PROPERTIES
         ENVIRONMENT "PATH=$<TARGET_FILE_DIR:Qt6::Core>\\;${OPENSSL_CRYPTO_RUNTIME_DIR}\\;$ENV{PATH}")
 endforeach()
 set_property(TEST HwidDialogTest APPEND PROPERTY ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 set_property(TEST LoginWindowUiTest APPEND PROPERTY ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 set_property(TEST WindowTitleBarTest APPEND PROPERTY ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+set_property(TEST UserDashboardTest APPEND PROPERTY ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
 set_target_properties(LicenseClient PROPERTIES
     AUTOUIC_SEARCH_PATHS "${CMAKE_CURRENT_SOURCE_DIR}/ui"
@@ -154,5 +189,9 @@ set_target_properties(HwidDialogTest PROPERTIES
 )
 
 set_target_properties(LoginWindowUiTest PROPERTIES
+    AUTOUIC_SEARCH_PATHS "${CMAKE_CURRENT_SOURCE_DIR}/ui"
+)
+
+set_target_properties(UserDashboardTest PROPERTIES
     AUTOUIC_SEARCH_PATHS "${CMAKE_CURRENT_SOURCE_DIR}/ui"
 )
