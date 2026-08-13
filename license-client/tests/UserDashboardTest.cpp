@@ -127,7 +127,9 @@ int runDashboardCloseHelper(int argc, char **argv)
         }
 
         const auto dashboards = openDashboards();
-        if (dashboards.size() != 1 || login.isVisible() || loginShows.showCount() != 1) {
+        const bool dashboardVisible = dashboards.size() == 1
+                                      && dashboards.constFirst()->isVisible();
+        if (!dashboardVisible || login.isVisible() || loginShows.showCount() != 1) {
             application.exit(72);
             return;
         }
@@ -156,7 +158,8 @@ int runDashboardCloseHelper(int argc, char **argv)
     }
 
     QTextStream output(stdout);
-    output << "DASHBOARD_CLOSE_HELPER_OK show_count=" << loginShows.showCount() << Qt::endl;
+    output << "DASHBOARD_CLOSE_HELPER_OK dashboard_visible=1 show_count="
+           << loginShows.showCount() << Qt::endl;
     return 0;
 }
 
@@ -399,7 +402,8 @@ void UserDashboardTest::closingDashboardExitsRealApplicationLoop()
     const QByteArray output = helper.readAllStandardOutput() + helper.readAllStandardError();
     QCOMPARE(helper.exitStatus(), QProcess::NormalExit);
     QCOMPARE(helper.exitCode(), 0);
-    QVERIFY2(output.contains("DASHBOARD_CLOSE_HELPER_OK show_count=1"), output.constData());
+    QVERIFY2(output.contains("DASHBOARD_CLOSE_HELPER_OK dashboard_visible=1 show_count=1"),
+             output.constData());
 }
 
 int main(int argc, char **argv)
