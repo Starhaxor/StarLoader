@@ -14,11 +14,13 @@ func (e *NotFoundError) Error() string {
 
 var (
 	ErrUserNotFound         = &NotFoundError{Entity: "user"}
+	ErrUserAlreadyExists    = errors.New("user already exists")
 	ErrLicenseNotFound      = &NotFoundError{Entity: "license"}
 	ErrLicenseAlreadyExists = errors.New("license already exists for user and product")
 	ErrChallengeNotFound    = &NotFoundError{Entity: "challenge"}
 	ErrDeviceNotFound       = &NotFoundError{Entity: "device"}
 	ErrAuthSessionNotFound  = &NotFoundError{Entity: "auth session"}
+	ErrAdminAlreadyExists   = errors.New("admin account already exists")
 )
 
 // ChallengeConsumedError marks the single-use challenge conflict while

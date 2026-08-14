@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/starloader/backend/internal/domain"
 )
 
@@ -19,6 +20,10 @@ func (s *Store) CreateUser(ctx context.Context, input domain.NewUser) (*domain.U
 		returning `+userColumns, normalizeEmail(input.Email), input.PasswordHash)
 	user, err := scanUser(row)
 	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.ConstraintName == "users_email_unique" {
+			return nil, domain.ErrUserAlreadyExists
+		}
 		return nil, fmt.Errorf("create user: %w", err)
 	}
 	return user, nil

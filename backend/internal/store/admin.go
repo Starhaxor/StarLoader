@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/starloader/backend/internal/domain"
 )
 
@@ -43,6 +44,15 @@ func (s *Store) CreateAdminAccount(ctx context.Context, input domain.NewAdminAcc
 		join roles r on r.id = created.role_id`, normalizeEmail(input.Email), input.PasswordHash, roleName)
 	account, err := scanAdminAccount(row)
 	if err != nil {
+		var pgErr *pgconn.PgError
+		switch {
+		case errors.As(err, &pgErr) && pgErr.ConstraintName == "admin_accounts_email_unique":
+			return nil, domain.ErrAdminAlreadyExists
+		case errors.As(err, &pgErr) && pgErr.Code == "23502" && pgErr.ColumnName == "role_id":
+			return nil, domain.ErrRoleNotFound
+		case errors.Is(err, pgx.ErrNoRows):
+			return nil, domain.ErrRoleNotFound
+		}
 		return nil, fmt.Errorf("create admin account: %w", err)
 	}
 	return account, nil

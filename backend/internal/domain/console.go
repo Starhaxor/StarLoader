@@ -34,16 +34,30 @@ type ConsoleLicense struct {
 }
 
 // ConsoleDevice deliberately exposes no raw hardware identifiers; only the
-// presence of a TPM key and the lifecycle state are surfaced.
+// presence of each HWID component, the TPM key state and the lifecycle state
+// are surfaced.
 type ConsoleDevice struct {
-	ID            string
-	UserID        string
-	UserEmail     string
-	LicenseID     string
-	TPMRegistered bool
-	Status        DeviceStatus
-	CreatedAt     time.Time
-	LastSeenAt    time.Time
+	ID                   string
+	UserID               string
+	UserEmail            string
+	LicenseID            string
+	TPMRegistered        bool
+	HasSMBIOSUUID        bool
+	HasMotherboardSerial bool
+	HasBIOSSerial        bool
+	HasSystemDiskSerial  bool
+	HasMachineGUID       bool
+	Status               DeviceStatus
+	CreatedAt            time.Time
+	LastSeenAt           time.Time
+}
+
+// ConsoleDeviceDetail adds the TPM public key fingerprint (a SHA-256 digest,
+// never the raw key) to the redacted console device view.
+type ConsoleDeviceDetail struct {
+	Device         ConsoleDevice
+	Product        string
+	TPMFingerprint string
 }
 
 type ConsoleSession struct {

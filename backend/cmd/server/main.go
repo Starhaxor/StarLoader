@@ -169,21 +169,14 @@ func runServer() error {
 		Audience:        configuration.LicenseAudience,
 		Product:         configuration.Product,
 	})
-	adminAuthService := adminauth.New(repository, adminauth.Config{
-		SessionTTL: configuration.AdminSessionTTL,
-		Random:     cryptorand.Reader,
-		Now:        time.Now,
-	})
-	router := httpapi.NewRouter(httpapi.RouterConfig{
-		Login:              loginService,
-		DeviceVerification: deviceService,
-		SessionVerifier:    tokenVerifier,
-		Profile:            repository,
-		LoginTimeout:       configuration.LoginTimeout,
-		TrustedProxies:     trustedProxies,
-		Logger:             log.Default(),
-		HealthCheck:        pool.Ping,
-		Admin: httpapi.AdminConfig{
+	adminConfig := httpapi.AdminConfig{}
+	if configuration.AdminConsoleEnabled {
+		adminAuthService := adminauth.New(repository, adminauth.Config{
+			SessionTTL: configuration.AdminSessionTTL,
+			Random:     cryptorand.Reader,
+			Now:        time.Now,
+		})
+		adminConfig = httpapi.AdminConfig{
 			Auth:           adminAuthService,
 			Console:        repository,
 			LicenseHMACKey: []byte(configuration.LicenseHMACKey),
@@ -193,7 +186,20 @@ func runServer() error {
 			CSRFSecret:     []byte(configuration.AdminSessionSecret),
 			CookieSecure:   configuration.AdminCookieSecure,
 			SessionTTL:     configuration.AdminSessionTTL,
-		},
+		}
+	} else {
+		log.Printf("admin console disabled: /v1/admin endpoints will return 503")
+	}
+	router := httpapi.NewRouter(httpapi.RouterConfig{
+		Login:              loginService,
+		DeviceVerification: deviceService,
+		SessionVerifier:    tokenVerifier,
+		Profile:            repository,
+		LoginTimeout:       configuration.LoginTimeout,
+		TrustedProxies:     trustedProxies,
+		Logger:             log.Default(),
+		HealthCheck:        pool.Ping,
+		Admin:              adminConfig,
 	})
 	address := strings.TrimSpace(os.Getenv("SERVER_ADDR"))
 	if address == "" {

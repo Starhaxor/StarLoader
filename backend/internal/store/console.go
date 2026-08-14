@@ -238,7 +238,13 @@ func (s *Store) ListConsoleDevices(ctx context.Context, offset, limit int) ([]do
 func (s *Store) listConsoleDevices(ctx context.Context, tail string, args ...any) ([]domain.ConsoleDevice, error) {
 	rows, err := s.db.Query(ctx, `
 		select d.id::text, d.user_id::text, u.email, d.license_id::text,
-			octet_length(d.tpm_public_key) > 0, d.status, d.created_at, d.last_seen_at
+			octet_length(d.tpm_public_key) > 0,
+			d.smbios_uuid_hmac is not null,
+			d.motherboard_serial_hmac is not null,
+			d.bios_serial_hmac is not null,
+			d.system_disk_serial_hmac is not null,
+			d.machine_guid_hmac is not null,
+			d.status, d.created_at, d.last_seen_at
 		from devices d
 		join users u on u.id = d.user_id
 		`+tail, args...)
@@ -250,7 +256,9 @@ func (s *Store) listConsoleDevices(ctx context.Context, tail string, args ...any
 	for rows.Next() {
 		var device domain.ConsoleDevice
 		if err := rows.Scan(&device.ID, &device.UserID, &device.UserEmail, &device.LicenseID,
-			&device.TPMRegistered, &device.Status, &device.CreatedAt, &device.LastSeenAt); err != nil {
+			&device.TPMRegistered, &device.HasSMBIOSUUID, &device.HasMotherboardSerial,
+			&device.HasBIOSSerial, &device.HasSystemDiskSerial, &device.HasMachineGUID,
+			&device.Status, &device.CreatedAt, &device.LastSeenAt); err != nil {
 			return nil, fmt.Errorf("scan console device: %w", err)
 		}
 		devices = append(devices, device)
@@ -259,6 +267,83 @@ func (s *Store) listConsoleDevices(ctx context.Context, tail string, args ...any
 		return nil, fmt.Errorf("list console devices: %w", err)
 	}
 	return devices, nil
+}
+
+// FindConsoleDeviceByID returns the redacted device view plus the TPM public
+// key fingerprint and the license product. No raw hardware identifier leaves
+// the database.
+func (s *Store) FindConsoleDeviceByID(ctx context.Context, deviceID string) (*domain.ConsoleDeviceDetail, error) {
+	row := s.db.QueryRow(ctx, `
+		select d.id::text, d.user_id::text, u.email, d.license_id::text,
+			octet_length(d.tpm_public_key) > 0,
+			d.smbios_uuid_hmac is not null,
+			d.motherboard_serial_hmac is not null,
+			d.bios_serial_hmac is not null,
+			d.system_disk_serial_hmac is not null,
+			d.machine_guid_hmac is not null,
+			d.status, d.created_at, d.last_seen_at,
+			l.product, encode(d.tpm_public_key_sha256, 'hex')
+		from devices d
+		join users u on u.id = d.user_id
+		join licenses l on l.id = d.license_id
+		where d.id = $1::uuid`, deviceID)
+	var detail domain.ConsoleDeviceDetail
+	err := row.Scan(&detail.Device.ID, &detail.Device.UserID, &detail.Device.UserEmail, &detail.Device.LicenseID,
+		&detail.Device.TPMRegistered, &detail.Device.HasSMBIOSUUID, &detail.Device.HasMotherboardSerial,
+		&detail.Device.HasBIOSSerial, &detail.Device.HasSystemDiskSerial, &detail.Device.HasMachineGUID,
+		&detail.Device.Status, &detail.Device.CreatedAt, &detail.Device.LastSeenAt,
+		&detail.Product, &detail.TPMFingerprint)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, domain.ErrDeviceNotFound
+		}
+		return nil, fmt.Errorf("find console device: %w", err)
+	}
+	return &detail, nil
+}
+
+// AdminResetDevice removes the hardware registration entirely so the user can
+// register a fresh device; pending sessions bound to the license stay intact.
+func (s *Store) AdminResetDevice(ctx context.Context, deviceID string) error {
+	err := s.db.QueryRow(ctx, `
+		delete from devices
+		where id = $1::uuid
+		returning id`, deviceID).Scan(new(string))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return domain.ErrDeviceNotFound
+		}
+		return fmt.Errorf("reset device: %w", err)
+	}
+	return nil
+}
+
+// RevokeUserSessions expires every pending or verified auth session of the
+// user and reports how many were revoked.
+func (s *Store) RevokeUserSessions(ctx context.Context, userID string) (int64, error) {
+	var exists bool
+	if err := s.db.QueryRow(ctx, `select exists(select 1 from users where id = $1::uuid)`, userID).Scan(&exists); err != nil {
+		return 0, fmt.Errorf("check user for session revocation: %w", err)
+	}
+	if !exists {
+		return 0, domain.ErrUserNotFound
+	}
+	tx, err := s.db.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return 0, fmt.Errorf("begin user session revocation: %w", err)
+	}
+	defer func() { _ = tx.Rollback(context.Background()) }()
+	tag, err := tx.Exec(ctx, `
+		update auth_sessions
+		set status = 'expired', updated_at = now()
+		where user_id = $1::uuid and status in ('pending', 'verified')`, userID)
+	if err != nil {
+		return 0, fmt.Errorf("revoke user sessions: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return 0, fmt.Errorf("commit user session revocation: %w", err)
+	}
+	return tag.RowsAffected(), nil
 }
 
 func (s *Store) AdminRevokeDevice(ctx context.Context, deviceID string) error {

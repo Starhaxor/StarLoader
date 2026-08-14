@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/starloader/backend/internal/domain"
+	"github.com/starloader/backend/internal/security"
 	"github.com/starloader/backend/internal/service/adminauth"
 )
 
@@ -125,6 +126,11 @@ func (router *Router) routeAdminAccounts(writer http.ResponseWriter, request *ht
 			return
 		}
 		router.handleAdminAccountList(writer, request)
+	case len(segments) == 1 && request.Method == http.MethodPost:
+		if !router.requirePermission(writer, request, account, domain.PermAdminsWrite) {
+			return
+		}
+		router.handleAdminAccountCreate(writer, request, account)
 	case len(segments) == 2 && request.Method == http.MethodPatch:
 		if !router.requirePermission(writer, request, account, domain.PermAdminsWrite) {
 			return
@@ -150,6 +156,69 @@ func (router *Router) handleAdminAccountList(writer http.ResponseWriter, request
 		Items []adminAccountJSON `json:"items"`
 		Total int              `json:"total"`
 	}{OK: true, Items: items, Total: len(items)})
+}
+
+// handleAdminAccountCreate provisions a dashboard administrator. The new
+// account starts MFA-unenrolled, so the enrollment gate forces TOTP setup on
+// first sign-in before any console endpoint becomes reachable.
+func (router *Router) handleAdminAccountCreate(writer http.ResponseWriter, request *http.Request, actor *domain.AdminAccount) {
+	var body struct {
+		Email    string `json:"email"`
+		Password string `json:"password"`
+		Role     string `json:"role"`
+	}
+	if err := decodeAdminJSONBody(writer, request, &body); err != nil {
+		writeError(writer, request, http.StatusBadRequest, "INVALID_REQUEST", "invalid request")
+		return
+	}
+	email := strings.ToLower(strings.TrimSpace(body.Email))
+	if email == "" || !strings.Contains(email, "@") || len(email) > 254 {
+		writeError(writer, request, http.StatusBadRequest, "INVALID_REQUEST", "a valid email is required")
+		return
+	}
+	if len(body.Password) < minAdminPasswordLength {
+		writeError(writer, request, http.StatusBadRequest, "INVALID_REQUEST", "password must be at least 12 characters")
+		return
+	}
+	role := strings.ToLower(strings.TrimSpace(body.Role))
+	if role == "" {
+		role = domain.RoleViewer
+	}
+	roles, err := router.admin.Console.ListRoles(request.Context())
+	if err != nil {
+		router.writeConsoleError(writer, request, err)
+		return
+	}
+	roleValid := false
+	for _, candidate := range roles {
+		if candidate.Name == role {
+			roleValid = true
+			break
+		}
+	}
+	if !roleValid {
+		writeError(writer, request, http.StatusBadRequest, "ROLE_NOT_FOUND", "role not found")
+		return
+	}
+	hash, err := security.HashPassword(body.Password)
+	if err != nil {
+		writeError(writer, request, http.StatusInternalServerError, "SERVER_ERROR", "internal server error")
+		return
+	}
+	created, err := router.admin.Console.CreateAdminAccount(request.Context(), domain.NewAdminAccount{
+		Email:        email,
+		PasswordHash: hash,
+		RoleName:     role,
+	})
+	if err != nil {
+		router.writeConsoleError(writer, request, err)
+		return
+	}
+	router.auditAdmin(request, actor, "ADMIN_CREATED", "admin_account", created.ID, map[string]string{"email": created.Email, "role": role})
+	writeJSON(writer, http.StatusCreated, struct {
+		OK    bool             `json:"ok"`
+		Admin adminAccountJSON `json:"admin"`
+	}{OK: true, Admin: mapAdminAccount(*created)})
 }
 
 // handleAdminAccountUpdate changes the status and/or role of another admin.

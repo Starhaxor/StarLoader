@@ -16,8 +16,10 @@ import (
 )
 
 const (
-	defaultAdminPageSize = 20
-	maxAdminPageSize     = 100
+	defaultAdminPageSize     = 20
+	maxAdminPageSize         = 100
+	minEndUserPasswordLength = 10
+	minAdminPasswordLength   = 12
 )
 
 func parseAdminPagination(request *http.Request) (page, pageSize, offset int) {
@@ -140,6 +142,11 @@ func (router *Router) routeAdminUsers(writer http.ResponseWriter, request *http.
 			return
 		}
 		router.handleAdminUserList(writer, request)
+	case len(segments) == 1 && request.Method == http.MethodPost:
+		if !router.requirePermission(writer, request, account, domain.PermUsersWrite) {
+			return
+		}
+		router.handleAdminUserCreate(writer, request, account)
 	case len(segments) == 2 && request.Method == http.MethodGet:
 		if !router.requirePermission(writer, request, account, domain.PermUsersRead) {
 			return
@@ -150,9 +157,56 @@ func (router *Router) routeAdminUsers(writer http.ResponseWriter, request *http.
 			return
 		}
 		router.handleAdminUserStatus(writer, request, account, segments[1])
+	case len(segments) == 4 && segments[2] == "sessions" && segments[3] == "revoke" && request.Method == http.MethodPost:
+		if !router.requirePermission(writer, request, account, domain.PermSessionsWrite) {
+			return
+		}
+		router.handleAdminUserSessionsRevoke(writer, request, account, segments[1])
 	default:
 		writeError(writer, request, http.StatusNotFound, "INVALID_REQUEST", "not found")
 	}
+}
+
+// handleAdminUserCreate provisions an end-user account. The password is
+// hashed with Argon2id; only the hash is persisted.
+func (router *Router) handleAdminUserCreate(writer http.ResponseWriter, request *http.Request, account *domain.AdminAccount) {
+	var body struct {
+		Email    string `json:"email"`
+		Password string `json:"password"`
+	}
+	if err := decodeAdminJSONBody(writer, request, &body); err != nil {
+		writeError(writer, request, http.StatusBadRequest, "INVALID_REQUEST", "invalid request")
+		return
+	}
+	email := strings.ToLower(strings.TrimSpace(body.Email))
+	if email == "" || !strings.Contains(email, "@") || len(email) > 254 {
+		writeError(writer, request, http.StatusBadRequest, "INVALID_REQUEST", "a valid email is required")
+		return
+	}
+	if len(body.Password) < minEndUserPasswordLength {
+		writeError(writer, request, http.StatusBadRequest, "INVALID_REQUEST", "password must be at least 10 characters")
+		return
+	}
+	hash, err := security.HashPassword(body.Password)
+	if err != nil {
+		writeError(writer, request, http.StatusInternalServerError, "SERVER_ERROR", "internal server error")
+		return
+	}
+	user, err := router.admin.Console.CreateUser(request.Context(), domain.NewUser{Email: email, PasswordHash: hash})
+	if err != nil {
+		router.writeConsoleError(writer, request, err)
+		return
+	}
+	router.auditAdmin(request, account, "USER_CREATED", "user", user.ID, map[string]string{"email": user.Email})
+	writeJSON(writer, http.StatusOK, struct {
+		OK   bool   `json:"ok"`
+		User consoleUserJSON `json:"user"`
+	}{
+		OK: true,
+		User: consoleUserJSON{
+			ID: user.ID, Email: user.Email, Status: string(user.Status), CreatedAt: formatTime(user.CreatedAt),
+		},
+	})
 }
 
 func (router *Router) handleAdminUserList(writer http.ResponseWriter, request *http.Request) {
@@ -218,6 +272,25 @@ func (router *Router) handleAdminUserStatus(writer http.ResponseWriter, request 
 	writeJSON(writer, http.StatusOK, struct {
 		OK bool `json:"ok"`
 	}{OK: true})
+}
+
+// handleAdminUserSessionsRevoke expires every pending or verified auth
+// session of a single user.
+func (router *Router) handleAdminUserSessionsRevoke(writer http.ResponseWriter, request *http.Request, account *domain.AdminAccount, userID string) {
+	if !uuidPattern.MatchString(userID) {
+		writeError(writer, request, http.StatusNotFound, "USER_NOT_FOUND", "user not found")
+		return
+	}
+	revoked, err := router.admin.Console.RevokeUserSessions(request.Context(), userID)
+	if err != nil {
+		router.writeConsoleError(writer, request, err)
+		return
+	}
+	router.auditAdmin(request, account, "USER_SESSIONS_REVOKED", "user", userID, map[string]int64{"revoked": revoked})
+	writeJSON(writer, http.StatusOK, struct {
+		OK      bool  `json:"ok"`
+		Revoked int64 `json:"revoked"`
+	}{OK: true, Revoked: revoked})
 }
 
 // Licenses
@@ -406,29 +479,43 @@ func (router *Router) handleAdminLicenseRevoke(writer http.ResponseWriter, reque
 // Devices
 
 type consoleDeviceJSON struct {
-	ID            string `json:"id"`
-	UserID        string `json:"user_id"`
-	UserEmail     string `json:"user_email"`
-	LicenseID     string `json:"license_id"`
-	TPMRegistered bool   `json:"tpm_registered"`
-	Status        string `json:"status"`
-	CreatedAt     string `json:"created_at"`
-	LastSeenAt    string `json:"last_seen_at"`
+	ID                   string `json:"id"`
+	UserID               string `json:"user_id"`
+	UserEmail            string `json:"user_email"`
+	LicenseID            string `json:"license_id"`
+	TPMRegistered        bool   `json:"tpm_registered"`
+	HasSMBIOSUUID        bool   `json:"has_smbios_uuid"`
+	HasMotherboardSerial bool   `json:"has_motherboard_serial"`
+	HasBIOSSerial        bool   `json:"has_bios_serial"`
+	HasSystemDiskSerial  bool   `json:"has_system_disk_serial"`
+	HasMachineGUID       bool   `json:"has_machine_guid"`
+	Status               string `json:"status"`
+	CreatedAt            string `json:"created_at"`
+	LastSeenAt           string `json:"last_seen_at"`
+}
+
+func mapConsoleDevice(device domain.ConsoleDevice) consoleDeviceJSON {
+	return consoleDeviceJSON{
+		ID:                   device.ID,
+		UserID:               device.UserID,
+		UserEmail:            device.UserEmail,
+		LicenseID:            device.LicenseID,
+		TPMRegistered:        device.TPMRegistered,
+		HasSMBIOSUUID:        device.HasSMBIOSUUID,
+		HasMotherboardSerial: device.HasMotherboardSerial,
+		HasBIOSSerial:        device.HasBIOSSerial,
+		HasSystemDiskSerial:  device.HasSystemDiskSerial,
+		HasMachineGUID:       device.HasMachineGUID,
+		Status:               string(device.Status),
+		CreatedAt:            formatTime(device.CreatedAt),
+		LastSeenAt:           formatTime(device.LastSeenAt),
+	}
 }
 
 func mapConsoleDevices(devices []domain.ConsoleDevice) []consoleDeviceJSON {
 	items := make([]consoleDeviceJSON, 0, len(devices))
 	for _, device := range devices {
-		items = append(items, consoleDeviceJSON{
-			ID:            device.ID,
-			UserID:        device.UserID,
-			UserEmail:     device.UserEmail,
-			LicenseID:     device.LicenseID,
-			TPMRegistered: device.TPMRegistered,
-			Status:        string(device.Status),
-			CreatedAt:     formatTime(device.CreatedAt),
-			LastSeenAt:    formatTime(device.LastSeenAt),
-		})
+		items = append(items, mapConsoleDevice(device))
 	}
 	return items
 }
@@ -440,11 +527,21 @@ func (router *Router) routeAdminDevices(writer http.ResponseWriter, request *htt
 			return
 		}
 		router.handleAdminDeviceList(writer, request)
+	case len(segments) == 2 && request.Method == http.MethodGet:
+		if !router.requirePermission(writer, request, account, domain.PermDevicesRead) {
+			return
+		}
+		router.handleAdminDeviceDetail(writer, request, segments[1])
 	case len(segments) == 3 && segments[2] == "revoke" && request.Method == http.MethodPost:
 		if !router.requirePermission(writer, request, account, domain.PermDevicesWrite) {
 			return
 		}
 		router.handleAdminDeviceRevoke(writer, request, account, segments[1])
+	case len(segments) == 3 && segments[2] == "reset" && request.Method == http.MethodPost:
+		if !router.requirePermission(writer, request, account, domain.PermDevicesWrite) {
+			return
+		}
+		router.handleAdminDeviceReset(writer, request, account, segments[1])
 	default:
 		writeError(writer, request, http.StatusNotFound, "INVALID_REQUEST", "not found")
 	}
@@ -470,6 +567,49 @@ func (router *Router) handleAdminDeviceRevoke(writer http.ResponseWriter, reques
 		return
 	}
 	router.auditAdmin(request, account, "DEVICE_REVOKED", "device", deviceID, nil)
+	writeJSON(writer, http.StatusOK, struct {
+		OK bool `json:"ok"`
+	}{OK: true})
+}
+
+// handleAdminDeviceDetail returns the redacted device view with HWID
+// component presence and the TPM public key fingerprint. Raw hardware
+// identifiers and HMACs never leave the database.
+func (router *Router) handleAdminDeviceDetail(writer http.ResponseWriter, request *http.Request, deviceID string) {
+	if !uuidPattern.MatchString(deviceID) {
+		writeError(writer, request, http.StatusNotFound, "DEVICE_NOT_FOUND", "device not found")
+		return
+	}
+	detail, err := router.admin.Console.FindConsoleDeviceByID(request.Context(), deviceID)
+	if err != nil {
+		router.writeConsoleError(writer, request, err)
+		return
+	}
+	writeJSON(writer, http.StatusOK, struct {
+		OK             bool            `json:"ok"`
+		Device         consoleDeviceJSON `json:"device"`
+		Product        string          `json:"product"`
+		TPMFingerprint string          `json:"tpm_fingerprint"`
+	}{
+		OK:             true,
+		Device:         mapConsoleDevice(detail.Device),
+		Product:        detail.Product,
+		TPMFingerprint: detail.TPMFingerprint,
+	})
+}
+
+// handleAdminDeviceReset removes the hardware registration so the user can
+// register a fresh device on the same license.
+func (router *Router) handleAdminDeviceReset(writer http.ResponseWriter, request *http.Request, account *domain.AdminAccount, deviceID string) {
+	if !uuidPattern.MatchString(deviceID) {
+		writeError(writer, request, http.StatusNotFound, "DEVICE_NOT_FOUND", "device not found")
+		return
+	}
+	if err := router.admin.Console.AdminResetDevice(request.Context(), deviceID); err != nil {
+		router.writeConsoleError(writer, request, err)
+		return
+	}
+	router.auditAdmin(request, account, "DEVICE_RESET", "device", deviceID, nil)
 	writeJSON(writer, http.StatusOK, struct {
 		OK bool `json:"ok"`
 	}{OK: true})

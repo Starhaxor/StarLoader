@@ -8,8 +8,8 @@ import (
 )
 
 const (
-	defaultLoginTimeout      = 10 * time.Second
-	defaultAdminSessionTTL   = 12 * time.Hour
+	defaultLoginTimeout       = 10 * time.Second
+	defaultAdminSessionTTL    = 12 * time.Hour
 	defaultAdminAllowedOrigin = "http://localhost:3000"
 )
 
@@ -27,18 +27,19 @@ var requiredEnvironmentVariables = [...]string{
 // Config contains the values required to operate the license service. Secrets
 // are read only from the environment and must never be logged.
 type Config struct {
-	DatabaseURL        string
-	LicenseHMACKey     string
-	HardwareHMACKey    string
-	Ed25519PrivateKey  string
-	LicenseIssuer      string
-	LicenseAudience    string
-	Product            string
-	LoginTimeout       time.Duration
-	AdminSessionSecret string
-	AdminAllowedOrigin string
-	AdminSessionTTL    time.Duration
-	AdminCookieSecure  bool
+	DatabaseURL         string
+	LicenseHMACKey      string
+	HardwareHMACKey     string
+	Ed25519PrivateKey   string
+	LicenseIssuer       string
+	LicenseAudience     string
+	Product             string
+	LoginTimeout        time.Duration
+	AdminConsoleEnabled bool
+	AdminSessionSecret  string
+	AdminAllowedOrigin  string
+	AdminSessionTTL     time.Duration
+	AdminCookieSecure   bool
 }
 
 // Load reads the complete configuration, refusing to start when any required
@@ -85,19 +86,29 @@ func Load() (Config, error) {
 	default:
 		return Config{}, fmt.Errorf("ADMIN_COOKIE_SECURE must be true or false")
 	}
+	adminConsoleEnabled := true
+	switch configuredConsole := strings.ToLower(strings.TrimSpace(os.Getenv("ADMIN_CONSOLE_ENABLED"))); configuredConsole {
+	case "", "true", "1":
+		adminConsoleEnabled = true
+	case "false", "0":
+		adminConsoleEnabled = false
+	default:
+		return Config{}, fmt.Errorf("ADMIN_CONSOLE_ENABLED must be true or false")
+	}
 
 	return Config{
-		DatabaseURL:        values["DATABASE_URL"],
-		LicenseHMACKey:     values["LICENSE_HMAC_KEY"],
-		HardwareHMACKey:    values["HARDWARE_HMAC_KEY"],
-		Ed25519PrivateKey:  values["ED25519_PRIVATE_KEY"],
-		LicenseIssuer:      values["LICENSE_ISSUER"],
-		LicenseAudience:    values["LICENSE_AUDIENCE"],
-		Product:            values["PRODUCT"],
-		LoginTimeout:       loginTimeout,
-		AdminSessionSecret: values["ADMIN_SESSION_SECRET"],
-		AdminAllowedOrigin: adminAllowedOrigin,
-		AdminSessionTTL:    adminSessionTTL,
-		AdminCookieSecure:  adminCookieSecure,
+		DatabaseURL:         values["DATABASE_URL"],
+		LicenseHMACKey:      values["LICENSE_HMAC_KEY"],
+		HardwareHMACKey:     values["HARDWARE_HMAC_KEY"],
+		Ed25519PrivateKey:   values["ED25519_PRIVATE_KEY"],
+		LicenseIssuer:       values["LICENSE_ISSUER"],
+		LicenseAudience:     values["LICENSE_AUDIENCE"],
+		Product:             values["PRODUCT"],
+		LoginTimeout:        loginTimeout,
+		AdminConsoleEnabled: adminConsoleEnabled,
+		AdminSessionSecret:  values["ADMIN_SESSION_SECRET"],
+		AdminAllowedOrigin:  adminAllowedOrigin,
+		AdminSessionTTL:     adminSessionTTL,
+		AdminCookieSecure:   adminCookieSecure,
 	}, nil
 }

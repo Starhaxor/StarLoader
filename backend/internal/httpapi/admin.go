@@ -45,19 +45,24 @@ type AdminConsoleStore interface {
 	ConsoleUserDetail(ctx context.Context, userID string) (*domain.ConsoleUserDetail, error)
 	SetUserStatus(ctx context.Context, userID string, status domain.UserStatus) error
 	FindUserByEmail(ctx context.Context, email string) (*domain.User, error)
+	CreateUser(ctx context.Context, input domain.NewUser) (*domain.User, error)
+	RevokeUserSessions(ctx context.Context, userID string) (int64, error)
 	ListConsoleLicenses(ctx context.Context, offset, limit int) ([]domain.ConsoleLicense, int64, error)
 	CreateLicense(ctx context.Context, input domain.NewLicense) (*domain.License, error)
 	FindLicenseByID(ctx context.Context, licenseID string) (*domain.License, error)
 	AdminUpdateLicense(ctx context.Context, licenseID string, expiresAt time.Time, maxDevices int) error
 	AdminRevokeLicense(ctx context.Context, licenseID string) error
 	ListConsoleDevices(ctx context.Context, offset, limit int) ([]domain.ConsoleDevice, int64, error)
+	FindConsoleDeviceByID(ctx context.Context, deviceID string) (*domain.ConsoleDeviceDetail, error)
 	AdminRevokeDevice(ctx context.Context, deviceID string) error
+	AdminResetDevice(ctx context.Context, deviceID string) error
 	ListConsoleSessions(ctx context.Context, offset, limit int) ([]domain.ConsoleSession, int64, error)
 	AdminRevokeAuthSession(ctx context.Context, sessionID string) error
 	ListAuditLogs(ctx context.Context, offset, limit int) ([]domain.AuditLog, int64, error)
 	AppendAuditLog(ctx context.Context, input domain.NewAuditLog) error
 	ListAdminAccounts(ctx context.Context) ([]domain.AdminAccount, error)
 	FindAdminAccountByID(ctx context.Context, adminID string) (*domain.AdminAccount, error)
+	CreateAdminAccount(ctx context.Context, input domain.NewAdminAccount) (*domain.AdminAccount, error)
 	UpdateAdminAccountStatusAndRole(ctx context.Context, adminID string, status domain.AdminAccountStatus, roleName string) error
 	ListRoles(ctx context.Context) ([]domain.Role, error)
 	ListSecurityEvents(ctx context.Context, offset, limit int) ([]domain.SecurityEvent, int64, error)
@@ -324,6 +329,8 @@ func (router *Router) writeConsoleError(writer http.ResponseWriter, request *htt
 	switch {
 	case errors.Is(err, domain.ErrUserNotFound):
 		writeError(writer, request, http.StatusNotFound, "USER_NOT_FOUND", "user not found")
+	case errors.Is(err, domain.ErrUserAlreadyExists):
+		writeError(writer, request, http.StatusConflict, "USER_ALREADY_EXISTS", "a user with this email already exists")
 	case errors.Is(err, domain.ErrLicenseNotFound):
 		writeError(writer, request, http.StatusNotFound, "LICENSE_NOT_FOUND", "license not found")
 	case errors.Is(err, domain.ErrLicenseAlreadyExists):
@@ -334,6 +341,10 @@ func (router *Router) writeConsoleError(writer http.ResponseWriter, request *htt
 		writeError(writer, request, http.StatusNotFound, "SESSION_NOT_FOUND", "session not found")
 	case errors.Is(err, domain.ErrAdminNotFound):
 		writeError(writer, request, http.StatusNotFound, "ADMIN_NOT_FOUND", "admin not found")
+	case errors.Is(err, domain.ErrAdminAlreadyExists):
+		writeError(writer, request, http.StatusConflict, "ADMIN_ALREADY_EXISTS", "an admin account with this email already exists")
+	case errors.Is(err, domain.ErrRoleNotFound):
+		writeError(writer, request, http.StatusBadRequest, "ROLE_NOT_FOUND", "role not found")
 	default:
 		writeError(writer, request, http.StatusInternalServerError, "SERVER_ERROR", "internal server error")
 	}
