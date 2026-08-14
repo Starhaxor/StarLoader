@@ -119,7 +119,7 @@ func newAdminTestRouter(t *testing.T, auth *fakeAdminAuth) (*Router, *fakeAdminC
 		Admin: AdminConfig{
 			Auth:          auth,
 			Console:       console,
-			AllowedOrigin: "http://localhost:3000",
+			AllowedOrigins: []string{"http://localhost:3000"},
 			CSRFSecret:    []byte("test-csrf-secret"),
 			SessionTTL:    time.Hour,
 		},

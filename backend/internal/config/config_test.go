@@ -89,8 +89,8 @@ func TestLoadDefaultsAdminConsoleSettings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if configuration.AdminAllowedOrigin != "http://localhost:3000" {
-		t.Fatalf("AdminAllowedOrigin = %q, want localhost default", configuration.AdminAllowedOrigin)
+	if len(configuration.AdminAllowedOrigins) != 2 || configuration.AdminAllowedOrigins[0] != "http://localhost:3000" || configuration.AdminAllowedOrigins[1] != "http://127.0.0.1:3000" {
+		t.Fatalf("AdminAllowedOrigins = %q, want localhost defaults", configuration.AdminAllowedOrigins)
 	}
 	if configuration.AdminSessionTTL != 12*time.Hour {
 		t.Fatalf("AdminSessionTTL = %s, want 12h", configuration.AdminSessionTTL)
@@ -110,7 +110,7 @@ func TestLoadParsesAdminConsoleSettings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if configuration.AdminAllowedOrigin != "https://admin.example.com" || configuration.AdminSessionTTL != 2*time.Hour || !configuration.AdminCookieSecure {
+	if len(configuration.AdminAllowedOrigins) != 1 || configuration.AdminAllowedOrigins[0] != "https://admin.example.com" || configuration.AdminSessionTTL != 2*time.Hour || !configuration.AdminCookieSecure {
 		t.Fatalf("Load() = %#v", configuration)
 	}
 }

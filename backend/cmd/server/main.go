@@ -182,12 +182,15 @@ func runServer() error {
 			LicenseHMACKey: []byte(configuration.LicenseHMACKey),
 			Product:        configuration.Product,
 			MFAIssuer:      "KeyStar Admin",
-			AllowedOrigin:  configuration.AdminAllowedOrigin,
+			AllowedOrigins: configuration.AdminAllowedOrigins,
 			CSRFSecret:     []byte(configuration.AdminSessionSecret),
 			CookieSecure:   configuration.AdminCookieSecure,
 			SessionTTL:     configuration.AdminSessionTTL,
 		}
 	} else {
+		// Keep the allowed origin so disabled-console responses still carry
+		// CORS headers and browsers can render the 503 message.
+		adminConfig = httpapi.AdminConfig{AllowedOrigins: configuration.AdminAllowedOrigins}
 		log.Printf("admin console disabled: /v1/admin endpoints will return 503")
 	}
 	router := httpapi.NewRouter(httpapi.RouterConfig{

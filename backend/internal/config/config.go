@@ -8,9 +8,9 @@ import (
 )
 
 const (
-	defaultLoginTimeout       = 10 * time.Second
-	defaultAdminSessionTTL    = 12 * time.Hour
-	defaultAdminAllowedOrigin = "http://localhost:3000"
+	defaultLoginTimeout        = 10 * time.Second
+	defaultAdminSessionTTL     = 12 * time.Hour
+	defaultAdminAllowedOrigins = "http://localhost:3000,http://127.0.0.1:3000"
 )
 
 var requiredEnvironmentVariables = [...]string{
@@ -37,7 +37,7 @@ type Config struct {
 	LoginTimeout        time.Duration
 	AdminConsoleEnabled bool
 	AdminSessionSecret  string
-	AdminAllowedOrigin  string
+	AdminAllowedOrigins []string
 	AdminSessionTTL     time.Duration
 	AdminCookieSecure   bool
 }
@@ -65,9 +65,19 @@ func Load() (Config, error) {
 		loginTimeout = parsedTimeout
 	}
 
-	adminAllowedOrigin := defaultAdminAllowedOrigin
-	if configuredOrigin := strings.TrimSpace(os.Getenv("ADMIN_ALLOWED_ORIGIN")); configuredOrigin != "" {
-		adminAllowedOrigin = strings.TrimRight(configuredOrigin, "/")
+	configuredOrigins := strings.TrimSpace(os.Getenv("ADMIN_ALLOWED_ORIGIN"))
+	if configuredOrigins == "" {
+		configuredOrigins = defaultAdminAllowedOrigins
+	}
+	adminAllowedOrigins := make([]string, 0, len(strings.Split(configuredOrigins, ",")))
+	for _, candidate := range strings.Split(configuredOrigins, ",") {
+		candidate = strings.TrimRight(strings.TrimSpace(candidate), "/")
+		if candidate != "" {
+			adminAllowedOrigins = append(adminAllowedOrigins, candidate)
+		}
+	}
+	if len(adminAllowedOrigins) == 0 {
+		return Config{}, fmt.Errorf("ADMIN_ALLOWED_ORIGIN must contain at least one origin")
 	}
 	adminSessionTTL := defaultAdminSessionTTL
 	if configuredTTL := strings.TrimSpace(os.Getenv("ADMIN_SESSION_TTL")); configuredTTL != "" {
@@ -107,7 +117,7 @@ func Load() (Config, error) {
 		LoginTimeout:        loginTimeout,
 		AdminConsoleEnabled: adminConsoleEnabled,
 		AdminSessionSecret:  values["ADMIN_SESSION_SECRET"],
-		AdminAllowedOrigin:  adminAllowedOrigin,
+		AdminAllowedOrigins: adminAllowedOrigins,
 		AdminSessionTTL:     adminSessionTTL,
 		AdminCookieSecure:   adminCookieSecure,
 	}, nil

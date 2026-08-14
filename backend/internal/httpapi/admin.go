@@ -9,6 +9,7 @@ import (
 	"errors"
 	"net/http"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -77,7 +78,7 @@ type AdminConfig struct {
 	LicenseHMACKey []byte
 	Product        string
 	MFAIssuer      string
-	AllowedOrigin  string
+	AllowedOrigins []string
 	CSRFSecret     []byte
 	CookieSecure   bool
 	SessionTTL     time.Duration
@@ -95,13 +96,8 @@ func (router *Router) adminMFAIssuer() string {
 }
 
 func (router *Router) serveAdmin(writer http.ResponseWriter, request *http.Request) {
-	if !router.adminEnabled() {
-		writeError(writer, request, http.StatusServiceUnavailable, "SERVER_ERROR", "admin console unavailable")
-		return
-	}
-
 	origin := request.Header.Get("Origin")
-	originAllowed := origin != "" && origin == router.admin.AllowedOrigin
+	originAllowed := origin != "" && slices.Contains(router.admin.AllowedOrigins, origin)
 	if request.Method == http.MethodOptions {
 		if originAllowed && request.Header.Get("Access-Control-Request-Method") != "" {
 			header := writer.Header()
@@ -122,6 +118,12 @@ func (router *Router) serveAdmin(writer http.ResponseWriter, request *http.Reque
 		header.Set("Access-Control-Allow-Origin", origin)
 		header.Set("Access-Control-Allow-Credentials", "true")
 		header.Add("Vary", "Origin")
+	}
+	// Checked after the CORS headers so a disabled console still produces a
+	// readable error in the browser instead of an opaque network failure.
+	if !router.adminEnabled() {
+		writeError(writer, request, http.StatusServiceUnavailable, "SERVER_ERROR", "admin console unavailable")
+		return
 	}
 
 	path := strings.TrimPrefix(request.URL.Path, adminPathPrefix)
