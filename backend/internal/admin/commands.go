@@ -29,7 +29,7 @@ type LicenseRepository interface {
 
 // AdminAccountRepository is the persistence boundary for create-admin.
 type AdminAccountRepository interface {
-	CreateAdminAccount(ctx context.Context, email, passwordHash string) error
+	CreateAdminAccount(ctx context.Context, email, passwordHash, roleName string) error
 }
 
 // PasswordReader is injected in tests. Production uses ReadPasswordFromTerminal.
@@ -134,12 +134,17 @@ func createAdminAccount(ctx context.Context, args []string, admins AdminAccountR
 	flags := flag.NewFlagSet("create-admin", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	email := flags.String("email", "", "admin email")
+	role := flags.String("role", "owner", "admin role (owner or viewer)")
 	flags.Bool("password-stdin", false, "read password and confirmation from standard input")
 	if err := flags.Parse(args); err != nil {
 		return fmt.Errorf("parse create-admin flags: %w", err)
 	}
 	if strings.TrimSpace(*email) == "" {
 		return errors.New("create-admin requires --email")
+	}
+	roleName := strings.ToLower(strings.TrimSpace(*role))
+	if roleName != "owner" && roleName != "viewer" {
+		return errors.New("create-admin --role must be owner or viewer")
 	}
 	password, err := readPassword()
 	if err != nil {
@@ -159,7 +164,7 @@ func createAdminAccount(ctx context.Context, args []string, admins AdminAccountR
 	if err != nil {
 		return fmt.Errorf("hash password: %w", err)
 	}
-	if err := admins.CreateAdminAccount(ctx, *email, hash); err != nil {
+	if err := admins.CreateAdminAccount(ctx, *email, hash, roleName); err != nil {
 		return fmt.Errorf("create admin account: %w", err)
 	}
 	return nil

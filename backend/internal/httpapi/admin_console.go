@@ -136,10 +136,19 @@ func mapConsoleUser(user domain.ConsoleUser) consoleUserJSON {
 func (router *Router) routeAdminUsers(writer http.ResponseWriter, request *http.Request, account *domain.AdminAccount, segments []string) {
 	switch {
 	case len(segments) == 1 && request.Method == http.MethodGet:
+		if !router.requirePermission(writer, request, account, domain.PermUsersRead) {
+			return
+		}
 		router.handleAdminUserList(writer, request)
 	case len(segments) == 2 && request.Method == http.MethodGet:
+		if !router.requirePermission(writer, request, account, domain.PermUsersRead) {
+			return
+		}
 		router.handleAdminUserDetail(writer, request, segments[1])
 	case len(segments) == 2 && request.Method == http.MethodPatch:
+		if !router.requirePermission(writer, request, account, domain.PermUsersWrite) {
+			return
+		}
 		router.handleAdminUserStatus(writer, request, account, segments[1])
 	default:
 		writeError(writer, request, http.StatusNotFound, "INVALID_REQUEST", "not found")
@@ -244,12 +253,24 @@ func mapConsoleLicenses(licenses []domain.ConsoleLicense) []consoleLicenseJSON {
 func (router *Router) routeAdminLicenses(writer http.ResponseWriter, request *http.Request, account *domain.AdminAccount, segments []string) {
 	switch {
 	case len(segments) == 1 && request.Method == http.MethodGet:
+		if !router.requirePermission(writer, request, account, domain.PermLicensesRead) {
+			return
+		}
 		router.handleAdminLicenseList(writer, request)
 	case len(segments) == 1 && request.Method == http.MethodPost:
+		if !router.requirePermission(writer, request, account, domain.PermLicensesWrite) {
+			return
+		}
 		router.handleAdminLicenseCreate(writer, request, account)
 	case len(segments) == 2 && request.Method == http.MethodPatch:
+		if !router.requirePermission(writer, request, account, domain.PermLicensesWrite) {
+			return
+		}
 		router.handleAdminLicenseUpdate(writer, request, account, segments[1])
 	case len(segments) == 3 && segments[2] == "revoke" && request.Method == http.MethodPost:
+		if !router.requirePermission(writer, request, account, domain.PermLicensesWrite) {
+			return
+		}
 		router.handleAdminLicenseRevoke(writer, request, account, segments[1])
 	default:
 		writeError(writer, request, http.StatusNotFound, "INVALID_REQUEST", "not found")
@@ -415,8 +436,14 @@ func mapConsoleDevices(devices []domain.ConsoleDevice) []consoleDeviceJSON {
 func (router *Router) routeAdminDevices(writer http.ResponseWriter, request *http.Request, account *domain.AdminAccount, segments []string) {
 	switch {
 	case len(segments) == 1 && request.Method == http.MethodGet:
+		if !router.requirePermission(writer, request, account, domain.PermDevicesRead) {
+			return
+		}
 		router.handleAdminDeviceList(writer, request)
 	case len(segments) == 3 && segments[2] == "revoke" && request.Method == http.MethodPost:
+		if !router.requirePermission(writer, request, account, domain.PermDevicesWrite) {
+			return
+		}
 		router.handleAdminDeviceRevoke(writer, request, account, segments[1])
 	default:
 		writeError(writer, request, http.StatusNotFound, "INVALID_REQUEST", "not found")
@@ -479,8 +506,14 @@ func mapConsoleSessions(sessions []domain.ConsoleSession) []consoleSessionJSON {
 func (router *Router) routeAdminSessions(writer http.ResponseWriter, request *http.Request, account *domain.AdminAccount, segments []string) {
 	switch {
 	case len(segments) == 1 && request.Method == http.MethodGet:
+		if !router.requirePermission(writer, request, account, domain.PermSessionsRead) {
+			return
+		}
 		router.handleAdminSessionList(writer, request)
 	case len(segments) == 3 && segments[2] == "revoke" && request.Method == http.MethodPost:
+		if !router.requirePermission(writer, request, account, domain.PermSessionsWrite) {
+			return
+		}
 		router.handleAdminSessionRevoke(writer, request, account, segments[1])
 	default:
 		writeError(writer, request, http.StatusNotFound, "INVALID_REQUEST", "not found")

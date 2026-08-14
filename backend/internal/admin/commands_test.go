@@ -102,6 +102,40 @@ func TestCreateAdminHashesPasswordBeforeStoring(t *testing.T) {
 	if repository.email != "root@example.com" || repository.passwordHash == "" || repository.passwordHash == "long enough admin password" {
 		t.Fatalf("stored email=%q passwordHash=%q", repository.email, repository.passwordHash)
 	}
+	if repository.roleName != "owner" {
+		t.Fatalf("stored role = %q, want owner default", repository.roleName)
+	}
+}
+
+func TestCreateAdminAcceptsViewerRole(t *testing.T) {
+	repository := &fakeAdmins{}
+	passwords := []string{"long enough admin password", "long enough admin password"}
+
+	err := Run(context.Background(), []string{"create-admin", "--email", "viewer@example.com", "--role", "VIEWER"}, &bytes.Buffer{}, nil, nil, repository, func() (string, error) {
+		password := passwords[0]
+		passwords = passwords[1:]
+		return password, nil
+	}, nil, time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if repository.roleName != "viewer" {
+		t.Fatalf("stored role = %q, want viewer", repository.roleName)
+	}
+}
+
+func TestCreateAdminRejectsUnknownRoles(t *testing.T) {
+	repository := &fakeAdmins{}
+	passwords := []string{"long enough admin password", "long enough admin password"}
+
+	err := Run(context.Background(), []string{"create-admin", "--email", "root@example.com", "--role", "superadmin"}, &bytes.Buffer{}, nil, nil, repository, func() (string, error) {
+		password := passwords[0]
+		passwords = passwords[1:]
+		return password, nil
+	}, nil, time.Now)
+	if err == nil || repository.passwordHash != "" {
+		t.Fatalf("Run() error = %v, stored hash = %q", err, repository.passwordHash)
+	}
 }
 
 func TestCreateAdminRejectsShortPasswords(t *testing.T) {
@@ -160,10 +194,11 @@ func (f *fakeLicenses) CreateLicense(_ context.Context, normalized, userEmail, p
 type fakeAdmins struct {
 	email        string
 	passwordHash string
+	roleName     string
 	err          error
 }
 
-func (f *fakeAdmins) CreateAdminAccount(_ context.Context, email, passwordHash string) error {
-	f.email, f.passwordHash = email, passwordHash
+func (f *fakeAdmins) CreateAdminAccount(_ context.Context, email, passwordHash, roleName string) error {
+	f.email, f.passwordHash, f.roleName = email, passwordHash, roleName
 	return f.err
 }

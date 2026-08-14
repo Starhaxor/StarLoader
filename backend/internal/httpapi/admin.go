@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/starloader/backend/internal/domain"
+	"github.com/starloader/backend/internal/service/adminauth"
 )
 
 const (
@@ -20,13 +21,19 @@ const (
 	adminCSRFCookieName    = "starloader_admin_csrf"
 	adminCSRFHeader        = "X-CSRF-Token"
 	adminPathPrefix        = "/v1/admin"
+	defaultMFAIssuer       = "KeyStar Admin"
 )
 
 var uuidPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 
-// AdminAuthService authenticates dashboard administrators.
+// AdminAuthService authenticates dashboard administrators and manages their
+// TOTP enrollment.
 type AdminAuthService interface {
-	Login(ctx context.Context, email, password, ipAddress, userAgent string) (string, *domain.AdminAccount, error)
+	Login(ctx context.Context, email, password, ipAddress, userAgent string) (adminauth.LoginResult, error)
+	CompleteMFA(ctx context.Context, challengeToken, code, recoveryCode, ipAddress, userAgent string) (string, *domain.AdminAccount, error)
+	StartMFAEnrollment(ctx context.Context, account *domain.AdminAccount, issuer string) (string, string, error)
+	ConfirmMFAEnrollment(ctx context.Context, account *domain.AdminAccount, code, ipAddress, userAgent string) ([]string, error)
+	DisableMFA(ctx context.Context, account *domain.AdminAccount, password, ipAddress, userAgent string) error
 	Authenticate(ctx context.Context, token string) (*domain.AdminSession, *domain.AdminAccount, error)
 	Logout(ctx context.Context, token string) error
 }
@@ -49,6 +56,12 @@ type AdminConsoleStore interface {
 	AdminRevokeAuthSession(ctx context.Context, sessionID string) error
 	ListAuditLogs(ctx context.Context, offset, limit int) ([]domain.AuditLog, int64, error)
 	AppendAuditLog(ctx context.Context, input domain.NewAuditLog) error
+	ListAdminAccounts(ctx context.Context) ([]domain.AdminAccount, error)
+	FindAdminAccountByID(ctx context.Context, adminID string) (*domain.AdminAccount, error)
+	UpdateAdminAccountStatusAndRole(ctx context.Context, adminID string, status domain.AdminAccountStatus, roleName string) error
+	ListRoles(ctx context.Context) ([]domain.Role, error)
+	ListSecurityEvents(ctx context.Context, offset, limit int) ([]domain.SecurityEvent, int64, error)
+	AppendSecurityEvent(ctx context.Context, input domain.NewSecurityEvent) error
 }
 
 // AdminConfig bundles the dependencies of the /v1/admin namespace. The
@@ -58,6 +71,7 @@ type AdminConfig struct {
 	Console        AdminConsoleStore
 	LicenseHMACKey []byte
 	Product        string
+	MFAIssuer      string
 	AllowedOrigin  string
 	CSRFSecret     []byte
 	CookieSecure   bool
@@ -66,6 +80,13 @@ type AdminConfig struct {
 
 func (router *Router) adminEnabled() bool {
 	return router.admin.Auth != nil && router.admin.Console != nil
+}
+
+func (router *Router) adminMFAIssuer() string {
+	if strings.TrimSpace(router.admin.MFAIssuer) != "" {
+		return router.admin.MFAIssuer
+	}
+	return defaultMFAIssuer
 }
 
 func (router *Router) serveAdmin(writer http.ResponseWriter, request *http.Request) {
@@ -99,12 +120,16 @@ func (router *Router) serveAdmin(writer http.ResponseWriter, request *http.Reque
 	}
 
 	path := strings.TrimPrefix(request.URL.Path, adminPathPrefix)
-	if path == "/auth/login" {
+	if path == "/auth/login" || path == "/auth/mfa" {
 		if request.Method != http.MethodPost {
 			writeError(writer, request, http.StatusMethodNotAllowed, "INVALID_REQUEST", "method not allowed")
 			return
 		}
-		router.handleAdminLogin(writer, request)
+		if path == "/auth/login" {
+			router.handleAdminLogin(writer, request)
+		} else {
+			router.handleAdminMFA(writer, request)
+		}
 		return
 	}
 
@@ -114,11 +139,30 @@ func (router *Router) serveAdmin(writer http.ResponseWriter, request *http.Reque
 	}
 	if request.Method != http.MethodGet && request.Method != http.MethodHead {
 		if !router.verifyAdminCSRF(request, token) {
+			router.recordSecurityEvent(request, account, "ADMIN_CSRF_REJECTED", "warning", map[string]string{"path": request.URL.Path})
 			writeError(writer, request, http.StatusForbidden, "CSRF_REJECTED", "csrf token rejected")
 			return
 		}
 	}
+	if !account.MFAEnrolled && !adminEnrollmentExempt(path, request.Method) {
+		writeError(writer, request, http.StatusForbidden, "MFA_ENROLLMENT_REQUIRED", "multi-factor authentication enrollment is required")
+		return
+	}
 	router.routeAdmin(writer, request, session, account, path)
+}
+
+// adminEnrollmentExempt lists the routes an unenrolled administrator may
+// still reach: identity endpoints plus the enrollment flow itself.
+func adminEnrollmentExempt(path string, method string) bool {
+	switch {
+	case path == "/auth/logout" && method == http.MethodPost:
+	case path == "/me" && method == http.MethodGet:
+	case path == "/mfa/enroll/start" && method == http.MethodPost:
+	case path == "/mfa/enroll/confirm" && method == http.MethodPost:
+	default:
+		return false
+	}
+	return true
 }
 
 func (router *Router) routeAdmin(writer http.ResponseWriter, request *http.Request, session *domain.AdminSession, account *domain.AdminAccount, path string) {
@@ -132,7 +176,16 @@ func (router *Router) routeAdmin(writer http.ResponseWriter, request *http.Reque
 		router.handleAdminLogout(writer, request, session, token(request))
 	case len(segments) == 1 && segments[0] == "me" && request.Method == http.MethodGet:
 		router.handleAdminMe(writer, request, account)
+	case len(segments) == 3 && segments[0] == "mfa" && segments[1] == "enroll" && segments[2] == "start" && request.Method == http.MethodPost:
+		router.handleAdminMFAEnrollStart(writer, request, account)
+	case len(segments) == 3 && segments[0] == "mfa" && segments[1] == "enroll" && segments[2] == "confirm" && request.Method == http.MethodPost:
+		router.handleAdminMFAEnrollConfirm(writer, request, account)
+	case len(segments) == 2 && segments[0] == "mfa" && segments[1] == "disable" && request.Method == http.MethodPost:
+		router.handleAdminMFADisable(writer, request, account)
 	case len(segments) == 1 && segments[0] == "overview" && request.Method == http.MethodGet:
+		if !router.requirePermission(writer, request, account, domain.PermOverviewRead) {
+			return
+		}
 		router.handleAdminOverview(writer, request, account)
 	case len(segments) >= 1 && segments[0] == "users":
 		router.routeAdminUsers(writer, request, account, segments)
@@ -143,10 +196,39 @@ func (router *Router) routeAdmin(writer http.ResponseWriter, request *http.Reque
 	case len(segments) >= 1 && segments[0] == "sessions":
 		router.routeAdminSessions(writer, request, account, segments)
 	case len(segments) == 1 && segments[0] == "audit-logs" && request.Method == http.MethodGet:
+		if !router.requirePermission(writer, request, account, domain.PermAuditRead) {
+			return
+		}
 		router.handleAdminAuditLogs(writer, request)
+	case len(segments) == 1 && segments[0] == "security-events" && request.Method == http.MethodGet:
+		if !router.requirePermission(writer, request, account, domain.PermSecurityRead) {
+			return
+		}
+		router.handleAdminSecurityEvents(writer, request)
+	case len(segments) == 1 && segments[0] == "roles" && request.Method == http.MethodGet:
+		if !router.requirePermission(writer, request, account, domain.PermAdminsRead) {
+			return
+		}
+		router.handleAdminRoles(writer, request)
+	case len(segments) >= 1 && segments[0] == "admins":
+		router.routeAdminAccounts(writer, request, account, segments)
 	default:
 		writeError(writer, request, http.StatusNotFound, "INVALID_REQUEST", "not found")
 	}
+}
+
+// requirePermission enforces RBAC data-driven: the check only consults the
+// account's permission set, never role names.
+func (router *Router) requirePermission(writer http.ResponseWriter, request *http.Request, account *domain.AdminAccount, permission string) bool {
+	if account.HasPermission(permission) {
+		return true
+	}
+	router.recordSecurityEvent(request, account, "ADMIN_PERMISSION_DENIED", "warning", map[string]string{
+		"permission": permission,
+		"path":       request.URL.Path,
+	})
+	writeError(writer, request, http.StatusForbidden, "PERMISSION_DENIED", "permission denied")
+	return false
 }
 
 func token(request *http.Request) string {
@@ -217,6 +299,27 @@ func (router *Router) auditAdmin(request *http.Request, account *domain.AdminAcc
 	_ = router.admin.Console.AppendAuditLog(request.Context(), entry)
 }
 
+// recordSecurityEvent appends one security event; failures are swallowed so
+// anomaly tracking can never break the primary operation.
+func (router *Router) recordSecurityEvent(request *http.Request, account *domain.AdminAccount, kind, severity string, metadata any) {
+	entry := domain.NewSecurityEvent{
+		Kind:      kind,
+		Severity:  severity,
+		IPSHA256:  hashClientIP(request, router.trustedProxies),
+		UserAgent: truncateAdminUserAgent(request.UserAgent()),
+	}
+	if account != nil {
+		entry.AdminAccountID = account.ID
+		entry.ActorEmail = account.Email
+	}
+	if metadata != nil {
+		if raw, err := jsonMarshal(metadata); err == nil {
+			entry.Metadata = raw
+		}
+	}
+	_ = router.admin.Console.AppendSecurityEvent(request.Context(), entry)
+}
+
 func (router *Router) writeConsoleError(writer http.ResponseWriter, request *http.Request, err error) {
 	switch {
 	case errors.Is(err, domain.ErrUserNotFound):
@@ -229,6 +332,8 @@ func (router *Router) writeConsoleError(writer http.ResponseWriter, request *htt
 		writeError(writer, request, http.StatusNotFound, "DEVICE_NOT_FOUND", "device not found")
 	case errors.Is(err, domain.ErrAuthSessionNotFound):
 		writeError(writer, request, http.StatusNotFound, "SESSION_NOT_FOUND", "session not found")
+	case errors.Is(err, domain.ErrAdminNotFound):
+		writeError(writer, request, http.StatusNotFound, "ADMIN_NOT_FOUND", "admin not found")
 	default:
 		writeError(writer, request, http.StatusInternalServerError, "SERVER_ERROR", "internal server error")
 	}

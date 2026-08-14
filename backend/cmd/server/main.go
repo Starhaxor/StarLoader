@@ -188,6 +188,7 @@ func runServer() error {
 			Console:        repository,
 			LicenseHMACKey: []byte(configuration.LicenseHMACKey),
 			Product:        configuration.Product,
+			MFAIssuer:      "KeyStar Admin",
 			AllowedOrigin:  configuration.AdminAllowedOrigin,
 			CSRFSecret:     []byte(configuration.AdminSessionSecret),
 			CookieSecure:   configuration.AdminCookieSecure,
@@ -324,8 +325,8 @@ type adminAccountRepository struct {
 	store *store.Store
 }
 
-func (repository adminAccountRepository) CreateAdminAccount(ctx context.Context, email, passwordHash string) error {
-	_, err := repository.store.CreateAdminAccount(ctx, domain.NewAdminAccount{Email: email, PasswordHash: passwordHash})
+func (repository adminAccountRepository) CreateAdminAccount(ctx context.Context, email, passwordHash, roleName string) error {
+	_, err := repository.store.CreateAdminAccount(ctx, domain.NewAdminAccount{Email: email, PasswordHash: passwordHash, RoleName: roleName})
 	return err
 }
 
