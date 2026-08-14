@@ -1,0 +1,559 @@
+package httpapi
+
+import (
+	cryptorand "crypto/rand"
+	"encoding/json"
+	"errors"
+	"io"
+	"mime"
+	"net/http"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/starloader/backend/internal/domain"
+	"github.com/starloader/backend/internal/security"
+)
+
+const (
+	defaultAdminPageSize = 20
+	maxAdminPageSize     = 100
+)
+
+func parseAdminPagination(request *http.Request) (page, pageSize, offset int) {
+	page = atoiOrDefault(request.URL.Query().Get("page"), 1)
+	if page < 1 {
+		page = 1
+	}
+	pageSize = atoiOrDefault(request.URL.Query().Get("page_size"), defaultAdminPageSize)
+	if pageSize < 1 {
+		pageSize = 1
+	}
+	if pageSize > maxAdminPageSize {
+		pageSize = maxAdminPageSize
+	}
+	return page, pageSize, (page - 1) * pageSize
+}
+
+func atoiOrDefault(value string, fallback int) int {
+	parsed, err := strconv.Atoi(strings.TrimSpace(value))
+	if err != nil {
+		return fallback
+	}
+	return parsed
+}
+
+type adminPageResponse struct {
+	OK       bool  `json:"ok"`
+	Items    any   `json:"items"`
+	Total    int64 `json:"total"`
+	Page     int   `json:"page"`
+	PageSize int   `json:"page_size"`
+}
+
+func decodeAdminJSONBody(writer http.ResponseWriter, request *http.Request, target any) error {
+	mediaType, _, err := mime.ParseMediaType(request.Header.Get("Content-Type"))
+	if err != nil || mediaType != "application/json" {
+		return errors.New("invalid content type")
+	}
+	request.Body = http.MaxBytesReader(writer, request.Body, maxRequestBodyBytes)
+	decoder := json.NewDecoder(request.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil {
+		return err
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return errors.New("multiple JSON values")
+		}
+		return err
+	}
+	return nil
+}
+
+func formatTime(value time.Time) string {
+	return value.UTC().Format(time.RFC3339)
+}
+
+func formatOptionalTime(value *time.Time) *string {
+	if value == nil {
+		return nil
+	}
+	formatted := value.UTC().Format(time.RFC3339)
+	return &formatted
+}
+
+func (router *Router) handleAdminOverview(writer http.ResponseWriter, request *http.Request, account *domain.AdminAccount) {
+	overview, err := router.admin.Console.ConsoleOverview(request.Context())
+	if err != nil {
+		router.writeConsoleError(writer, request, err)
+		return
+	}
+	writeJSON(writer, http.StatusOK, struct {
+		OK             bool             `json:"ok"`
+		TotalUsers     int64            `json:"total_users"`
+		ActiveLicenses int64            `json:"active_licenses"`
+		ActiveDevices  int64            `json:"active_devices"`
+		ActiveSessions int64            `json:"active_sessions"`
+		RecentAudit    []auditEntryJSON `json:"recent_audit"`
+	}{
+		OK:             true,
+		TotalUsers:     overview.TotalUsers,
+		ActiveLicenses: overview.ActiveLicenses,
+		ActiveDevices:  overview.ActiveDevices,
+		ActiveSessions: overview.ActiveSessions,
+		RecentAudit:    mapAuditEntries(overview.RecentAudit),
+	})
+}
+
+// Users
+
+type consoleUserJSON struct {
+	ID                 string  `json:"id"`
+	Email              string  `json:"email"`
+	Status             string  `json:"status"`
+	LicenseCount       int     `json:"license_count"`
+	DeviceCount        int     `json:"device_count"`
+	ActiveSessionCount int     `json:"active_session_count"`
+	LastLoginAt        *string `json:"last_login_at"`
+	CreatedAt          string  `json:"created_at"`
+}
+
+func mapConsoleUser(user domain.ConsoleUser) consoleUserJSON {
+	return consoleUserJSON{
+		ID:                 user.ID,
+		Email:              user.Email,
+		Status:             string(user.Status),
+		LicenseCount:       user.LicenseCount,
+		DeviceCount:        user.DeviceCount,
+		ActiveSessionCount: user.ActiveSessionCount,
+		LastLoginAt:        formatOptionalTime(user.LastLoginAt),
+		CreatedAt:          formatTime(user.CreatedAt),
+	}
+}
+
+func (router *Router) routeAdminUsers(writer http.ResponseWriter, request *http.Request, account *domain.AdminAccount, segments []string) {
+	switch {
+	case len(segments) == 1 && request.Method == http.MethodGet:
+		router.handleAdminUserList(writer, request)
+	case len(segments) == 2 && request.Method == http.MethodGet:
+		router.handleAdminUserDetail(writer, request, segments[1])
+	case len(segments) == 2 && request.Method == http.MethodPatch:
+		router.handleAdminUserStatus(writer, request, account, segments[1])
+	default:
+		writeError(writer, request, http.StatusNotFound, "INVALID_REQUEST", "not found")
+	}
+}
+
+func (router *Router) handleAdminUserList(writer http.ResponseWriter, request *http.Request) {
+	page, pageSize, offset := parseAdminPagination(request)
+	users, total, err := router.admin.Console.ListConsoleUsers(request.Context(), offset, pageSize, request.URL.Query().Get("search"))
+	if err != nil {
+		router.writeConsoleError(writer, request, err)
+		return
+	}
+	items := make([]consoleUserJSON, 0, len(users))
+	for _, user := range users {
+		items = append(items, mapConsoleUser(user))
+	}
+	writeJSON(writer, http.StatusOK, adminPageResponse{OK: true, Items: items, Total: total, Page: page, PageSize: pageSize})
+}
+
+func (router *Router) handleAdminUserDetail(writer http.ResponseWriter, request *http.Request, userID string) {
+	if !uuidPattern.MatchString(userID) {
+		writeError(writer, request, http.StatusNotFound, "USER_NOT_FOUND", "user not found")
+		return
+	}
+	detail, err := router.admin.Console.ConsoleUserDetail(request.Context(), userID)
+	if err != nil {
+		router.writeConsoleError(writer, request, err)
+		return
+	}
+	writeJSON(writer, http.StatusOK, struct {
+		OK       bool                 `json:"ok"`
+		User     consoleUserJSON      `json:"user"`
+		Licenses []consoleLicenseJSON `json:"licenses"`
+		Devices  []consoleDeviceJSON  `json:"devices"`
+		Sessions []consoleSessionJSON `json:"sessions"`
+	}{
+		OK:       true,
+		User:     mapConsoleUser(detail.User),
+		Licenses: mapConsoleLicenses(detail.Licenses),
+		Devices:  mapConsoleDevices(detail.Devices),
+		Sessions: mapConsoleSessions(detail.Sessions),
+	})
+}
+
+func (router *Router) handleAdminUserStatus(writer http.ResponseWriter, request *http.Request, account *domain.AdminAccount, userID string) {
+	if !uuidPattern.MatchString(userID) {
+		writeError(writer, request, http.StatusNotFound, "USER_NOT_FOUND", "user not found")
+		return
+	}
+	var body struct {
+		Status string `json:"status"`
+	}
+	if err := decodeAdminJSONBody(writer, request, &body); err != nil {
+		writeError(writer, request, http.StatusBadRequest, "INVALID_REQUEST", "invalid request")
+		return
+	}
+	if body.Status != string(domain.UserStatusActive) && body.Status != string(domain.UserStatusDisabled) {
+		writeError(writer, request, http.StatusBadRequest, "INVALID_REQUEST", "status must be active or disabled")
+		return
+	}
+	if err := router.admin.Console.SetUserStatus(request.Context(), userID, domain.UserStatus(body.Status)); err != nil {
+		router.writeConsoleError(writer, request, err)
+		return
+	}
+	router.auditAdmin(request, account, "USER_STATUS_CHANGED", "user", userID, map[string]string{"status": body.Status})
+	writeJSON(writer, http.StatusOK, struct {
+		OK bool `json:"ok"`
+	}{OK: true})
+}
+
+// Licenses
+
+type consoleLicenseJSON struct {
+	ID         string `json:"id"`
+	UserID     string `json:"user_id"`
+	UserEmail  string `json:"user_email"`
+	Product    string `json:"product"`
+	Status     string `json:"status"`
+	MaxDevices int    `json:"max_devices"`
+	ExpiresAt  string `json:"expires_at"`
+	CreatedAt  string `json:"created_at"`
+}
+
+func mapConsoleLicenses(licenses []domain.ConsoleLicense) []consoleLicenseJSON {
+	items := make([]consoleLicenseJSON, 0, len(licenses))
+	for _, license := range licenses {
+		items = append(items, consoleLicenseJSON{
+			ID:         license.ID,
+			UserID:     license.UserID,
+			UserEmail:  license.UserEmail,
+			Product:    license.Product,
+			Status:     string(license.Status),
+			MaxDevices: license.MaxDevices,
+			ExpiresAt:  formatTime(license.ExpiresAt),
+			CreatedAt:  formatTime(license.CreatedAt),
+		})
+	}
+	return items
+}
+
+func (router *Router) routeAdminLicenses(writer http.ResponseWriter, request *http.Request, account *domain.AdminAccount, segments []string) {
+	switch {
+	case len(segments) == 1 && request.Method == http.MethodGet:
+		router.handleAdminLicenseList(writer, request)
+	case len(segments) == 1 && request.Method == http.MethodPost:
+		router.handleAdminLicenseCreate(writer, request, account)
+	case len(segments) == 2 && request.Method == http.MethodPatch:
+		router.handleAdminLicenseUpdate(writer, request, account, segments[1])
+	case len(segments) == 3 && segments[2] == "revoke" && request.Method == http.MethodPost:
+		router.handleAdminLicenseRevoke(writer, request, account, segments[1])
+	default:
+		writeError(writer, request, http.StatusNotFound, "INVALID_REQUEST", "not found")
+	}
+}
+
+func (router *Router) handleAdminLicenseList(writer http.ResponseWriter, request *http.Request) {
+	page, pageSize, offset := parseAdminPagination(request)
+	licenses, total, err := router.admin.Console.ListConsoleLicenses(request.Context(), offset, pageSize)
+	if err != nil {
+		router.writeConsoleError(writer, request, err)
+		return
+	}
+	writeJSON(writer, http.StatusOK, adminPageResponse{OK: true, Items: mapConsoleLicenses(licenses), Total: total, Page: page, PageSize: pageSize})
+}
+
+func (router *Router) handleAdminLicenseCreate(writer http.ResponseWriter, request *http.Request, account *domain.AdminAccount) {
+	var body struct {
+		UserEmail  string `json:"user_email"`
+		Days       int    `json:"days"`
+		MaxDevices int    `json:"max_devices"`
+	}
+	if err := decodeAdminJSONBody(writer, request, &body); err != nil {
+		writeError(writer, request, http.StatusBadRequest, "INVALID_REQUEST", "invalid request")
+		return
+	}
+	if strings.TrimSpace(body.UserEmail) == "" || body.Days < 1 || body.Days > 3650 || body.MaxDevices < 1 || body.MaxDevices > 10000 {
+		writeError(writer, request, http.StatusBadRequest, "INVALID_REQUEST", "user_email, days (1-3650) and max_devices (1-10000) are required")
+		return
+	}
+	user, err := router.admin.Console.FindUserByEmail(request.Context(), body.UserEmail)
+	if err != nil {
+		router.writeConsoleError(writer, request, err)
+		return
+	}
+	plain, normalized, err := security.GenerateLicense(cryptorand.Reader)
+	if err != nil {
+		writeError(writer, request, http.StatusInternalServerError, "SERVER_ERROR", "internal server error")
+		return
+	}
+	license, err := router.admin.Console.CreateLicense(request.Context(), domain.NewLicense{
+		LicenseHMAC: security.HMACHex(router.admin.LicenseHMACKey, normalized),
+		UserID:      user.ID,
+		Product:     router.admin.Product,
+		MaxDevices:  body.MaxDevices,
+		ExpiresAt:   router.now().UTC().AddDate(0, 0, body.Days),
+	})
+	if err != nil {
+		router.writeConsoleError(writer, request, err)
+		return
+	}
+	router.auditAdmin(request, account, "LICENSE_CREATED", "license", license.ID, map[string]string{"user_email": user.Email})
+	writeJSON(writer, http.StatusOK, struct {
+		OK      bool               `json:"ok"`
+		License consoleLicenseJSON `json:"license"`
+		Key     string             `json:"key"`
+	}{
+		OK: true,
+		License: consoleLicenseJSON{
+			ID: license.ID, UserID: license.UserID, UserEmail: user.Email, Product: license.Product,
+			Status: string(license.Status), MaxDevices: license.MaxDevices,
+			ExpiresAt: formatTime(license.ExpiresAt), CreatedAt: formatTime(license.CreatedAt),
+		},
+		Key: plain,
+	})
+}
+
+func (router *Router) handleAdminLicenseUpdate(writer http.ResponseWriter, request *http.Request, account *domain.AdminAccount, licenseID string) {
+	if !uuidPattern.MatchString(licenseID) {
+		writeError(writer, request, http.StatusNotFound, "LICENSE_NOT_FOUND", "license not found")
+		return
+	}
+	var body struct {
+		ExtendDays int `json:"extend_days"`
+		MaxDevices int `json:"max_devices"`
+	}
+	if err := decodeAdminJSONBody(writer, request, &body); err != nil {
+		writeError(writer, request, http.StatusBadRequest, "INVALID_REQUEST", "invalid request")
+		return
+	}
+	if body.ExtendDays == 0 && body.MaxDevices == 0 {
+		writeError(writer, request, http.StatusBadRequest, "INVALID_REQUEST", "extend_days or max_devices is required")
+		return
+	}
+	if body.ExtendDays < 0 || body.ExtendDays > 3650 || body.MaxDevices < 0 || body.MaxDevices > 10000 {
+		writeError(writer, request, http.StatusBadRequest, "INVALID_REQUEST", "invalid extend_days or max_devices")
+		return
+	}
+	license, err := router.admin.Console.FindLicenseByID(request.Context(), licenseID)
+	if err != nil {
+		router.writeConsoleError(writer, request, err)
+		return
+	}
+	if license.Status == domain.LicenseStatusRevoked {
+		writeError(writer, request, http.StatusConflict, "LICENSE_REVOKED", "revoked licenses cannot be modified")
+		return
+	}
+	expiresAt := license.ExpiresAt.AddDate(0, 0, body.ExtendDays)
+	if !expiresAt.After(router.now()) {
+		expiresAt = router.now().AddDate(0, 0, body.ExtendDays)
+	}
+	maxDevices := body.MaxDevices
+	if maxDevices == 0 {
+		maxDevices = license.MaxDevices
+	}
+	if err := router.admin.Console.AdminUpdateLicense(request.Context(), licenseID, expiresAt, maxDevices); err != nil {
+		router.writeConsoleError(writer, request, err)
+		return
+	}
+	router.auditAdmin(request, account, "LICENSE_UPDATED", "license", licenseID, map[string]int{
+		"extend_days": body.ExtendDays, "max_devices": maxDevices,
+	})
+	writeJSON(writer, http.StatusOK, struct {
+		OK bool `json:"ok"`
+	}{OK: true})
+}
+
+func (router *Router) handleAdminLicenseRevoke(writer http.ResponseWriter, request *http.Request, account *domain.AdminAccount, licenseID string) {
+	if !uuidPattern.MatchString(licenseID) {
+		writeError(writer, request, http.StatusNotFound, "LICENSE_NOT_FOUND", "license not found")
+		return
+	}
+	if err := router.admin.Console.AdminRevokeLicense(request.Context(), licenseID); err != nil {
+		router.writeConsoleError(writer, request, err)
+		return
+	}
+	router.auditAdmin(request, account, "LICENSE_REVOKED", "license", licenseID, nil)
+	writeJSON(writer, http.StatusOK, struct {
+		OK bool `json:"ok"`
+	}{OK: true})
+}
+
+// Devices
+
+type consoleDeviceJSON struct {
+	ID            string `json:"id"`
+	UserID        string `json:"user_id"`
+	UserEmail     string `json:"user_email"`
+	LicenseID     string `json:"license_id"`
+	TPMRegistered bool   `json:"tpm_registered"`
+	Status        string `json:"status"`
+	CreatedAt     string `json:"created_at"`
+	LastSeenAt    string `json:"last_seen_at"`
+}
+
+func mapConsoleDevices(devices []domain.ConsoleDevice) []consoleDeviceJSON {
+	items := make([]consoleDeviceJSON, 0, len(devices))
+	for _, device := range devices {
+		items = append(items, consoleDeviceJSON{
+			ID:            device.ID,
+			UserID:        device.UserID,
+			UserEmail:     device.UserEmail,
+			LicenseID:     device.LicenseID,
+			TPMRegistered: device.TPMRegistered,
+			Status:        string(device.Status),
+			CreatedAt:     formatTime(device.CreatedAt),
+			LastSeenAt:    formatTime(device.LastSeenAt),
+		})
+	}
+	return items
+}
+
+func (router *Router) routeAdminDevices(writer http.ResponseWriter, request *http.Request, account *domain.AdminAccount, segments []string) {
+	switch {
+	case len(segments) == 1 && request.Method == http.MethodGet:
+		router.handleAdminDeviceList(writer, request)
+	case len(segments) == 3 && segments[2] == "revoke" && request.Method == http.MethodPost:
+		router.handleAdminDeviceRevoke(writer, request, account, segments[1])
+	default:
+		writeError(writer, request, http.StatusNotFound, "INVALID_REQUEST", "not found")
+	}
+}
+
+func (router *Router) handleAdminDeviceList(writer http.ResponseWriter, request *http.Request) {
+	page, pageSize, offset := parseAdminPagination(request)
+	devices, total, err := router.admin.Console.ListConsoleDevices(request.Context(), offset, pageSize)
+	if err != nil {
+		router.writeConsoleError(writer, request, err)
+		return
+	}
+	writeJSON(writer, http.StatusOK, adminPageResponse{OK: true, Items: mapConsoleDevices(devices), Total: total, Page: page, PageSize: pageSize})
+}
+
+func (router *Router) handleAdminDeviceRevoke(writer http.ResponseWriter, request *http.Request, account *domain.AdminAccount, deviceID string) {
+	if !uuidPattern.MatchString(deviceID) {
+		writeError(writer, request, http.StatusNotFound, "DEVICE_NOT_FOUND", "device not found")
+		return
+	}
+	if err := router.admin.Console.AdminRevokeDevice(request.Context(), deviceID); err != nil {
+		router.writeConsoleError(writer, request, err)
+		return
+	}
+	router.auditAdmin(request, account, "DEVICE_REVOKED", "device", deviceID, nil)
+	writeJSON(writer, http.StatusOK, struct {
+		OK bool `json:"ok"`
+	}{OK: true})
+}
+
+// Sessions
+
+type consoleSessionJSON struct {
+	ID        string `json:"id"`
+	UserID    string `json:"user_id"`
+	UserEmail string `json:"user_email"`
+	LicenseID string `json:"license_id"`
+	Status    string `json:"status"`
+	ExpiresAt string `json:"expires_at"`
+	CreatedAt string `json:"created_at"`
+}
+
+func mapConsoleSessions(sessions []domain.ConsoleSession) []consoleSessionJSON {
+	items := make([]consoleSessionJSON, 0, len(sessions))
+	for _, session := range sessions {
+		items = append(items, consoleSessionJSON{
+			ID:        session.ID,
+			UserID:    session.UserID,
+			UserEmail: session.UserEmail,
+			LicenseID: session.LicenseID,
+			Status:    string(session.Status),
+			ExpiresAt: formatTime(session.ExpiresAt),
+			CreatedAt: formatTime(session.CreatedAt),
+		})
+	}
+	return items
+}
+
+func (router *Router) routeAdminSessions(writer http.ResponseWriter, request *http.Request, account *domain.AdminAccount, segments []string) {
+	switch {
+	case len(segments) == 1 && request.Method == http.MethodGet:
+		router.handleAdminSessionList(writer, request)
+	case len(segments) == 3 && segments[2] == "revoke" && request.Method == http.MethodPost:
+		router.handleAdminSessionRevoke(writer, request, account, segments[1])
+	default:
+		writeError(writer, request, http.StatusNotFound, "INVALID_REQUEST", "not found")
+	}
+}
+
+func (router *Router) handleAdminSessionList(writer http.ResponseWriter, request *http.Request) {
+	page, pageSize, offset := parseAdminPagination(request)
+	sessions, total, err := router.admin.Console.ListConsoleSessions(request.Context(), offset, pageSize)
+	if err != nil {
+		router.writeConsoleError(writer, request, err)
+		return
+	}
+	writeJSON(writer, http.StatusOK, adminPageResponse{OK: true, Items: mapConsoleSessions(sessions), Total: total, Page: page, PageSize: pageSize})
+}
+
+func (router *Router) handleAdminSessionRevoke(writer http.ResponseWriter, request *http.Request, account *domain.AdminAccount, sessionID string) {
+	if !uuidPattern.MatchString(sessionID) {
+		writeError(writer, request, http.StatusNotFound, "SESSION_NOT_FOUND", "session not found")
+		return
+	}
+	if err := router.admin.Console.AdminRevokeAuthSession(request.Context(), sessionID); err != nil {
+		router.writeConsoleError(writer, request, err)
+		return
+	}
+	router.auditAdmin(request, account, "SESSION_REVOKED", "session", sessionID, nil)
+	writeJSON(writer, http.StatusOK, struct {
+		OK bool `json:"ok"`
+	}{OK: true})
+}
+
+// Audit logs
+
+type auditEntryJSON struct {
+	ID             string          `json:"id"`
+	AdminAccountID string          `json:"admin_account_id"`
+	ActorEmail     string          `json:"actor_email"`
+	Action         string          `json:"action"`
+	ResourceType   string          `json:"resource_type"`
+	ResourceID     string          `json:"resource_id"`
+	UserAgent      string          `json:"user_agent"`
+	Metadata       json.RawMessage `json:"metadata"`
+	CreatedAt      string          `json:"created_at"`
+}
+
+func mapAuditEntries(logs []domain.AuditLog) []auditEntryJSON {
+	items := make([]auditEntryJSON, 0, len(logs))
+	for _, entry := range logs {
+		metadata := entry.Metadata
+		if len(metadata) == 0 {
+			metadata = json.RawMessage("{}")
+		}
+		items = append(items, auditEntryJSON{
+			ID:             entry.ID,
+			AdminAccountID: entry.AdminAccountID,
+			ActorEmail:     entry.ActorEmail,
+			Action:         entry.Action,
+			ResourceType:   entry.ResourceType,
+			ResourceID:     entry.ResourceID,
+			UserAgent:      entry.UserAgent,
+			Metadata:       metadata,
+			CreatedAt:      formatTime(entry.CreatedAt),
+		})
+	}
+	return items
+}
+
+func (router *Router) handleAdminAuditLogs(writer http.ResponseWriter, request *http.Request) {
+	page, pageSize, offset := parseAdminPagination(request)
+	logs, total, err := router.admin.Console.ListAuditLogs(request.Context(), offset, pageSize)
+	if err != nil {
+		router.writeConsoleError(writer, request, err)
+		return
+	}
+	writeJSON(writer, http.StatusOK, adminPageResponse{OK: true, Items: mapAuditEntries(logs), Total: total, Page: page, PageSize: pageSize})
+}

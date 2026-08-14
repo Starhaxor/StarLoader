@@ -17,6 +17,8 @@ var (
 	ErrLicenseNotFound      = &NotFoundError{Entity: "license"}
 	ErrLicenseAlreadyExists = errors.New("license already exists for user and product")
 	ErrChallengeNotFound    = &NotFoundError{Entity: "challenge"}
+	ErrDeviceNotFound       = &NotFoundError{Entity: "device"}
+	ErrAuthSessionNotFound  = &NotFoundError{Entity: "auth session"}
 )
 
 // ChallengeConsumedError marks the single-use challenge conflict while

@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"net/netip"
+	"strings"
 	"time"
 
 	"github.com/starloader/backend/internal/service"
@@ -32,6 +33,7 @@ type RouterConfig struct {
 	Logger              *log.Logger
 	RateLimitMaxKeys    int
 	Now                 func() time.Time
+	Admin               AdminConfig
 }
 
 type Router struct {
@@ -45,6 +47,8 @@ type Router struct {
 	trustedProxies      []netip.Prefix
 	loginLimiter        *ipRateLimiter
 	sessionLimiter      *ipRateLimiter
+	admin               AdminConfig
+	adminLimiter        *ipRateLimiter
 	now                 func() time.Time
 	meHandler           http.Handler
 	handler             http.Handler
@@ -82,6 +86,8 @@ func NewRouter(config RouterConfig) *Router {
 		trustedProxies:      append([]netip.Prefix(nil), config.TrustedProxies...),
 		loginLimiter:        newIPRateLimiter(5, time.Minute, config.RateLimitMaxKeys, config.Now),
 		sessionLimiter:      newIPRateLimiter(10, time.Minute, config.RateLimitMaxKeys, config.Now),
+		admin:               config.Admin,
+		adminLimiter:        newIPRateLimiter(10, time.Minute, config.RateLimitMaxKeys, config.Now),
 		now:                 now,
 	}
 	router.meHandler = RequireSession(config.SessionVerifier, http.HandlerFunc(router.handleMe))
@@ -103,6 +109,8 @@ func (router *Router) route(writer http.ResponseWriter, request *http.Request) {
 		router.handleHealth(writer, request)
 	case request.Method == http.MethodGet && request.URL.Path == "/v1/me":
 		router.meHandler.ServeHTTP(writer, request)
+	case strings.HasPrefix(request.URL.Path, adminPathPrefix):
+		router.serveAdmin(writer, request)
 	case request.URL.Path == "/v1/auth/login" || request.URL.Path == "/v1/device/verify" || request.URL.Path == "/healthz" || request.URL.Path == "/v1/me":
 		writeError(writer, request, http.StatusMethodNotAllowed, "INVALID_REQUEST", "method not allowed")
 	default:

@@ -7,7 +7,11 @@ import (
 	"time"
 )
 
-const defaultLoginTimeout = 10 * time.Second
+const (
+	defaultLoginTimeout      = 10 * time.Second
+	defaultAdminSessionTTL   = 12 * time.Hour
+	defaultAdminAllowedOrigin = "http://localhost:3000"
+)
 
 var requiredEnvironmentVariables = [...]string{
 	"DATABASE_URL",
@@ -17,19 +21,24 @@ var requiredEnvironmentVariables = [...]string{
 	"LICENSE_ISSUER",
 	"LICENSE_AUDIENCE",
 	"PRODUCT",
+	"ADMIN_SESSION_SECRET",
 }
 
 // Config contains the values required to operate the license service. Secrets
 // are read only from the environment and must never be logged.
 type Config struct {
-	DatabaseURL       string
-	LicenseHMACKey    string
-	HardwareHMACKey   string
-	Ed25519PrivateKey string
-	LicenseIssuer     string
-	LicenseAudience   string
-	Product           string
-	LoginTimeout      time.Duration
+	DatabaseURL        string
+	LicenseHMACKey     string
+	HardwareHMACKey    string
+	Ed25519PrivateKey  string
+	LicenseIssuer      string
+	LicenseAudience    string
+	Product            string
+	LoginTimeout       time.Duration
+	AdminSessionSecret string
+	AdminAllowedOrigin string
+	AdminSessionTTL    time.Duration
+	AdminCookieSecure  bool
 }
 
 // Load reads the complete configuration, refusing to start when any required
@@ -55,14 +64,40 @@ func Load() (Config, error) {
 		loginTimeout = parsedTimeout
 	}
 
+	adminAllowedOrigin := defaultAdminAllowedOrigin
+	if configuredOrigin := strings.TrimSpace(os.Getenv("ADMIN_ALLOWED_ORIGIN")); configuredOrigin != "" {
+		adminAllowedOrigin = strings.TrimRight(configuredOrigin, "/")
+	}
+	adminSessionTTL := defaultAdminSessionTTL
+	if configuredTTL := strings.TrimSpace(os.Getenv("ADMIN_SESSION_TTL")); configuredTTL != "" {
+		parsedTTL, err := time.ParseDuration(configuredTTL)
+		if err != nil || parsedTTL <= 0 {
+			return Config{}, fmt.Errorf("ADMIN_SESSION_TTL must be a positive duration")
+		}
+		adminSessionTTL = parsedTTL
+	}
+	adminCookieSecure := false
+	switch configuredSecure := strings.ToLower(strings.TrimSpace(os.Getenv("ADMIN_COOKIE_SECURE"))); configuredSecure {
+	case "", "false", "0":
+		adminCookieSecure = false
+	case "true", "1":
+		adminCookieSecure = true
+	default:
+		return Config{}, fmt.Errorf("ADMIN_COOKIE_SECURE must be true or false")
+	}
+
 	return Config{
-		DatabaseURL:       values["DATABASE_URL"],
-		LicenseHMACKey:    values["LICENSE_HMAC_KEY"],
-		HardwareHMACKey:   values["HARDWARE_HMAC_KEY"],
-		Ed25519PrivateKey: values["ED25519_PRIVATE_KEY"],
-		LicenseIssuer:     values["LICENSE_ISSUER"],
-		LicenseAudience:   values["LICENSE_AUDIENCE"],
-		Product:           values["PRODUCT"],
-		LoginTimeout:      loginTimeout,
+		DatabaseURL:        values["DATABASE_URL"],
+		LicenseHMACKey:     values["LICENSE_HMAC_KEY"],
+		HardwareHMACKey:    values["HARDWARE_HMAC_KEY"],
+		Ed25519PrivateKey:  values["ED25519_PRIVATE_KEY"],
+		LicenseIssuer:      values["LICENSE_ISSUER"],
+		LicenseAudience:    values["LICENSE_AUDIENCE"],
+		Product:            values["PRODUCT"],
+		LoginTimeout:       loginTimeout,
+		AdminSessionSecret: values["ADMIN_SESSION_SECRET"],
+		AdminAllowedOrigin: adminAllowedOrigin,
+		AdminSessionTTL:    adminSessionTTL,
+		AdminCookieSecure:  adminCookieSecure,
 	}, nil
 }

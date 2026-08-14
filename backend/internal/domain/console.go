@@ -1,0 +1,65 @@
+package domain
+
+import "time"
+
+// ConsoleUser is the admin dashboard view of an end user, enriched with
+// ownership counts so listing does not require per-row round trips.
+type ConsoleUser struct {
+	ID                 string
+	Email              string
+	Status             UserStatus
+	LicenseCount       int
+	DeviceCount        int
+	ActiveSessionCount int
+	LastLoginAt        *time.Time
+	CreatedAt          time.Time
+}
+
+type ConsoleUserDetail struct {
+	User     ConsoleUser
+	Licenses []ConsoleLicense
+	Devices  []ConsoleDevice
+	Sessions []ConsoleSession
+}
+
+type ConsoleLicense struct {
+	ID         string
+	UserID     string
+	UserEmail  string
+	Product    string
+	Status     LicenseStatus
+	MaxDevices int
+	ExpiresAt  time.Time
+	CreatedAt  time.Time
+}
+
+// ConsoleDevice deliberately exposes no raw hardware identifiers; only the
+// presence of a TPM key and the lifecycle state are surfaced.
+type ConsoleDevice struct {
+	ID            string
+	UserID        string
+	UserEmail     string
+	LicenseID     string
+	TPMRegistered bool
+	Status        DeviceStatus
+	CreatedAt     time.Time
+	LastSeenAt    time.Time
+}
+
+type ConsoleSession struct {
+	ID        string
+	UserID    string
+	UserEmail string
+	LicenseID string
+	Status    SessionStatus
+	ExpiresAt time.Time
+	CreatedAt time.Time
+}
+
+type ConsoleOverview struct {
+	TotalUsers     int64
+	ActiveLicenses int64
+	ActiveDevices  int64
+	ActiveSessions int64
+	RecentAudit    []AuditLog
+}

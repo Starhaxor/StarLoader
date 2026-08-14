@@ -26,6 +26,7 @@ import (
 	"github.com/starloader/backend/internal/httpapi"
 	"github.com/starloader/backend/internal/security"
 	"github.com/starloader/backend/internal/service"
+	"github.com/starloader/backend/internal/service/adminauth"
 	"github.com/starloader/backend/internal/store"
 )
 
@@ -81,7 +82,7 @@ func parseCommand(args []string) (commandMode, []string, error) {
 		return commandMigrate, args[1:], nil
 	case "admin":
 		if len(args) < 2 {
-			return "", nil, errors.New("usage: server admin create-user|create-license [options]")
+			return "", nil, errors.New("usage: server admin create-user|create-license|create-admin [options]")
 		}
 		return commandAdmin, args[1:], nil
 	case "keygen":
@@ -168,6 +169,11 @@ func runServer() error {
 		Audience:        configuration.LicenseAudience,
 		Product:         configuration.Product,
 	})
+	adminAuthService := adminauth.New(repository, adminauth.Config{
+		SessionTTL: configuration.AdminSessionTTL,
+		Random:     cryptorand.Reader,
+		Now:        time.Now,
+	})
 	router := httpapi.NewRouter(httpapi.RouterConfig{
 		Login:              loginService,
 		DeviceVerification: deviceService,
@@ -177,6 +183,16 @@ func runServer() error {
 		TrustedProxies:     trustedProxies,
 		Logger:             log.Default(),
 		HealthCheck:        pool.Ping,
+		Admin: httpapi.AdminConfig{
+			Auth:           adminAuthService,
+			Console:        repository,
+			LicenseHMACKey: []byte(configuration.LicenseHMACKey),
+			Product:        configuration.Product,
+			AllowedOrigin:  configuration.AdminAllowedOrigin,
+			CSRFSecret:     []byte(configuration.AdminSessionSecret),
+			CookieSecure:   configuration.AdminCookieSecure,
+			SessionTTL:     configuration.AdminSessionTTL,
+		},
 	})
 	address := strings.TrimSpace(os.Getenv("SERVER_ADDR"))
 	if address == "" {
@@ -243,6 +259,7 @@ func runAdmin(args []string) error {
 		os.Stdout,
 		adminUserRepository{store: repository},
 		adminLicenseRepository{store: repository, hmacKey: []byte(licenseHMACKey)},
+		adminAccountRepository{store: repository},
 		passwordReader,
 		cryptorand.Reader,
 		time.Now,
@@ -303,6 +320,15 @@ func (repository adminLicenseRepository) CreateLicense(ctx context.Context, norm
 	return err
 }
 
+type adminAccountRepository struct {
+	store *store.Store
+}
+
+func (repository adminAccountRepository) CreateAdminAccount(ctx context.Context, email, passwordHash string) error {
+	_, err := repository.store.CreateAdminAccount(ctx, domain.NewAdminAccount{Email: email, PasswordHash: passwordHash})
+	return err
+}
+
 func newHTTPServer(address string, handler http.Handler, applicationCtx context.Context) *http.Server {
 	return &http.Server{
 		Addr:    address,
@@ -351,7 +377,7 @@ func shutdownServer(server managedHTTPServer, cancelApplication context.CancelFu
 	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), gracePeriod)
 	defer cancelShutdown()
 	if err := server.Shutdown(shutdownCtx); err != nil {
-		if closeErr := server.Close(); closeErr != nil {
+		if closeErr := server.Close(); err != nil {
 			return errors.Join(err, closeErr)
 		}
 		return err
