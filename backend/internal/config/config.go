@@ -10,7 +10,7 @@ import (
 const (
 	defaultLoginTimeout        = 10 * time.Second
 	defaultAdminSessionTTL     = 12 * time.Hour
-	defaultAdminAllowedOrigins = "http://localhost:3000,http://127.0.0.1:3000"
+	defaultAdminAllowedOrigins = "http://localhost:3000,http://127.0.0.1:3000,https://starloadernd8h-8080-domgge2y7n.outplane.app"
 )
 
 var requiredEnvironmentVariables = [...]string{
