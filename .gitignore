@@ -87,3 +87,5 @@ CMakeLists.txt.user*
 # Local secrets (at any directory depth)
 .env
 !.env.example
+
+.freebuff/

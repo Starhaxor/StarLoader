@@ -159,7 +159,8 @@ try {
     Invoke-Checked $cmake -S $repoRoot -B $buildDirectory -G Ninja `
         "-DCMAKE_PREFIX_PATH=$qtRoot" `
         "-DOPENSSL_ROOT_DIR=$opensslRoot" `
-        "-DSTARLOADER_ED25519_PUBLIC_KEY=$publicKey"
+        "-DSTARLOADER_ED25519_PUBLIC_KEY=$publicKey" `
+        "-DSTARLOADER_API_URL=https://api.starloader.example"
     Invoke-Checked $cmake --build $buildDirectory
     $env:STARLOADER_API_URL = "http://127.0.0.1:${ApiPort}"
     $env:STARLOADER_ALLOW_HTTP_LOCAL = '1'

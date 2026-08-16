@@ -5,6 +5,19 @@ string(LENGTH "${STARLOADER_ED25519_PUBLIC_KEY}" STARLOADER_ED25519_PUBLIC_KEY_L
 if(NOT STARLOADER_ED25519_PUBLIC_KEY_LENGTH EQUAL 44 OR NOT STARLOADER_ED25519_PUBLIC_KEY MATCHES "^[A-Za-z0-9+/]+=$")
     message(FATAL_ERROR "STARLOADER_ED25519_PUBLIC_KEY must be a canonical 32-byte standard-base64 public key")
 endif()
+
+set(STARLOADER_API_URL "https://api.starloader.example" CACHE STRING "HTTPS base URL of the StarLoader license API baked into the client")
+if(STARLOADER_API_URL STREQUAL "")
+    # Caches created before this variable had a default store an empty value;
+    # treat empty as unset so stale build trees reconfigure cleanly.
+    set(STARLOADER_API_URL "https://api.starloader.example" CACHE STRING "HTTPS base URL of the StarLoader license API baked into the client" FORCE)
+endif()
+if(NOT STARLOADER_API_URL MATCHES "^https://")
+    message(FATAL_ERROR "STARLOADER_API_URL must be a non-empty https:// URL (plain HTTP is rejected by the client except for loopback development). Configure with -DSTARLOADER_API_URL=https://your-server.example or use the qt-mingw preset.")
+endif()
+if(STARLOADER_API_URL STREQUAL "https://api.starloader.example")
+    message(WARNING "STARLOADER_API_URL is still the placeholder https://api.starloader.example; the client cannot reach the API unless the STARLOADER_API_URL environment variable is set at runtime. Configure with -DSTARLOADER_API_URL=https://your-server.example or use the qt-mingw preset.")
+endif()
 configure_file(
     "${CMAKE_CURRENT_SOURCE_DIR}/src/config/ClientSecurityConfig.h.in"
     "${CMAKE_CURRENT_BINARY_DIR}/generated/ClientSecurityConfig.h"

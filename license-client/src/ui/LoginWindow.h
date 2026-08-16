@@ -13,6 +13,7 @@ class AuthManager;
 class IHardwareCollector;
 class IDeviceSigner;
 class UserDashboard;
+class QEvent;
 class QMessageBox;
 struct ApiError;
 enum class AuthState;
@@ -40,6 +41,7 @@ private:
     void applyState(AuthState state);
     static QString safeMessage(const ApiError &error);
     void showErrorDialog(const QString &code, const QString &text);
+    bool eventFilter(QObject *watched, QEvent *event) override;
 
 private slots:
     void showFailure(const ApiError &error);

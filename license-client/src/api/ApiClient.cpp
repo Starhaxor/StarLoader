@@ -27,6 +27,10 @@ ApiError errorForReply(QNetworkReply *reply, const QByteArray &body, const QStri
     }
     const QByteArray headerRequestId = reply->rawHeader("X-Request-ID");
     if (error.requestId.isEmpty() && !headerRequestId.isEmpty()) error.requestId = QString::fromUtf8(headerRequestId);
+    if (error.code == QStringLiteral("NETWORK_ERROR")) {
+        const QString detail = reply->errorString().trimmed();
+        if (!detail.isEmpty()) error.message = QStringLiteral("Network request failed: %1").arg(detail);
+    }
     return error;
 }
 

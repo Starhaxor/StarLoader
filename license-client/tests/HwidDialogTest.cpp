@@ -48,7 +48,18 @@ void HwidDialogTest::usesCompactHorizontalLayout()
     QVERIFY(dialog.width() <= 420);
     QVERIFY(dialog.height() <= 120);
     QVERIFY(!dialog.findChild<QLabel *>(QStringLiteral("titleLabel")));
-    QVERIFY(dialog.findChild<QLabel *>(QStringLiteral("descriptionLabel")));
+    auto *descriptionLabel = dialog.findChild<QLabel *>(QStringLiteral("descriptionLabel"));
+    QVERIFY(descriptionLabel);
+    auto *hwidLineEdit = dialog.findChild<QLineEdit *>(QStringLiteral("hwidLineEdit"));
+    QVERIFY(hwidLineEdit);
+
+    // Same palette as the login form, embedded inline (theme-independent).
+    QVERIFY(dialog.styleSheet().contains(QStringLiteral("#0B1117")));
+    QVERIFY(descriptionLabel->styleSheet().contains(QStringLiteral("#9AAAB2")));
+    QVERIFY(hwidLineEdit->styleSheet().contains(QStringLiteral("#111A22")));
+    QVERIFY(hwidLineEdit->styleSheet().contains(QStringLiteral("#2AB8C6")));
+    QVERIFY(copyButton->styleSheet().contains(QStringLiteral("#1B2732")));
+
     QVERIFY(copyButton->width() <= 36);
     QVERIFY(copyButton->text().isEmpty());
     QVERIFY(!copyButton->icon().isNull());

@@ -13,6 +13,14 @@ WindowTitleBar::WindowTitleBar(QWidget *window, QString title, bool canMinimize,
     setObjectName(QStringLiteral("windowTitleBar"));
     setFixedHeight(32);
     window_->setWindowFlag(Qt::FramelessWindowHint, true);
+    setStyleSheet(QStringLiteral(
+        "QWidget#windowTitleBar { background-color: #0B1117; border-bottom: 1px solid #1B2732; }"
+        "QLabel#windowTitleText { color: #EDF4F6; font-size: 11px; font-weight: 600; background: transparent; }"
+        "QToolButton#windowMinimizeButton, QToolButton#windowCloseButton { background-color: transparent; color: #EDF4F6; border: none; border-radius: 3px; min-width: 26px; max-width: 26px; min-height: 26px; max-height: 26px; padding: 0; font-size: 16px; }"
+        "QToolButton#windowMinimizeButton:hover { background-color: #15212B; }"
+        "QToolButton#windowCloseButton:hover { background-color: #c01c28; color: #ffffff; }"
+        "QToolButton#windowMinimizeButton:pressed { background-color: #0D141C; }"
+        "QToolButton#windowCloseButton:pressed { background-color: #96151d; }"));
 
     auto *layout = new QHBoxLayout(this);
     layout->setContentsMargins(10, 0, 4, 0);

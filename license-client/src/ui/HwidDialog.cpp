@@ -13,6 +13,8 @@
 
 namespace {
 
+const QColor kIconColor(QStringLiteral("#44C7D5"));
+
 QIcon copyIcon(const QColor &color)
 {
     QPixmap pixmap(16, 16);
@@ -47,7 +49,7 @@ HwidDialog::HwidDialog(IHardwareCollector &hardwareCollector, QWidget *parent)
     ui->setupUi(this);
     ui->dialogLayout->insertWidget(0, new WindowTitleBar(this, windowTitle(), false, this));
     setFixedSize(width(), ui->dialogLayout->sizeHint().height());
-    ui->copyButton->setIcon(copyIcon(ui->copyButton->palette().color(QPalette::ButtonText)));
+    ui->copyButton->setIcon(copyIcon(kIconColor));
     ui->copyButton->setIconSize(QSize(16, 16));
 
     connect(ui->copyButton, &QToolButton::clicked,
@@ -87,13 +89,12 @@ void HwidDialog::collectionFinished()
 void HwidDialog::copyCode()
 {
     QApplication::clipboard()->setText(ui->hwidLineEdit->text());
-    const QColor iconColor = ui->copyButton->palette().color(QPalette::ButtonText);
-    ui->copyButton->setIcon(copiedIcon(iconColor));
+    ui->copyButton->setIcon(copiedIcon(kIconColor));
     ui->copyButton->setToolTip(QStringLiteral("Copied"));
     ui->copyButton->setEnabled(false);
 
-    QTimer::singleShot(1300, this, [this, iconColor] {
-        ui->copyButton->setIcon(copyIcon(iconColor));
+    QTimer::singleShot(1300, this, [this] {
+        ui->copyButton->setIcon(copyIcon(kIconColor));
         ui->copyButton->setToolTip(QStringLiteral("Copy HWID"));
         ui->copyButton->setEnabled(true);
     });

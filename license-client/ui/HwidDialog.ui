@@ -2,6 +2,9 @@
 <ui version="4.0">
  <class>HwidDialog</class>
  <widget class="QDialog" name="HwidDialog">
+  <property name="styleSheet">
+   <string notr="true">QDialog#HwidDialog { background-color: #0B1117; }</string>
+  </property>
   <property name="windowModality">
    <enum>Qt::WindowModality::ApplicationModal</enum>
   </property>
@@ -49,6 +52,9 @@
    </property>
    <item>
     <widget class="QLabel" name="descriptionLabel">
+     <property name="styleSheet">
+      <string notr="true">QLabel { color: #9AAAB2; font-size: 11px; }</string>
+     </property>
      <property name="text">
       <string>Calculating device ID…</string>
      </property>
@@ -62,11 +68,20 @@
      <property name="spacing"><number>6</number></property>
      <item>
       <widget class="QLineEdit" name="hwidLineEdit">
+       <property name="styleSheet">
+        <string notr="true">QLineEdit { background-color: #111A22; color: #EDF4F6; border: 1px solid #22303B; border-radius: 7px; padding: 0 12px; min-height: 34px; font-size: 12px; selection-background-color: #22AFC0; selection-color: #ffffff; }
+QLineEdit:focus { border: 1px solid #2AB8C6; }</string>
+       </property>
        <property name="readOnly"><bool>true</bool></property>
       </widget>
      </item>
      <item>
       <widget class="QToolButton" name="copyButton">
+       <property name="styleSheet">
+        <string notr="true">QToolButton { background-color: #1B2732; border: 1px solid #22303B; border-radius: 7px; color: #EDF4F6; }
+QToolButton:hover { background-color: #15212B; }
+QToolButton:pressed { background-color: #0D141C; }</string>
+       </property>
        <property name="minimumSize"><size><width>32</width><height>32</height></size></property>
        <property name="maximumSize"><size><width>32</width><height>32</height></size></property>
        <property name="cursor"><cursorShape>PointingHandCursor</cursorShape></property>

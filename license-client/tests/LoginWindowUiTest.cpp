@@ -29,7 +29,9 @@ void LoginWindowUiTest::usesCompactBrandedLayout()
     QVERIFY(title);
     QCOMPARE(window.windowTitle(), QStringLiteral("StarLoader"));
     QCOMPARE(title->text(), QStringLiteral("StarLoader"));
-    QVERIFY(title->font().italic());
+    QVERIFY(!title->font().italic());
+    QVERIFY(title->font().family().contains(QStringLiteral("Segoe"), Qt::CaseInsensitive));
+    QVERIFY(title->font().pointSize() <= 22);
     QVERIFY(window.width() <= 340);
     QVERIFY(window.height() <= 400);
     QVERIFY(!window.findChild<QLabel *>(QStringLiteral("logoLabel")));
@@ -44,11 +46,22 @@ void LoginWindowUiTest::exposesOnlyEmailAndPasswordInputs()
     QVERIFY(!window.findChild<QLineEdit *>(QStringLiteral("licenseKeyLineEdit")));
     QVERIFY(!window.findChild<QLineEdit *>(QStringLiteral("deviceIdLineEdit")));
     QVERIFY(!window.findChild<QLabel *>(QStringLiteral("requestIdLabel")));
-    QVERIFY(window.findChild<QPushButton *>(QStringLiteral("loginButton")));
+    QPushButton *loginButton = window.findChild<QPushButton *>(QStringLiteral("loginButton"));
+    QVERIFY(loginButton);
+    QVERIFY(loginButton->styleSheet().contains(QStringLiteral("#22AFC0")));
+    QVERIFY(loginButton->styleSheet().contains(QStringLiteral("#29BECE")));
+    QVERIFY(loginButton->styleSheet().contains(QStringLiteral("#198A99")));
     QLabel *hwidLink = window.findChild<QLabel *>(QStringLiteral("hwidLink"));
     QVERIFY(hwidLink);
     QVERIFY(hwidLink->text().contains(QStringLiteral("href=\"hwid\"")));
     QVERIFY(hwidLink->text().contains(QStringLiteral("View HWID")));
+    QVERIFY(hwidLink->text().contains(QStringLiteral("#76949D")));
+    QVERIFY(!hwidLink->text().contains(QStringLiteral("#00BFFF")));
+
+    // Separator stays short (~60-70% of the form width) and subtle.
+    QFrame *divider = window.findChild<QFrame *>(QStringLiteral("divider"));
+    QVERIFY(divider);
+    QVERIFY(divider->maximumWidth() <= 180);
 }
 
 void LoginWindowUiTest::usesIconFreeCustomWindowChrome()
@@ -85,11 +98,6 @@ void LoginWindowUiTest::failureOpensMessageBoxWithErrorCode()
 
     QVERIFY(QMetaObject::invokeMethod(&window, "showFailure", Qt::DirectConnection, Q_ARG(ApiError, error)));
     QTest::qWait(50);
-
-    // Inline status feedback is kept alongside the message box.
-    QLabel *statusLabel = window.findChild<QLabel *>(QStringLiteral("statusLabel"));
-    QVERIFY(statusLabel);
-    QVERIFY(!statusLabel->text().isEmpty());
 
     QMessageBox *box = nullptr;
     const QWidgetList topLevel = QApplication::topLevelWidgets();

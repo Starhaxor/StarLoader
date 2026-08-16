@@ -199,7 +199,8 @@ $env:Path = "C:\Qt\Tools\mingw1310_64\bin;C:\Qt\6.11.1\mingw_64\bin;C:\Qt\Tools\
 & 'C:\Qt\Tools\CMake_64\bin\cmake.exe' -S . -B build -G Ninja `
   -DCMAKE_PREFIX_PATH=C:\Qt\6.11.1\mingw_64 `
   -DOPENSSL_ROOT_DIR=C:\Qt\Tools\mingw1310_64\opt `
-  -DSTARLOADER_ED25519_PUBLIC_KEY=<PUBLIC_KEY>
+  -DSTARLOADER_ED25519_PUBLIC_KEY=<PUBLIC_KEY> `
+  -DSTARLOADER_API_URL=https://api.example.com
 & 'C:\Qt\Tools\CMake_64\bin\cmake.exe' --build build
 & 'C:\Qt\Tools\CMake_64\bin\ctest.exe' --test-dir build --output-on-failure
 ```
@@ -309,6 +310,14 @@ Reconfigure/rebuild `LicenseClient` with the Base64 public key corresponding to 
 ### Local HTTP is rejected
 
 Both conditions are required: `STARLOADER_API_URL` must be a loopback URL and `STARLOADER_ALLOW_HTTP_LOCAL` must equal `1`.
+
+### The client reports a network error against a deployed server
+
+The client resolves its API base URL in this order: the runtime `STARLOADER_API_URL` environment variable, then the `https://` URL baked at build time via `-DSTARLOADER_API_URL=...`. CMake warns (but does not fail) when the baked URL is still the placeholder `https://api.starloader.example`, and it refuses any non-`https://` value; use the `qt-mingw` preset or `-DSTARLOADER_API_URL=...` to bake the deployed endpoint. If neither source points at a reachable HTTPS endpoint, the login fails with `NETWORK_ERROR`.
+
+Verify from the machine running the client that `https://<your-server>/healthz` returns `200` over a certificate the OS trusts. Plain HTTP is rejected for non-loopback hosts (`INSECURE_TRANSPORT`) and self-signed certificates fail the TLS handshake (`NETWORK_ERROR`). Since the server ships plain HTTP, terminate TLS at a reverse proxy in front of it and set `TRUSTED_PROXIES` to that proxy's CIDR.
+
+Since the 2026-08-16 change, the failure dialog includes the underlying Qt network error (for example `host not found`, `connection refused`, or `SSL handshake failed`) instead of a generic message, which distinguishes DNS, firewall, and certificate problems.
 
 ### Database connection fails from Docker
 

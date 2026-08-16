@@ -9,7 +9,9 @@
 
 #include <QPushButton>
 #include <QLabel>
+#include <QEvent>
 #include <QMessageBox>
+#include <QPalette>
 #include <QStyle>
 #include <QUrl>
 
@@ -22,7 +24,7 @@ LoginWindow::LoginWindow(QWidget *parent)
     ui->pageLayout->insertWidget(0, new WindowTitleBar(this, windowTitle(), true, ui->centralwidget));
     setFixedSize(size());
 
-    apiClient_ = new ApiClient(QUrl(qEnvironmentVariable("STARLOADER_API_URL", "https://api.starloader.example")), ApiClient::RequestTimeoutMs, this);
+    apiClient_ = new ApiClient(QUrl(qEnvironmentVariable("STARLOADER_API_URL", QString::fromUtf8(STARLOADER_API_URL))), ApiClient::RequestTimeoutMs, this);
     hardwareCollector_ = std::make_unique<SystemHardwareCollector>();
     deviceSigner_ = std::make_unique<TpmDeviceSigner>();
     const SessionTokenVerifier verifier = SessionTokenVerifier::fromBase64(
@@ -32,8 +34,17 @@ LoginWindow::LoginWindow(QWidget *parent)
 
     connect(ui->loginButton, &QPushButton::clicked, this, &LoginWindow::startLogin);
     connect(ui->hwidLink, &QLabel::linkActivated, this, &LoginWindow::openHwidDialog);
+
+    // Dim link by default; brighten + underline on hover (rich-text anchors
+    // ignore stylesheets/palettes, so the color lives in the HTML itself).
+    ui->hwidLink->setMouseTracking(true);
+    ui->hwidLink->installEventFilter(this);
+
+    QPalette inputPalette = ui->emailLineEdit->palette();
+    inputPalette.setColor(QPalette::PlaceholderText, QColor(QStringLiteral("#71818A")));
+    ui->emailLineEdit->setPalette(inputPalette);
+    ui->passwordLineEdit->setPalette(inputPalette);
     connect(authManager_, &AuthManager::stateChanged, this, &LoginWindow::applyState);
-    connect(authManager_, &AuthManager::statusChanged, ui->statusLabel, &QLabel::setText);
     connect(authManager_, &AuthManager::failed, this, &LoginWindow::showFailure);
     connect(authManager_, &AuthManager::authenticated, this, &LoginWindow::showDashboard);
 }
@@ -43,6 +54,20 @@ LoginWindow::~LoginWindow()
     if (dashboard_ != nullptr) { dashboard_->hide(); delete dashboard_.data(); }
     if (authManager_ != nullptr) { authManager_->cancelAndWait(); delete authManager_; authManager_ = nullptr; }
     delete ui;
+}
+
+bool LoginWindow::eventFilter(QObject *watched, QEvent *event)
+{
+    if (watched == ui->hwidLink) {
+        if (event->type() == QEvent::Enter) {
+            ui->hwidLink->setText(QStringLiteral("<a href=\"hwid\"><u><font color=\"#44C7D5\">View HWID</font></u></a>"));
+            ui->hwidLink->setCursor(Qt::PointingHandCursor);
+        } else if (event->type() == QEvent::Leave) {
+            ui->hwidLink->setText(QStringLiteral("<a href=\"hwid\"><font color=\"#76949D\">View HWID</font></a>"));
+            ui->hwidLink->unsetCursor();
+        }
+    }
+    return QMainWindow::eventFilter(watched, event);
 }
 
 void LoginWindow::openHwidDialog()
@@ -55,9 +80,6 @@ void LoginWindow::openHwidDialog()
 
 void LoginWindow::startLogin()
 {
-    ui->statusLabel->setProperty("state", QVariant());
-    ui->statusLabel->style()->unpolish(ui->statusLabel);
-    ui->statusLabel->style()->polish(ui->statusLabel);
     authManager_->login(ui->emailLineEdit->text(), ui->passwordLineEdit->text());
 }
 
@@ -109,15 +131,14 @@ QString LoginWindow::safeMessage(const ApiError &error)
     if (error.code == QStringLiteral("DEVICE_REVOKED")) return QStringLiteral("This device has been revoked.");
     if (error.code == QStringLiteral("RATE_LIMITED")) return QStringLiteral("Too many attempts. Please wait and try again.");
     if (error.code == QStringLiteral("TPM_UNAVAILABLE")) return QStringLiteral("Device security hardware is unavailable.");
+    if (error.code == QStringLiteral("NETWORK_ERROR")) return error.message;
+    if (error.code == QStringLiteral("INSECURE_TRANSPORT")) return QStringLiteral("A secure connection is required. The server must be reachable over HTTPS.");
+    if (error.code == QStringLiteral("TIMEOUT")) return QStringLiteral("The request timed out. Please check your connection and try again.");
     return QStringLiteral("Sign-in could not be completed. Please try again.");
 }
 
 void LoginWindow::showFailure(const ApiError &error)
 {
-    ui->statusLabel->setProperty("state", "error");
-    ui->statusLabel->style()->unpolish(ui->statusLabel);
-    ui->statusLabel->style()->polish(ui->statusLabel);
-    ui->statusLabel->setText(safeMessage(error));
     showErrorDialog(error.code, safeMessage(error));
 }
 
