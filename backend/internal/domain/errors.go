@@ -20,7 +20,6 @@ var (
 	ErrChallengeNotFound    = &NotFoundError{Entity: "challenge"}
 	ErrDeviceNotFound       = &NotFoundError{Entity: "device"}
 	ErrAuthSessionNotFound  = &NotFoundError{Entity: "auth session"}
-	ErrAdminAlreadyExists   = errors.New("admin account already exists")
 )
 
 // ChallengeConsumedError marks the single-use challenge conflict while

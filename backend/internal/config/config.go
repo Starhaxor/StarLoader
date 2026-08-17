@@ -21,7 +21,6 @@ var requiredEnvironmentVariables = [...]string{
 	"LICENSE_ISSUER",
 	"LICENSE_AUDIENCE",
 	"PRODUCT",
-	"ADMIN_SESSION_SECRET",
 }
 
 // Config contains the values required to operate the license service. Secrets
@@ -34,12 +33,7 @@ type Config struct {
 	LicenseIssuer       string
 	LicenseAudience     string
 	Product             string
-	LoginTimeout        time.Duration
-	AdminConsoleEnabled bool
-	AdminSessionSecret  string
-	AdminAllowedOrigins []string
-	AdminSessionTTL     time.Duration
-	AdminCookieSecure   bool
+	LoginTimeout time.Duration
 }
 
 // Load reads the complete configuration, refusing to start when any required
@@ -79,32 +73,6 @@ func Load() (Config, error) {
 	if len(adminAllowedOrigins) == 0 {
 		return Config{}, fmt.Errorf("ADMIN_ALLOWED_ORIGIN must contain at least one origin")
 	}
-	adminSessionTTL := defaultAdminSessionTTL
-	if configuredTTL := strings.TrimSpace(os.Getenv("ADMIN_SESSION_TTL")); configuredTTL != "" {
-		parsedTTL, err := time.ParseDuration(configuredTTL)
-		if err != nil || parsedTTL <= 0 {
-			return Config{}, fmt.Errorf("ADMIN_SESSION_TTL must be a positive duration")
-		}
-		adminSessionTTL = parsedTTL
-	}
-	adminCookieSecure := false
-	switch configuredSecure := strings.ToLower(strings.TrimSpace(os.Getenv("ADMIN_COOKIE_SECURE"))); configuredSecure {
-	case "", "false", "0":
-		adminCookieSecure = false
-	case "true", "1":
-		adminCookieSecure = true
-	default:
-		return Config{}, fmt.Errorf("ADMIN_COOKIE_SECURE must be true or false")
-	}
-	adminConsoleEnabled := true
-	switch configuredConsole := strings.ToLower(strings.TrimSpace(os.Getenv("ADMIN_CONSOLE_ENABLED"))); configuredConsole {
-	case "", "true", "1":
-		adminConsoleEnabled = true
-	case "false", "0":
-		adminConsoleEnabled = false
-	default:
-		return Config{}, fmt.Errorf("ADMIN_CONSOLE_ENABLED must be true or false")
-	}
 
 	return Config{
 		DatabaseURL:         values["DATABASE_URL"],
@@ -113,12 +81,7 @@ func Load() (Config, error) {
 		Ed25519PrivateKey:   values["ED25519_PRIVATE_KEY"],
 		LicenseIssuer:       values["LICENSE_ISSUER"],
 		LicenseAudience:     values["LICENSE_AUDIENCE"],
-		Product:             values["PRODUCT"],
-		LoginTimeout:        loginTimeout,
-		AdminConsoleEnabled: adminConsoleEnabled,
-		AdminSessionSecret:  values["ADMIN_SESSION_SECRET"],
-		AdminAllowedOrigins: adminAllowedOrigins,
-		AdminSessionTTL:     adminSessionTTL,
-		AdminCookieSecure:   adminCookieSecure,
+		Product:      values["PRODUCT"],
+		LoginTimeout: loginTimeout,
 	}, nil
 }

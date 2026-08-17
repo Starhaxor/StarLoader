@@ -20,8 +20,6 @@ type migration struct {
 var versionedMigrations = []migration{
 	{version: 1, up: "000001_initial.up.sql", down: "000001_initial.down.sql"},
 	{version: 2, up: "000002_single_license_per_product.up.sql", down: "000002_single_license_per_product.down.sql"},
-	{version: 3, up: "000003_admin.up.sql", down: "000003_admin.down.sql"},
-	{version: 4, up: "000004_phase2.up.sql", down: "000004_phase2.down.sql"},
 }
 
 func MigrateUp(ctx context.Context, pool *pgxpool.Pool) error {
