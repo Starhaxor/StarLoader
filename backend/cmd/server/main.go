@@ -26,7 +26,6 @@ import (
 	"github.com/starloader/backend/internal/httpapi"
 	"github.com/starloader/backend/internal/security"
 	"github.com/starloader/backend/internal/service"
-	"github.com/starloader/backend/internal/service/adminauth"
 	"github.com/starloader/backend/internal/store"
 )
 
@@ -169,40 +168,15 @@ func runServer() error {
 		Audience:        configuration.LicenseAudience,
 		Product:         configuration.Product,
 	})
-	adminConfig := httpapi.AdminConfig{}
-	if configuration.AdminConsoleEnabled {
-		adminAuthService := adminauth.New(repository, adminauth.Config{
-			SessionTTL: configuration.AdminSessionTTL,
-			Random:     cryptorand.Reader,
-			Now:        time.Now,
-		})
-		adminConfig = httpapi.AdminConfig{
-			Auth:           adminAuthService,
-			Console:        repository,
-			LicenseHMACKey: []byte(configuration.LicenseHMACKey),
-			Product:        configuration.Product,
-			MFAIssuer:      "KeyStar Admin",
-			AllowedOrigins: configuration.AdminAllowedOrigins,
-			CSRFSecret:     []byte(configuration.AdminSessionSecret),
-			CookieSecure:   configuration.AdminCookieSecure,
-			SessionTTL:     configuration.AdminSessionTTL,
-		}
-	} else {
-		// Keep the allowed origin so disabled-console responses still carry
-		// CORS headers and browsers can render the 503 message.
-		adminConfig = httpapi.AdminConfig{AllowedOrigins: configuration.AdminAllowedOrigins}
-		log.Printf("admin console disabled: /v1/admin endpoints will return 503")
-	}
 	router := httpapi.NewRouter(httpapi.RouterConfig{
 		Login:              loginService,
 		DeviceVerification: deviceService,
 		SessionVerifier:    tokenVerifier,
 		Profile:            repository,
 		LoginTimeout:       configuration.LoginTimeout,
-		TrustedProxies:     trustedProxies,
-		Logger:             log.Default(),
-		HealthCheck:        pool.Ping,
-		Admin:              adminConfig,
+		TrustedProxies: trustedProxies,
+		Logger:         log.Default(),
+		HealthCheck:    pool.Ping,
 	})
 	address := strings.TrimSpace(os.Getenv("SERVER_ADDR"))
 	if address == "" {
@@ -269,7 +243,6 @@ func runAdmin(args []string) error {
 		os.Stdout,
 		adminUserRepository{store: repository},
 		adminLicenseRepository{store: repository, hmacKey: []byte(licenseHMACKey)},
-		adminAccountRepository{store: repository},
 		passwordReader,
 		cryptorand.Reader,
 		time.Now,
@@ -327,15 +300,6 @@ func (repository adminLicenseRepository) CreateLicense(ctx context.Context, norm
 		MaxDevices:  maxDevices,
 		ExpiresAt:   expiresAt,
 	})
-	return err
-}
-
-type adminAccountRepository struct {
-	store *store.Store
-}
-
-func (repository adminAccountRepository) CreateAdminAccount(ctx context.Context, email, passwordHash, roleName string) error {
-	_, err := repository.store.CreateAdminAccount(ctx, domain.NewAdminAccount{Email: email, PasswordHash: passwordHash, RoleName: roleName})
 	return err
 }
 

@@ -14,7 +14,6 @@ func TestLoadRequiresEverySecuritySetting(t *testing.T) {
 		"LICENSE_ISSUER",
 		"LICENSE_AUDIENCE",
 		"PRODUCT",
-		"ADMIN_SESSION_SECRET",
 	} {
 		t.Run(name, func(t *testing.T) {
 			setRequiredEnvironment(t)
@@ -140,9 +139,6 @@ func TestLoadRejectsInvalidAdminConsoleSettings(t *testing.T) {
 func setRequiredEnvironment(t *testing.T) {
 	t.Helper()
 	t.Setenv("LOGIN_TIMEOUT", "")
-	t.Setenv("ADMIN_ALLOWED_ORIGIN", "")
-	t.Setenv("ADMIN_SESSION_TTL", "")
-	t.Setenv("ADMIN_COOKIE_SECURE", "")
 	for _, setting := range []struct{ name, value string }{
 		{"DATABASE_URL", "postgres://user:pass@localhost:5432/starloader"},
 		{"LICENSE_HMAC_KEY", "license-hmac-key"},
@@ -151,7 +147,6 @@ func setRequiredEnvironment(t *testing.T) {
 		{"LICENSE_ISSUER", "starloader"},
 		{"LICENSE_AUDIENCE", "starloader-client"},
 		{"PRODUCT", "StarLoader"},
-		{"ADMIN_SESSION_SECRET", "admin-session-secret"},
 	} {
 		t.Setenv(setting.name, setting.value)
 	}

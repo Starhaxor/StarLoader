@@ -27,17 +27,12 @@ type LicenseRepository interface {
 	CreateLicense(ctx context.Context, normalized, userEmail, product string, expiresAt time.Time, maxDevices int) error
 }
 
-// AdminAccountRepository is the persistence boundary for create-admin.
-type AdminAccountRepository interface {
-	CreateAdminAccount(ctx context.Context, email, passwordHash, roleName string) error
-}
-
 // PasswordReader is injected in tests. Production uses ReadPasswordFromTerminal.
 type PasswordReader func() (string, error)
 
 // Run parses and executes the supported administrative command. It prints a
 // generated plaintext license exactly once, only after it was persisted.
-func Run(ctx context.Context, args []string, output io.Writer, users UserRepository, licenses LicenseRepository, admins AdminAccountRepository, readPassword PasswordReader, random io.Reader, now func() time.Time) error {
+func Run(ctx context.Context, args []string, output io.Writer, users UserRepository, licenses LicenseRepository, readPassword PasswordReader, random io.Reader, now func() time.Time) error {
 	if len(args) == 0 {
 		return errors.New("admin command is required")
 	}
@@ -50,8 +45,6 @@ func Run(ctx context.Context, args []string, output io.Writer, users UserReposit
 		return createUser(ctx, args[1:], users, readPassword)
 	case "create-license":
 		return createLicense(ctx, args[1:], output, licenses, random, now)
-	case "create-admin":
-		return createAdminAccount(ctx, args[1:], admins, readPassword)
 	default:
 		return fmt.Errorf("unknown admin command %q", args[0])
 	}
@@ -123,51 +116,6 @@ func createLicense(ctx context.Context, args []string, output io.Writer, license
 	}
 	_, err = fmt.Fprintln(output, plain)
 	return err
-}
-
-// createAdminAccount bootstraps a dashboard administrator. Admin accounts are
-// never self-service; this CLI command is the only creation path.
-func createAdminAccount(ctx context.Context, args []string, admins AdminAccountRepository, readPassword PasswordReader) error {
-	if admins == nil || readPassword == nil {
-		return errors.New("create-admin dependencies are required")
-	}
-	flags := flag.NewFlagSet("create-admin", flag.ContinueOnError)
-	flags.SetOutput(io.Discard)
-	email := flags.String("email", "", "admin email")
-	role := flags.String("role", "owner", "admin role (owner or viewer)")
-	flags.Bool("password-stdin", false, "read password and confirmation from standard input")
-	if err := flags.Parse(args); err != nil {
-		return fmt.Errorf("parse create-admin flags: %w", err)
-	}
-	if strings.TrimSpace(*email) == "" {
-		return errors.New("create-admin requires --email")
-	}
-	roleName := strings.ToLower(strings.TrimSpace(*role))
-	if roleName != "owner" && roleName != "viewer" {
-		return errors.New("create-admin --role must be owner or viewer")
-	}
-	password, err := readPassword()
-	if err != nil {
-		return fmt.Errorf("read password: %w", err)
-	}
-	confirmation, err := readPassword()
-	if err != nil {
-		return fmt.Errorf("read password confirmation: %w", err)
-	}
-	if password != confirmation {
-		return errors.New("password confirmation does not match")
-	}
-	if len(password) < 12 {
-		return errors.New("admin password must be at least 12 characters")
-	}
-	hash, err := security.HashPassword(password)
-	if err != nil {
-		return fmt.Errorf("hash password: %w", err)
-	}
-	if err := admins.CreateAdminAccount(ctx, *email, hash, roleName); err != nil {
-		return fmt.Errorf("create admin account: %w", err)
-	}
-	return nil
 }
 
 // ReadPasswordFromTerminal obtains a password without echoing it. The small
