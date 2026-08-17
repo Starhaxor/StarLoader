@@ -28,8 +28,15 @@ ApiError errorForReply(QNetworkReply *reply, const QByteArray &body, const QStri
     const QByteArray headerRequestId = reply->rawHeader("X-Request-ID");
     if (error.requestId.isEmpty() && !headerRequestId.isEmpty()) error.requestId = QString::fromUtf8(headerRequestId);
     if (error.code == QStringLiteral("NETWORK_ERROR")) {
-        const QString detail = reply->errorString().trimmed();
-        if (!detail.isEmpty()) error.message = QStringLiteral("Network request failed: %1").arg(detail);
+        // Never surface the endpoint URL: Qt's errorString() embeds the full
+        // request URL, which must stay hidden from users. Report the HTTP
+        // status when available and otherwise a generic connectivity message.
+        const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        if (status >= 400) {
+            error.message = QStringLiteral("Server returned an error (HTTP %1).").arg(status);
+        } else {
+            error.message = QStringLiteral("Could not reach the server. Check your connection and try again.");
+        }
     }
     return error;
 }

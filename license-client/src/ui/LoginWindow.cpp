@@ -24,7 +24,10 @@ LoginWindow::LoginWindow(QWidget *parent)
     ui->pageLayout->insertWidget(0, new WindowTitleBar(this, windowTitle(), true, ui->centralwidget));
     setFixedSize(size());
 
-    apiClient_ = new ApiClient(QUrl(qEnvironmentVariable("STARLOADER_API_URL", QString::fromUtf8(STARLOADER_API_URL))), ApiClient::RequestTimeoutMs, this);
+    // The API URL is baked in at build time exclusively from
+    // STARLOADER_API_URL (configured via CMakePresets.json). There is no
+    // runtime override: the client must never talk to an unexpected endpoint.
+    apiClient_ = new ApiClient(QUrl(QString::fromUtf8(STARLOADER_API_URL)), ApiClient::RequestTimeoutMs, this);
     hardwareCollector_ = std::make_unique<SystemHardwareCollector>();
     deviceSigner_ = std::make_unique<TpmDeviceSigner>();
     const SessionTokenVerifier verifier = SessionTokenVerifier::fromBase64(
