@@ -58,39 +58,22 @@ func (s *Store) CreateAdminAccount(ctx context.Context, input domain.NewAdminAcc
 	return account, nil
 }
 
-// PromoteUserToAdmin turns an existing end-user account into a dashboard
-// administrator, reusing the user's existing Argon2id password hash so no new
-// password is introduced. The user's email is preserved and the account starts
-// MFA-unenrolled, matching the normal admin provisioning flow.
-func (s *Store) PromoteUserToAdmin(ctx context.Context, userID, roleName string) (*domain.AdminAccount, error) {
-	if roleName == "" {
-		roleName = domain.RoleOwner
+// SetAdminPassword replaces the Argon2id hash of an admin account. Used to
+// reset a forgotten or reused password; the caller is responsible for handing
+// the new password to the admin over a trusted channel.
+func (s *Store) SetAdminPassword(ctx context.Context, adminID, passwordHash string) error {
+	err := s.db.QueryRow(ctx, `
+		update admin_accounts
+		set password_hash = $2, updated_at = now()
+		where id = $1::uuid
+		returning id`, adminID, passwordHash).Scan(new(string))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.ErrAdminNotFound
 	}
-	row := s.db.QueryRow(ctx, `
-		with created as (
-			insert into admin_accounts (email, password_hash, role_id)
-			select u.email, u.password_hash, (select id from roles where name = $2)
-			from users u
-			where u.id = $1::uuid
-			returning *
-		)
-		select `+adminAccountReturningColumns+`
-		from created
-		join roles r on r.id = created.role_id`, userID, roleName)
-	account, err := scanAdminAccount(row)
 	if err != nil {
-		var pgErr *pgconn.PgError
-		switch {
-		case errors.Is(err, pgx.ErrNoRows):
-			return nil, domain.ErrUserNotFound
-		case errors.As(err, &pgErr) && pgErr.ConstraintName == "admin_accounts_email_unique":
-			return nil, domain.ErrAdminAlreadyExists
-		case errors.As(err, &pgErr) && pgErr.Code == "23502" && pgErr.ColumnName == "role_id":
-			return nil, domain.ErrRoleNotFound
-		}
-		return nil, fmt.Errorf("promote user to admin: %w", err)
+		return fmt.Errorf("set admin password: %w", err)
 	}
-	return account, nil
+	return nil
 }
 
 func (s *Store) FindAdminAccountByEmail(ctx context.Context, email string) (*domain.AdminAccount, error) {

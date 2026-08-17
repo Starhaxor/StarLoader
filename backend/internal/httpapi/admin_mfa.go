@@ -23,8 +23,8 @@ func (router *Router) handleAdminMFAEnrollStart(writer http.ResponseWriter, requ
 		return
 	}
 	writeJSON(writer, http.StatusOK, struct {
-		OK             bool   `json:"ok"`
-		Secret         string `json:"secret"`
+		OK              bool   `json:"ok"`
+		Secret          string `json:"secret"`
 		ProvisioningURI string `json:"provisioning_uri"`
 	}{OK: true, Secret: secret, ProvisioningURI: provisioningURI})
 }
@@ -136,9 +136,64 @@ func (router *Router) routeAdminAccounts(writer http.ResponseWriter, request *ht
 			return
 		}
 		router.handleAdminAccountUpdate(writer, request, account, segments[1])
+	case len(segments) == 3 && segments[2] == "reset-password" && request.Method == http.MethodPost:
+		if !router.requirePermission(writer, request, account, domain.PermAdminsWrite) {
+			return
+		}
+		router.handleAdminPasswordReset(writer, request, account, segments[1])
 	default:
 		writeError(writer, request, http.StatusNotFound, "INVALID_REQUEST", "not found")
 	}
+}
+
+// handleAdminPasswordReset sets a new password for another administrator. A
+// strong temporary password is generated when none is supplied and returned
+// exactly once. All of the target's sessions are revoked so the change takes
+// effect immediately. Self-service password changes are handled separately;
+// self-reset here is rejected.
+func (router *Router) handleAdminPasswordReset(writer http.ResponseWriter, request *http.Request, actor *domain.AdminAccount, adminID string) {
+	if !uuidPattern.MatchString(adminID) {
+		writeError(writer, request, http.StatusNotFound, "ADMIN_NOT_FOUND", "admin not found")
+		return
+	}
+	if adminID == actor.ID {
+		writeError(writer, request, http.StatusBadRequest, "ADMIN_SELF_MODIFICATION", "you cannot reset your own password here")
+		return
+	}
+	var body struct {
+		Password string `json:"password"`
+	}
+	if err := decodeAdminJSONBody(writer, request, &body); err != nil {
+		writeError(writer, request, http.StatusBadRequest, "INVALID_REQUEST", "invalid request")
+		return
+	}
+	password := body.Password
+	if password == "" {
+		generated, err := generateTemporaryPassword()
+		if err != nil {
+			writeError(writer, request, http.StatusInternalServerError, "SERVER_ERROR", "internal server error")
+			return
+		}
+		password = generated
+	} else if len(password) < minAdminPasswordLength {
+		writeError(writer, request, http.StatusBadRequest, "INVALID_REQUEST", "password must be at least 12 characters")
+		return
+	}
+	hash, err := security.HashPassword(password)
+	if err != nil {
+		writeError(writer, request, http.StatusInternalServerError, "SERVER_ERROR", "internal server error")
+		return
+	}
+	if err := router.admin.Console.SetAdminPassword(request.Context(), adminID, hash); err != nil {
+		router.writeConsoleError(writer, request, err)
+		return
+	}
+	_ = router.admin.Console.RevokeAllAdminSessions(request.Context(), adminID)
+	router.auditAdmin(request, actor, "ADMIN_PASSWORD_RESET", "admin_account", adminID, nil)
+	writeJSON(writer, http.StatusOK, struct {
+		OK           bool   `json:"ok"`
+		TempPassword string `json:"temp_password"`
+	}{OK: true, TempPassword: password})
 }
 
 func (router *Router) handleAdminAccountList(writer http.ResponseWriter, request *http.Request) {
@@ -152,9 +207,9 @@ func (router *Router) handleAdminAccountList(writer http.ResponseWriter, request
 		items = append(items, mapAdminAccount(admin))
 	}
 	writeJSON(writer, http.StatusOK, struct {
-		OK    bool             `json:"ok"`
+		OK    bool               `json:"ok"`
 		Items []adminAccountJSON `json:"items"`
-		Total int              `json:"total"`
+		Total int                `json:"total"`
 	}{OK: true, Items: items, Total: len(items)})
 }
 

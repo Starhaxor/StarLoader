@@ -326,35 +326,69 @@ func (router *Router) handleAdminUserStatus(writer http.ResponseWriter, request 
 	}{OK: true})
 }
 
-// handleAdminUserPromote turns an existing end-user into a dashboard admin,
-// reusing the user's existing Argon2id password hash — no new password is
-// introduced. The role defaults to viewer when omitted.
+// handleAdminUserPromote turns an existing end-user into a dashboard admin.
+// A strong temporary password is generated (or the request may supply one) and
+// returned exactly once — the end-user's own password is NEVER reused for
+// console access, so a compromised client credential cannot open the console.
+// The role defaults to viewer when omitted.
 func (router *Router) handleAdminUserPromote(writer http.ResponseWriter, request *http.Request, account *domain.AdminAccount, userID string) {
 	if !uuidPattern.MatchString(userID) {
 		writeError(writer, request, http.StatusNotFound, "USER_NOT_FOUND", "user not found")
 		return
 	}
 	var body struct {
-		Role string `json:"role"`
+		Password string `json:"password"`
+		Role     string `json:"role"`
 	}
 	if err := decodeAdminJSONBody(writer, request, &body); err != nil {
 		writeError(writer, request, http.StatusBadRequest, "INVALID_REQUEST", "invalid request")
+		return
+	}
+	user, err := router.admin.Console.FindUserByID(request.Context(), userID)
+	if err != nil {
+		router.writeConsoleError(writer, request, err)
+		return
+	}
+	password := body.Password
+	if password == "" {
+		generated, err := generateTemporaryPassword()
+		if err != nil {
+			writeError(writer, request, http.StatusInternalServerError, "SERVER_ERROR", "internal server error")
+			return
+		}
+		password = generated
+	} else if len(password) < minAdminPasswordLength {
+		writeError(writer, request, http.StatusBadRequest, "INVALID_REQUEST", "password must be at least 12 characters")
+		return
+	}
+	hash, err := security.HashPassword(password)
+	if err != nil {
+		writeError(writer, request, http.StatusInternalServerError, "SERVER_ERROR", "internal server error")
 		return
 	}
 	role := strings.ToLower(strings.TrimSpace(body.Role))
 	if role == "" {
 		role = domain.RoleViewer
 	}
-	created, err := router.admin.Console.PromoteUserToAdmin(request.Context(), userID, role)
+	created, err := router.admin.Console.CreateAdminAccount(request.Context(), domain.NewAdminAccount{
+		Email:        user.Email,
+		PasswordHash: hash,
+		RoleName:     role,
+	})
 	if err != nil {
 		router.writeConsoleError(writer, request, err)
 		return
 	}
 	router.auditAdmin(request, account, "ADMIN_PROMOTED", "admin_account", created.ID, map[string]string{"email": created.Email, "role": role})
 	writeJSON(writer, http.StatusOK, struct {
-		OK    bool             `json:"ok"`
-		Admin adminAccountJSON `json:"admin"`
-	}{OK: true, Admin: mapAdminAccount(*created)})
+		OK           bool             `json:"ok"`
+		Admin        adminAccountJSON `json:"admin"`
+		TempPassword string           `json:"temp_password"`
+	}{
+		OK:           true,
+		Admin:        mapAdminAccount(*created),
+		TempPassword: password,
+	})
 }
 
 // handleAdminUserPasswordReset sets a new password for an end-user. When the
