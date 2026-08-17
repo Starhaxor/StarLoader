@@ -143,7 +143,7 @@ func (router *Router) handleAdminOverviewStats(writer http.ResponseWriter, reque
 		return
 	}
 	writeJSON(writer, http.StatusOK, struct {
-		OK   bool           `json:"ok"`
+		OK   bool            `json:"ok"`
 		Days []dailyStatJSON `json:"days"`
 	}{
 		OK:   true,
@@ -204,6 +204,16 @@ func (router *Router) routeAdminUsers(writer http.ResponseWriter, request *http.
 			return
 		}
 		router.handleAdminUserSessionsRevoke(writer, request, account, segments[1])
+	case len(segments) == 3 && segments[2] == "promote" && request.Method == http.MethodPost:
+		if !router.requirePermission(writer, request, account, domain.PermAdminsWrite) {
+			return
+		}
+		router.handleAdminUserPromote(writer, request, account, segments[1])
+	case len(segments) == 3 && segments[2] == "password" && request.Method == http.MethodPost:
+		if !router.requirePermission(writer, request, account, domain.PermUsersWrite) {
+			return
+		}
+		router.handleAdminUserPasswordReset(writer, request, account, segments[1])
 	default:
 		writeError(writer, request, http.StatusNotFound, "INVALID_REQUEST", "not found")
 	}
@@ -241,7 +251,7 @@ func (router *Router) handleAdminUserCreate(writer http.ResponseWriter, request 
 	}
 	router.auditAdmin(request, account, "USER_CREATED", "user", user.ID, map[string]string{"email": user.Email})
 	writeJSON(writer, http.StatusOK, struct {
-		OK   bool   `json:"ok"`
+		OK   bool            `json:"ok"`
 		User consoleUserJSON `json:"user"`
 	}{
 		OK: true,
@@ -314,6 +324,100 @@ func (router *Router) handleAdminUserStatus(writer http.ResponseWriter, request 
 	writeJSON(writer, http.StatusOK, struct {
 		OK bool `json:"ok"`
 	}{OK: true})
+}
+
+// handleAdminUserPromote turns an existing end-user into a dashboard admin,
+// reusing the user's existing Argon2id password hash — no new password is
+// introduced. The role defaults to viewer when omitted.
+func (router *Router) handleAdminUserPromote(writer http.ResponseWriter, request *http.Request, account *domain.AdminAccount, userID string) {
+	if !uuidPattern.MatchString(userID) {
+		writeError(writer, request, http.StatusNotFound, "USER_NOT_FOUND", "user not found")
+		return
+	}
+	var body struct {
+		Role string `json:"role"`
+	}
+	if err := decodeAdminJSONBody(writer, request, &body); err != nil {
+		writeError(writer, request, http.StatusBadRequest, "INVALID_REQUEST", "invalid request")
+		return
+	}
+	role := strings.ToLower(strings.TrimSpace(body.Role))
+	if role == "" {
+		role = domain.RoleViewer
+	}
+	created, err := router.admin.Console.PromoteUserToAdmin(request.Context(), userID, role)
+	if err != nil {
+		router.writeConsoleError(writer, request, err)
+		return
+	}
+	router.auditAdmin(request, account, "ADMIN_PROMOTED", "admin_account", created.ID, map[string]string{"email": created.Email, "role": role})
+	writeJSON(writer, http.StatusOK, struct {
+		OK    bool             `json:"ok"`
+		Admin adminAccountJSON `json:"admin"`
+	}{OK: true, Admin: mapAdminAccount(*created)})
+}
+
+// handleAdminUserPasswordReset sets a new password for an end-user. When the
+// request body omits a password, a strong random one is generated and returned
+// exactly once so the admin can hand it to the user over a trusted channel.
+func (router *Router) handleAdminUserPasswordReset(writer http.ResponseWriter, request *http.Request, account *domain.AdminAccount, userID string) {
+	if !uuidPattern.MatchString(userID) {
+		writeError(writer, request, http.StatusNotFound, "USER_NOT_FOUND", "user not found")
+		return
+	}
+	var body struct {
+		Password string `json:"password"`
+	}
+	if err := decodeAdminJSONBody(writer, request, &body); err != nil {
+		writeError(writer, request, http.StatusBadRequest, "INVALID_REQUEST", "invalid request")
+		return
+	}
+	password := body.Password
+	if password == "" {
+		generated, err := generateTemporaryPassword()
+		if err != nil {
+			writeError(writer, request, http.StatusInternalServerError, "SERVER_ERROR", "internal server error")
+			return
+		}
+		password = generated
+	} else if len(password) < minEndUserPasswordLength {
+		writeError(writer, request, http.StatusBadRequest, "INVALID_REQUEST", "password must be at least 10 characters")
+		return
+	}
+	hash, err := security.HashPassword(password)
+	if err != nil {
+		writeError(writer, request, http.StatusInternalServerError, "SERVER_ERROR", "internal server error")
+		return
+	}
+	if err := router.admin.Console.SetUserPassword(request.Context(), userID, hash); err != nil {
+		router.writeConsoleError(writer, request, err)
+		return
+	}
+	router.auditAdmin(request, account, "USER_PASSWORD_RESET", "user", userID, nil)
+	writeJSON(writer, http.StatusOK, struct {
+		OK           bool   `json:"ok"`
+		PasswordSet  bool   `json:"password_set"`
+		TempPassword string `json:"temp_password,omitempty"`
+	}{
+		OK:           true,
+		PasswordSet:  body.Password != "",
+		TempPassword: password,
+	})
+}
+
+// generateTemporaryPassword returns a 16-character password from a
+// cryptographically secure alphabet that avoids visually ambiguous characters.
+func generateTemporaryPassword() (string, error) {
+	const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%^&*"
+	const length = 16
+	bytes := make([]byte, length)
+	if _, err := cryptorand.Read(bytes); err != nil {
+		return "", err
+	}
+	for index := range bytes {
+		bytes[index] = alphabet[int(bytes[index])%len(alphabet)]
+	}
+	return string(bytes), nil
 }
 
 // handleAdminUserSessionsRevoke expires every pending or verified auth
@@ -628,10 +732,10 @@ func (router *Router) handleAdminDeviceDetail(writer http.ResponseWriter, reques
 		return
 	}
 	writeJSON(writer, http.StatusOK, struct {
-		OK             bool            `json:"ok"`
+		OK             bool              `json:"ok"`
 		Device         consoleDeviceJSON `json:"device"`
-		Product        string          `json:"product"`
-		TPMFingerprint string          `json:"tpm_fingerprint"`
+		Product        string            `json:"product"`
+		TPMFingerprint string            `json:"tpm_fingerprint"`
 	}{
 		OK:             true,
 		Device:         mapConsoleDevice(detail.Device),
