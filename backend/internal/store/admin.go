@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -151,13 +152,17 @@ func (s *Store) UpdateAdminAccountStatusAndRole(ctx context.Context, adminID str
 	return nil
 }
 
-// ListRoles returns every RBAC role with its permission set; used to validate
-// role assignments and to render the role picker in the console.
+// ListRoles returns every RBAC role with its permission set and the number of
+// admin accounts assigned to it; used to validate role assignments and to
+// render the role picker in the console.
 func (s *Store) ListRoles(ctx context.Context) ([]domain.Role, error) {
 	rows, err := s.db.Query(ctx, `
-		select id::text, name, description, permissions, built_in
-		from roles
-		order by created_at asc, id asc`)
+		select r.id::text, r.name, r.description, r.permissions, r.built_in,
+		       count(a.id)::int as member_count
+		from roles r
+		left join admin_accounts a on a.role_id = r.id
+		group by r.id
+		order by r.created_at asc, r.id asc`)
 	if err != nil {
 		return nil, fmt.Errorf("list roles: %w", err)
 	}
@@ -165,7 +170,7 @@ func (s *Store) ListRoles(ctx context.Context) ([]domain.Role, error) {
 	roles := make([]domain.Role, 0)
 	for rows.Next() {
 		var role domain.Role
-		if err := rows.Scan(&role.ID, &role.Name, &role.Description, &role.Permissions, &role.BuiltIn); err != nil {
+		if err := rows.Scan(&role.ID, &role.Name, &role.Description, &role.Permissions, &role.BuiltIn, &role.MemberCount); err != nil {
 			return nil, fmt.Errorf("scan role: %w", err)
 		}
 		roles = append(roles, role)
@@ -174,6 +179,114 @@ func (s *Store) ListRoles(ctx context.Context) ([]domain.Role, error) {
 		return nil, fmt.Errorf("list roles: %w", err)
 	}
 	return roles, nil
+}
+
+// ListRoleMembers returns the admin accounts assigned to a role, newest first.
+// The role itself is looked up first so an unknown id yields ErrRoleNotFound.
+func (s *Store) ListRoleMembers(ctx context.Context, roleID string) ([]domain.RoleMember, error) {
+	var exists bool
+	if err := s.db.QueryRow(ctx, `select exists(select 1 from roles where id = $1::uuid)`, roleID).Scan(&exists); err != nil {
+		return nil, fmt.Errorf("lookup role for members: %w", err)
+	}
+	if !exists {
+		return nil, domain.ErrRoleNotFound
+	}
+	rows, err := s.db.Query(ctx, `
+		select id::text, email, status, mfa_enrolled, created_at
+		from admin_accounts
+		where role_id = $1::uuid
+		order by created_at desc, id asc`, roleID)
+	if err != nil {
+		return nil, fmt.Errorf("list role members: %w", err)
+	}
+	defer rows.Close()
+	members := make([]domain.RoleMember, 0)
+	for rows.Next() {
+		var member domain.RoleMember
+		if err := rows.Scan(&member.ID, &member.Email, &member.Status, &member.MFAEnrolled, &member.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scan role member: %w", err)
+		}
+		members = append(members, member)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list role members: %w", err)
+	}
+	return members, nil
+}
+
+// CreateRole provisions a custom RBAC role. Built-in roles are seeded and
+// never created through this path.
+func (s *Store) CreateRole(ctx context.Context, input domain.NewRole) (*domain.Role, error) {
+	row := s.db.QueryRow(ctx, `
+		insert into roles (name, description, permissions, built_in)
+		values ($1, $2, $3, false)
+		returning id::text, name, description, permissions, built_in`,
+		strings.ToLower(strings.TrimSpace(input.Name)), input.Description, input.Permissions)
+	role, err := scanRole(row)
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.ConstraintName == "roles_name_unique" {
+			return nil, domain.ErrRoleAlreadyExists
+		}
+		return nil, fmt.Errorf("create role: %w", err)
+	}
+	return role, nil
+}
+
+// UpdateRole changes the description and permission set of a custom role.
+// Built-in roles are rejected before any write happens.
+func (s *Store) UpdateRole(ctx context.Context, roleID, description string, permissions []string) error {
+	err := s.db.QueryRow(ctx, `
+		update roles
+		set description = $2, permissions = $3
+		where id = $1::uuid and built_in = false
+		returning id`, roleID, description, permissions).Scan(new(string))
+	if errors.Is(err, pgx.ErrNoRows) {
+		var builtIn bool
+		lookupErr := s.db.QueryRow(ctx, `select built_in from roles where id = $1::uuid`, roleID).Scan(&builtIn)
+		if errors.Is(lookupErr, pgx.ErrNoRows) {
+			return domain.ErrRoleNotFound
+		}
+		if lookupErr != nil {
+			return fmt.Errorf("lookup role for update: %w", lookupErr)
+		}
+		return domain.ErrBuiltInRole
+	}
+	if err != nil {
+		return fmt.Errorf("update role: %w", err)
+	}
+	return nil
+}
+
+// DeleteRole removes a custom role. Built-in roles and roles still assigned to
+// an admin account are rejected.
+func (s *Store) DeleteRole(ctx context.Context, roleID string) error {
+	err := s.db.QueryRow(ctx, `delete from roles where id = $1::uuid and built_in = false returning id`, roleID).Scan(new(string))
+	if errors.Is(err, pgx.ErrNoRows) {
+		var builtIn bool
+		lookupErr := s.db.QueryRow(ctx, `select built_in from roles where id = $1::uuid`, roleID).Scan(&builtIn)
+		if errors.Is(lookupErr, pgx.ErrNoRows) {
+			return domain.ErrRoleNotFound
+		}
+		if lookupErr != nil {
+			return fmt.Errorf("lookup role for delete: %w", lookupErr)
+		}
+		return domain.ErrBuiltInRole
+	}
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23503" {
+			return domain.ErrRoleInUse
+		}
+		return fmt.Errorf("delete role: %w", err)
+	}
+	return nil
+}
+
+func scanRole(row pgx.Row) (*domain.Role, error) {
+	var role domain.Role
+	err := row.Scan(&role.ID, &role.Name, &role.Description, &role.Permissions, &role.BuiltIn)
+	return &role, err
 }
 
 func (s *Store) CreateAdminSession(ctx context.Context, input domain.NewAdminSession) (*domain.AdminSession, error) {

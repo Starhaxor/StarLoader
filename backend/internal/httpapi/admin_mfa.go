@@ -2,7 +2,9 @@ package httpapi
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
+	"regexp"
 	"strings"
 
 	"github.com/starloader/backend/internal/domain"
@@ -358,6 +360,18 @@ type roleJSON struct {
 	Description string   `json:"description"`
 	Permissions []string `json:"permissions"`
 	BuiltIn     bool     `json:"built_in"`
+	MemberCount int      `json:"member_count"`
+}
+
+func mapRoleJSON(role domain.Role) roleJSON {
+	return roleJSON{
+		ID:          role.ID,
+		Name:        role.Name,
+		Description: role.Description,
+		Permissions: role.Permissions,
+		BuiltIn:     role.BuiltIn,
+		MemberCount: role.MemberCount,
+	}
 }
 
 func (router *Router) handleAdminRoles(writer http.ResponseWriter, request *http.Request) {
@@ -368,19 +382,176 @@ func (router *Router) handleAdminRoles(writer http.ResponseWriter, request *http
 	}
 	items := make([]roleJSON, 0, len(roles))
 	for _, role := range roles {
-		items = append(items, roleJSON{
-			ID:          role.ID,
-			Name:        role.Name,
-			Description: role.Description,
-			Permissions: role.Permissions,
-			BuiltIn:     role.BuiltIn,
-		})
+		items = append(items, mapRoleJSON(role))
 	}
 	writeJSON(writer, http.StatusOK, struct {
 		OK    bool       `json:"ok"`
 		Items []roleJSON `json:"items"`
 		Total int        `json:"total"`
 	}{OK: true, Items: items, Total: len(items)})
+}
+
+// handleAdminRoleMembers returns the admin accounts assigned to a role. The
+// email list powers the expandable member panel in the Roles page.
+func (router *Router) handleAdminRoleMembers(writer http.ResponseWriter, request *http.Request, roleID string) {
+	if !uuidPattern.MatchString(roleID) {
+		writeError(writer, request, http.StatusNotFound, "ROLE_NOT_FOUND", "role not found")
+		return
+	}
+	members, err := router.admin.Console.ListRoleMembers(request.Context(), roleID)
+	if err != nil {
+		router.writeConsoleError(writer, request, err)
+		return
+	}
+	items := make([]roleMemberJSON, 0, len(members))
+	for _, member := range members {
+		items = append(items, roleMemberJSON{
+			ID:          member.ID,
+			Email:       member.Email,
+			Status:      string(member.Status),
+			MFAEnrolled: member.MFAEnrolled,
+			CreatedAt:   formatTime(member.CreatedAt),
+		})
+	}
+	writeJSON(writer, http.StatusOK, struct {
+		OK    bool             `json:"ok"`
+		Items []roleMemberJSON `json:"items"`
+		Total int              `json:"total"`
+	}{OK: true, Items: items, Total: len(items)})
+}
+
+type roleMemberJSON struct {
+	ID          string `json:"id"`
+	Email       string `json:"email"`
+	Status      string `json:"status"`
+	MFAEnrolled bool   `json:"mfa_enrolled"`
+	CreatedAt   string `json:"created_at"`
+}
+
+var roleNamePattern = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,31}$`)
+
+// validateRolePermissions rejects permission strings that are not part of the
+// known assignable set, keeping custom roles data-driven and safe.
+func validateRolePermissions(permissions []string) error {
+	for _, permission := range permissions {
+		valid := false
+		for _, candidate := range domain.AllPermissions {
+			if candidate == permission {
+				valid = true
+				break
+			}
+		}
+		if !valid {
+			return fmt.Errorf("unknown permission %q", permission)
+		}
+	}
+	return nil
+}
+
+// handleAdminRoleCreate provisions a custom RBAC role with an explicit
+// permission set.
+func (router *Router) handleAdminRoleCreate(writer http.ResponseWriter, request *http.Request, account *domain.AdminAccount) {
+	var body struct {
+		Name        string   `json:"name"`
+		Description string   `json:"description"`
+		Permissions []string `json:"permissions"`
+	}
+	if err := decodeAdminJSONBody(writer, request, &body); err != nil {
+		writeError(writer, request, http.StatusBadRequest, "INVALID_REQUEST", "invalid request")
+		return
+	}
+	name := strings.ToLower(strings.TrimSpace(body.Name))
+	if !roleNamePattern.MatchString(name) {
+		writeError(writer, request, http.StatusBadRequest, "INVALID_REQUEST", "role name must be lowercase letters, digits, dashes or underscores (max 32)")
+		return
+	}
+	if len(strings.TrimSpace(body.Description)) > 200 {
+		writeError(writer, request, http.StatusBadRequest, "INVALID_REQUEST", "description must be at most 200 characters")
+		return
+	}
+	if err := validateRolePermissions(body.Permissions); err != nil {
+		writeError(writer, request, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
+		return
+	}
+	created, err := router.admin.Console.CreateRole(request.Context(), domain.NewRole{
+		Name:        name,
+		Description: strings.TrimSpace(body.Description),
+		Permissions: body.Permissions,
+	})
+	if err != nil {
+		router.writeConsoleError(writer, request, err)
+		return
+	}
+	router.auditAdmin(request, account, "ROLE_CREATED", "role", created.ID, map[string]string{
+		"name": created.Name, "permissions": strings.Join(created.Permissions, ","),
+	})
+	writeJSON(writer, http.StatusOK, struct {
+		OK   bool     `json:"ok"`
+		Role roleJSON `json:"role"`
+	}{
+		OK: true,
+		Role: roleJSON{
+			ID: created.ID, Name: created.Name, Description: created.Description,
+			Permissions: created.Permissions, BuiltIn: created.BuiltIn,
+		},
+	})
+}
+
+// handleAdminRoleUpdate changes the description and permission set of a custom
+// role. Built-in roles are rejected by the store.
+func (router *Router) handleAdminRoleUpdate(writer http.ResponseWriter, request *http.Request, account *domain.AdminAccount, roleID string) {
+	if !uuidPattern.MatchString(roleID) {
+		writeError(writer, request, http.StatusNotFound, "ROLE_NOT_FOUND", "role not found")
+		return
+	}
+	var body struct {
+		Description string   `json:"description"`
+		Permissions []string `json:"permissions"`
+	}
+	if err := decodeAdminJSONBody(writer, request, &body); err != nil {
+		writeError(writer, request, http.StatusBadRequest, "INVALID_REQUEST", "invalid request")
+		return
+	}
+	if len(strings.TrimSpace(body.Description)) > 200 {
+		writeError(writer, request, http.StatusBadRequest, "INVALID_REQUEST", "description must be at most 200 characters")
+		return
+	}
+	if err := validateRolePermissions(body.Permissions); err != nil {
+		writeError(writer, request, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
+		return
+	}
+	if err := router.admin.Console.UpdateRole(request.Context(), roleID, strings.TrimSpace(body.Description), body.Permissions); err != nil {
+		router.writeConsoleError(writer, request, err)
+		return
+	}
+	router.auditAdmin(request, account, "ROLE_UPDATED", "role", roleID, map[string]string{
+		"permissions": strings.Join(body.Permissions, ","),
+	})
+	writeJSON(writer, http.StatusOK, struct {
+		OK bool `json:"ok"`
+	}{OK: true})
+}
+
+// handleAdminRoleDelete removes a custom role. Built-in roles (owner, viewer)
+// and roles still assigned to an admin account are rejected; the acting admin
+// can never delete the role they are currently assigned to.
+func (router *Router) handleAdminRoleDelete(writer http.ResponseWriter, request *http.Request, account *domain.AdminAccount, roleID string) {
+	if !uuidPattern.MatchString(roleID) {
+		writeError(writer, request, http.StatusNotFound, "ROLE_NOT_FOUND", "role not found")
+		return
+	}
+	if account.RoleID == roleID {
+		writeError(writer, request, http.StatusBadRequest, "ROLE_IN_USE", "you cannot delete the role you are currently assigned to")
+		return
+	}
+	if err := router.admin.Console.DeleteRole(request.Context(), roleID); err != nil {
+		router.writeConsoleError(writer, request, err)
+		return
+	}
+	router.auditAdmin(request, account, "ROLE_DELETED", "role", roleID, nil)
+	writeJSON(writer, http.StatusOK, struct {
+		OK bool `json:"ok"`
+	}{OK: true})
 }
 
 // --- Security events ---

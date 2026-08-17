@@ -2,6 +2,7 @@ package domain
 
 import (
 	"encoding/json"
+	"errors"
 	"time"
 )
 
@@ -16,31 +17,68 @@ const (
 // Console permissions enforced by the RBAC middleware. Roles carry a set of
 // these strings; handlers never branch on role names.
 const (
-	PermOverviewRead   = "overview.read"
-	PermUsersRead      = "users.read"
-	PermUsersWrite     = "users.write"
-	PermLicensesRead   = "licenses.read"
-	PermLicensesWrite  = "licenses.write"
-	PermDevicesRead    = "devices.read"
-	PermDevicesWrite   = "devices.write"
-	PermSessionsRead   = "sessions.read"
-	PermSessionsWrite  = "sessions.write"
-	PermAuditRead      = "audit.read"
-	PermSecurityRead   = "security.read"
-	PermAdminsRead     = "admins.read"
-	PermAdminsWrite    = "admins.write"
-	RoleOwner          = "owner"
-	RoleViewer         = "viewer"
+	PermOverviewRead  = "overview.read"
+	PermUsersRead     = "users.read"
+	PermUsersWrite    = "users.write"
+	PermLicensesRead  = "licenses.read"
+	PermLicensesWrite = "licenses.write"
+	PermDevicesRead   = "devices.read"
+	PermDevicesWrite  = "devices.write"
+	PermSessionsRead  = "sessions.read"
+	PermSessionsWrite = "sessions.write"
+	PermAuditRead     = "audit.read"
+	PermSecurityRead  = "security.read"
+	PermAdminsRead    = "admins.read"
+	PermAdminsWrite   = "admins.write"
+	RoleOwner         = "owner"
+	RoleViewer        = "viewer"
 )
 
+// AllPermissions enumerates every assignable permission, used to validate
+// custom role definitions and to render the permission picker.
+var AllPermissions = []string{
+	PermOverviewRead,
+	PermUsersRead,
+	PermUsersWrite,
+	PermLicensesRead,
+	PermLicensesWrite,
+	PermDevicesRead,
+	PermDevicesWrite,
+	PermSessionsRead,
+	PermSessionsWrite,
+	PermAuditRead,
+	PermSecurityRead,
+	PermAdminsRead,
+	PermAdminsWrite,
+}
+
 // Role is an RBAC role; permissions are stored as flat strings so checks stay
-// data-driven.
+// data-driven. MemberCount is populated by ListRoles so the console can render
+// usage without an extra round trip per role.
 type Role struct {
 	ID          string
 	Name        string
 	Description string
 	Permissions []string
 	BuiltIn     bool
+	MemberCount int
+}
+
+// RoleMember is a compact view of an admin account assigned to a role, used to
+// render the member list of a role in the console.
+type RoleMember struct {
+	ID          string
+	Email       string
+	Status      AdminAccountStatus
+	MFAEnrolled bool
+	CreatedAt   time.Time
+}
+
+// NewRole carries the fields for provisioning a custom role.
+type NewRole struct {
+	Name        string
+	Description string
+	Permissions []string
 }
 
 // AdminAccount is a dashboard administrator, fully separate from end users.
@@ -164,9 +202,12 @@ type NewAuditLog struct {
 }
 
 var (
-	ErrAdminNotFound            = &NotFoundError{Entity: "admin account"}
-	ErrAdminSessionNotFound     = &NotFoundError{Entity: "admin session"}
+	ErrAdminNotFound             = &NotFoundError{Entity: "admin account"}
+	ErrAdminSessionNotFound      = &NotFoundError{Entity: "admin session"}
 	ErrAdminMFAChallengeNotFound = &NotFoundError{Entity: "admin mfa challenge"}
 	ErrAdminRecoveryCodeNotFound = &NotFoundError{Entity: "admin recovery code"}
-	ErrRoleNotFound             = &NotFoundError{Entity: "role"}
+	ErrRoleNotFound              = &NotFoundError{Entity: "role"}
+	ErrRoleAlreadyExists         = errors.New("a role with this name already exists")
+	ErrBuiltInRole               = errors.New("built-in roles cannot be modified")
+	ErrRoleInUse                 = errors.New("role is assigned to an admin account")
 )

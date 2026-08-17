@@ -73,6 +73,10 @@ type AdminConsoleStore interface {
 	SetAdminPassword(ctx context.Context, adminID, passwordHash string) error
 	RevokeAllAdminSessions(ctx context.Context, adminID string) error
 	ListRoles(ctx context.Context) ([]domain.Role, error)
+	ListRoleMembers(ctx context.Context, roleID string) ([]domain.RoleMember, error)
+	CreateRole(ctx context.Context, input domain.NewRole) (*domain.Role, error)
+	UpdateRole(ctx context.Context, roleID, description string, permissions []string) error
+	DeleteRole(ctx context.Context, roleID string) error
 	ListSecurityEvents(ctx context.Context, offset, limit int) ([]domain.SecurityEvent, int64, error)
 	AppendSecurityEvent(ctx context.Context, input domain.NewSecurityEvent) error
 }
@@ -229,6 +233,26 @@ func (router *Router) routeAdmin(writer http.ResponseWriter, request *http.Reque
 			return
 		}
 		router.handleAdminRoles(writer, request)
+	case len(segments) == 1 && segments[0] == "roles" && request.Method == http.MethodPost:
+		if !router.requirePermission(writer, request, account, domain.PermAdminsWrite) {
+			return
+		}
+		router.handleAdminRoleCreate(writer, request, account)
+	case len(segments) == 2 && segments[0] == "roles" && request.Method == http.MethodPatch:
+		if !router.requirePermission(writer, request, account, domain.PermAdminsWrite) {
+			return
+		}
+		router.handleAdminRoleUpdate(writer, request, account, segments[1])
+	case len(segments) == 3 && segments[0] == "roles" && segments[2] == "members" && request.Method == http.MethodGet:
+		if !router.requirePermission(writer, request, account, domain.PermAdminsRead) {
+			return
+		}
+		router.handleAdminRoleMembers(writer, request, segments[1])
+	case len(segments) == 2 && segments[0] == "roles" && request.Method == http.MethodDelete:
+		if !router.requirePermission(writer, request, account, domain.PermAdminsWrite) {
+			return
+		}
+		router.handleAdminRoleDelete(writer, request, account, segments[1])
 	case len(segments) >= 1 && segments[0] == "admins":
 		router.routeAdminAccounts(writer, request, account, segments)
 	default:
@@ -359,6 +383,12 @@ func (router *Router) writeConsoleError(writer http.ResponseWriter, request *htt
 		writeError(writer, request, http.StatusConflict, "ADMIN_ALREADY_EXISTS", "an admin account with this email already exists")
 	case errors.Is(err, domain.ErrRoleNotFound):
 		writeError(writer, request, http.StatusBadRequest, "ROLE_NOT_FOUND", "role not found")
+	case errors.Is(err, domain.ErrRoleAlreadyExists):
+		writeError(writer, request, http.StatusConflict, "ROLE_ALREADY_EXISTS", "a role with this name already exists")
+	case errors.Is(err, domain.ErrBuiltInRole):
+		writeError(writer, request, http.StatusForbidden, "BUILT_IN_ROLE", "built-in roles cannot be modified")
+	case errors.Is(err, domain.ErrRoleInUse):
+		writeError(writer, request, http.StatusConflict, "ROLE_IN_USE", "role is assigned to an admin account")
 	default:
 		writeError(writer, request, http.StatusInternalServerError, "SERVER_ERROR", "internal server error")
 	}
