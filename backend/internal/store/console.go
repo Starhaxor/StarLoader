@@ -34,6 +34,68 @@ func (s *Store) ConsoleOverview(ctx context.Context) (*domain.ConsoleOverview, e
 	return overview, nil
 }
 
+// ConsoleDailyStats returns a per-day activity series (licenses created,
+// devices registered, sessions created, audit events and admin logins) for
+// the trailing days window. Days without events are included with zeroes.
+func (s *Store) ConsoleDailyStats(ctx context.Context, days int) ([]domain.DailyStat, error) {
+	if days < 1 || days > 90 {
+		days = 14
+	}
+	countByDay := func(query string, args ...any) (map[string]int64, error) {
+		rows, err := s.db.Query(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		counts := make(map[string]int64)
+		for rows.Next() {
+			var day string
+			var count int64
+			if err := rows.Scan(&day, &count); err != nil {
+				return nil, err
+			}
+			counts[day] = count
+		}
+		return counts, rows.Err()
+	}
+	window := fmt.Sprintf("created_at >= now() - interval '%d days'", days)
+	licenses, err := countByDay(`select to_char(created_at at time zone 'UTC', 'YYYY-MM-DD'), count(*) from licenses where ` + window + ` group by 1`)
+	if err != nil {
+		return nil, fmt.Errorf("daily licenses: %w", err)
+	}
+	devices, err := countByDay(`select to_char(created_at at time zone 'UTC', 'YYYY-MM-DD'), count(*) from devices where ` + window + ` group by 1`)
+	if err != nil {
+		return nil, fmt.Errorf("daily devices: %w", err)
+	}
+	sessions, err := countByDay(`select to_char(created_at at time zone 'UTC', 'YYYY-MM-DD'), count(*) from auth_sessions where ` + window + ` group by 1`)
+	if err != nil {
+		return nil, fmt.Errorf("daily sessions: %w", err)
+	}
+	audit, err := countByDay(`select to_char(created_at at time zone 'UTC', 'YYYY-MM-DD'), count(*) from audit_logs where ` + window + ` group by 1`)
+	if err != nil {
+		return nil, fmt.Errorf("daily audit: %w", err)
+	}
+	logins, err := countByDay(`select to_char(created_at at time zone 'UTC', 'YYYY-MM-DD'), count(*) from audit_logs where action = 'ADMIN_LOGIN' and ` + window + ` group by 1`)
+	if err != nil {
+		return nil, fmt.Errorf("daily logins: %w", err)
+	}
+
+	start := time.Now().UTC().Truncate(24 * time.Hour).AddDate(0, 0, -(days - 1))
+	stats := make([]domain.DailyStat, 0, days)
+	for i := 0; i < days; i++ {
+		day := start.AddDate(0, 0, i).Format("2006-01-02")
+		stats = append(stats, domain.DailyStat{
+			Day:               day,
+			LicensesCreated:   licenses[day],
+			DevicesRegistered: devices[day],
+			SessionsCreated:   sessions[day],
+			AuditEvents:       audit[day],
+			AdminLogins:       logins[day],
+		})
+	}
+	return stats, nil
+}
+
 func (s *Store) ListConsoleUsers(ctx context.Context, offset, limit int, search string) ([]domain.ConsoleUser, int64, error) {
 	search = strings.ToLower(strings.TrimSpace(search))
 	var total int64

@@ -77,3 +77,14 @@ type ConsoleOverview struct {
 	ActiveSessions int64
 	RecentAudit    []AuditLog
 }
+
+// DailyStat is one day of the dashboard activity series. Day is a UTC date
+// in YYYY-MM-DD format.
+type DailyStat struct {
+	Day               string
+	LicensesCreated   int64
+	DevicesRegistered int64
+	SessionsCreated   int64
+	AuditEvents       int64
+	AdminLogins       int64
+}

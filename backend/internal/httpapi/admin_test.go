@@ -424,6 +424,45 @@ func TestAdminCORSPreflightAllowsConfiguredOrigin(t *testing.T) {
 	}
 }
 
+type fakeStatsConsole struct {
+	AdminConsoleStore
+	stats []domain.DailyStat
+}
+
+func (f *fakeStatsConsole) ConsoleDailyStats(_ context.Context, days int) ([]domain.DailyStat, error) {
+	return f.stats, nil
+}
+
+func TestAdminOverviewStatsReturnsSeries(t *testing.T) {
+	auth := &fakeAdminAuth{token: "session-token", account: testOwnerAccount()}
+	console := &fakeStatsConsole{stats: []domain.DailyStat{
+		{Day: "2026-08-17", LicensesCreated: 2, AdminLogins: 3},
+	}}
+	router := NewRouter(RouterConfig{
+		Admin: AdminConfig{
+			Auth: auth, Console: console, AllowedOrigins: []string{"http://localhost:3000"},
+			CSRFSecret: []byte("test-csrf-secret"), SessionTTL: time.Hour,
+		},
+	})
+	request := httptest.NewRequest(http.MethodGet, "/v1/admin/overview/stats", nil)
+	request.AddCookie(&http.Cookie{Name: adminSessionCookieName, Value: "session-token"})
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	var body struct {
+		OK   bool           `json:"ok"`
+		Days []dailyStatJSON `json:"days"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil || !body.OK || len(body.Days) != 1 {
+		t.Fatalf("body = %s, err = %v", recorder.Body.String(), err)
+	}
+	if body.Days[0].LicensesCreated != 2 || body.Days[0].AdminLogins != 3 {
+		t.Fatalf("days = %#v", body.Days)
+	}
+}
+
 func TestAdminUnknownPathReturnsNotFound(t *testing.T) {
 	auth := &fakeAdminAuth{token: "session-token", account: testOwnerAccount()}
 	router, _ := newAdminTestRouter(t, auth)

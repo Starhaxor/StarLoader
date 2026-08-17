@@ -109,6 +109,48 @@ func (router *Router) handleAdminOverview(writer http.ResponseWriter, request *h
 	})
 }
 
+type dailyStatJSON struct {
+	Day               string `json:"day"`
+	LicensesCreated   int64  `json:"licenses_created"`
+	DevicesRegistered int64  `json:"devices_registered"`
+	SessionsCreated   int64  `json:"sessions_created"`
+	AuditEvents       int64  `json:"audit_events"`
+	AdminLogins       int64  `json:"admin_logins"`
+}
+
+func mapDailyStats(stats []domain.DailyStat) []dailyStatJSON {
+	items := make([]dailyStatJSON, 0, len(stats))
+	for _, stat := range stats {
+		items = append(items, dailyStatJSON{
+			Day:               stat.Day,
+			LicensesCreated:   stat.LicensesCreated,
+			DevicesRegistered: stat.DevicesRegistered,
+			SessionsCreated:   stat.SessionsCreated,
+			AuditEvents:       stat.AuditEvents,
+			AdminLogins:       stat.AdminLogins,
+		})
+	}
+	return items
+}
+
+// handleAdminOverviewStats returns the trailing 14-day activity series for
+// the dashboard charts.
+func (router *Router) handleAdminOverviewStats(writer http.ResponseWriter, request *http.Request) {
+	days := atoiOrDefault(request.URL.Query().Get("days"), 14)
+	stats, err := router.admin.Console.ConsoleDailyStats(request.Context(), days)
+	if err != nil {
+		router.writeConsoleError(writer, request, err)
+		return
+	}
+	writeJSON(writer, http.StatusOK, struct {
+		OK   bool           `json:"ok"`
+		Days []dailyStatJSON `json:"days"`
+	}{
+		OK:   true,
+		Days: mapDailyStats(stats),
+	})
+}
+
 // Users
 
 type consoleUserJSON struct {
