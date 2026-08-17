@@ -46,6 +46,8 @@ type AdminConsoleStore interface {
 	ListConsoleUsers(ctx context.Context, offset, limit int, search string) ([]domain.ConsoleUser, int64, error)
 	ConsoleUserDetail(ctx context.Context, userID string) (*domain.ConsoleUserDetail, error)
 	SetUserStatus(ctx context.Context, userID string, status domain.UserStatus) error
+	BulkSetUserStatus(ctx context.Context, userIDs []string, status domain.UserStatus) (int64, error)
+	BulkRevokeUserSessions(ctx context.Context, userIDs []string) (int64, error)
 	FindUserByEmail(ctx context.Context, email string) (*domain.User, error)
 	FindUserByID(ctx context.Context, userID string) (*domain.User, error)
 	SetUserPassword(ctx context.Context, userID, passwordHash string) error

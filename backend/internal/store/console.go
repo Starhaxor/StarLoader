@@ -80,7 +80,7 @@ func (s *Store) ConsoleDailyStats(ctx context.Context, days int) ([]domain.Daily
 		return nil, fmt.Errorf("daily logins: %w", err)
 	}
 
-	start := time.Now().UTC().Truncate(24 * time.Hour).AddDate(0, 0, -(days - 1))
+	start := time.Now().UTC().Truncate(24*time.Hour).AddDate(0, 0, -(days - 1))
 	stats := make([]domain.DailyStat, 0, days)
 	for i := 0; i < days; i++ {
 		day := start.AddDate(0, 0, i).Format("2006-01-02")
@@ -382,6 +382,48 @@ func (s *Store) AdminResetDevice(ctx context.Context, deviceID string) error {
 
 // RevokeUserSessions expires every pending or verified auth session of the
 // user and reports how many were revoked.
+// BulkSetUserStatus enables or disables several end-user accounts in one
+// statement and returns how many rows changed.
+func (s *Store) BulkSetUserStatus(ctx context.Context, userIDs []string, status domain.UserStatus) (int64, error) {
+	tx, err := s.db.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return 0, fmt.Errorf("begin bulk user status: %w", err)
+	}
+	defer func() { _ = tx.Rollback(context.Background()) }()
+	tag, err := tx.Exec(ctx, `
+		update users
+		set status = $2, updated_at = now()
+		where id = any($1::uuid[])`, userIDs, string(status))
+	if err != nil {
+		return 0, fmt.Errorf("bulk set user status: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return 0, fmt.Errorf("commit bulk user status: %w", err)
+	}
+	return tag.RowsAffected(), nil
+}
+
+// BulkRevokeUserSessions expires every pending or verified auth session of
+// several users in one statement.
+func (s *Store) BulkRevokeUserSessions(ctx context.Context, userIDs []string) (int64, error) {
+	tx, err := s.db.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return 0, fmt.Errorf("begin bulk user session revocation: %w", err)
+	}
+	defer func() { _ = tx.Rollback(context.Background()) }()
+	tag, err := tx.Exec(ctx, `
+		update auth_sessions
+		set status = 'expired', updated_at = now()
+		where user_id = any($1::uuid[]) and status in ('pending', 'verified')`, userIDs)
+	if err != nil {
+		return 0, fmt.Errorf("bulk revoke user sessions: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return 0, fmt.Errorf("commit bulk user session revocation: %w", err)
+	}
+	return tag.RowsAffected(), nil
+}
+
 func (s *Store) RevokeUserSessions(ctx context.Context, userID string) (int64, error) {
 	var exists bool
 	if err := s.db.QueryRow(ctx, `select exists(select 1 from users where id = $1::uuid)`, userID).Scan(&exists); err != nil {

@@ -214,6 +214,16 @@ func (router *Router) routeAdminUsers(writer http.ResponseWriter, request *http.
 			return
 		}
 		router.handleAdminUserPasswordReset(writer, request, account, segments[1])
+	case len(segments) == 2 && segments[1] == "bulk-status" && request.Method == http.MethodPost:
+		if !router.requirePermission(writer, request, account, domain.PermUsersWrite) {
+			return
+		}
+		router.handleAdminUserBulkStatus(writer, request, account)
+	case len(segments) == 3 && segments[1] == "bulk" && segments[2] == "revoke-sessions" && request.Method == http.MethodPost:
+		if !router.requirePermission(writer, request, account, domain.PermSessionsWrite) {
+			return
+		}
+		router.handleAdminUserBulkRevoke(writer, request, account)
 	default:
 		writeError(writer, request, http.StatusNotFound, "INVALID_REQUEST", "not found")
 	}
@@ -389,6 +399,67 @@ func (router *Router) handleAdminUserPromote(writer http.ResponseWriter, request
 		Admin:        mapAdminAccount(*created),
 		TempPassword: password,
 	})
+}
+
+// handleAdminUserBulkStatus enables or disables several end-user accounts in a
+// single statement.
+func (router *Router) handleAdminUserBulkStatus(writer http.ResponseWriter, request *http.Request, account *domain.AdminAccount) {
+	var body struct {
+		IDs    []string `json:"ids"`
+		Status string   `json:"status"`
+	}
+	if err := decodeAdminJSONBody(writer, request, &body); err != nil {
+		writeError(writer, request, http.StatusBadRequest, "INVALID_REQUEST", "invalid request")
+		return
+	}
+	if len(body.IDs) == 0 || len(body.IDs) > 500 {
+		writeError(writer, request, http.StatusBadRequest, "INVALID_REQUEST", "ids must contain between 1 and 500 users")
+		return
+	}
+	if body.Status != string(domain.UserStatusActive) && body.Status != string(domain.UserStatusDisabled) {
+		writeError(writer, request, http.StatusBadRequest, "INVALID_REQUEST", "status must be active or disabled")
+		return
+	}
+	updated, err := router.admin.Console.BulkSetUserStatus(request.Context(), body.IDs, domain.UserStatus(body.Status))
+	if err != nil {
+		router.writeConsoleError(writer, request, err)
+		return
+	}
+	router.auditAdmin(request, account, "USERS_BULK_STATUS", "user", "", map[string]string{
+		"status": body.Status, "count": strconv.FormatInt(updated, 10),
+	})
+	writeJSON(writer, http.StatusOK, struct {
+		OK      bool  `json:"ok"`
+		Updated int64 `json:"updated"`
+	}{OK: true, Updated: updated})
+}
+
+// handleAdminUserBulkRevoke expires every pending or verified auth session of
+// several users in one statement.
+func (router *Router) handleAdminUserBulkRevoke(writer http.ResponseWriter, request *http.Request, account *domain.AdminAccount) {
+	var body struct {
+		IDs []string `json:"ids"`
+	}
+	if err := decodeAdminJSONBody(writer, request, &body); err != nil {
+		writeError(writer, request, http.StatusBadRequest, "INVALID_REQUEST", "invalid request")
+		return
+	}
+	if len(body.IDs) == 0 || len(body.IDs) > 500 {
+		writeError(writer, request, http.StatusBadRequest, "INVALID_REQUEST", "ids must contain between 1 and 500 users")
+		return
+	}
+	revoked, err := router.admin.Console.BulkRevokeUserSessions(request.Context(), body.IDs)
+	if err != nil {
+		router.writeConsoleError(writer, request, err)
+		return
+	}
+	router.auditAdmin(request, account, "USERS_BULK_SESSIONS_REVOKED", "user", "", map[string]string{
+		"count": strconv.FormatInt(revoked, 10),
+	})
+	writeJSON(writer, http.StatusOK, struct {
+		OK      bool  `json:"ok"`
+		Revoked int64 `json:"revoked"`
+	}{OK: true, Revoked: revoked})
 }
 
 // handleAdminUserPasswordReset sets a new password for an end-user. When the
