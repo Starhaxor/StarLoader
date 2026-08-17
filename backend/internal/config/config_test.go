@@ -89,8 +89,14 @@ func TestLoadDefaultsAdminConsoleSettings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(configuration.AdminAllowedOrigins) != 2 || configuration.AdminAllowedOrigins[0] != "http://localhost:3000" || configuration.AdminAllowedOrigins[1] != "http://127.0.0.1:3000" {
-		t.Fatalf("AdminAllowedOrigins = %q, want localhost defaults", configuration.AdminAllowedOrigins)
+	want := []string{"http://localhost:3000", "http://127.0.0.1:3000", "https://starloadernd8h-8080-domgge2y7n.outplane.app"}
+	if len(configuration.AdminAllowedOrigins) != len(want) {
+		t.Fatalf("AdminAllowedOrigins = %q, want %q", configuration.AdminAllowedOrigins, want)
+	}
+	for i := range want {
+		if configuration.AdminAllowedOrigins[i] != want[i] {
+			t.Fatalf("AdminAllowedOrigins = %q, want %q", configuration.AdminAllowedOrigins, want)
+		}
 	}
 	if configuration.AdminSessionTTL != 12*time.Hour {
 		t.Fatalf("AdminSessionTTL = %s, want 12h", configuration.AdminSessionTTL)
