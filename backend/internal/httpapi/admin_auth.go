@@ -185,6 +185,18 @@ func (router *Router) handleAdminMe(writer http.ResponseWriter, request *http.Re
 	})
 }
 
+// adminCookieSameSite returns SameSite=None when cookies are Secure (the API
+// is served over HTTPS from a different origin than the admin panel), because
+// browsers otherwise withhold Lax cookies from cross-site fetch() requests and
+// the session never sticks. SameSite=None is only honored on Secure cookies,
+// so plain-HTTP/local deployments keep SameSite=Lax.
+func adminCookieSameSite(secure bool) http.SameSite {
+	if secure {
+		return http.SameSiteNoneMode
+	}
+	return http.SameSiteLaxMode
+}
+
 func (router *Router) setAdminCookies(writer http.ResponseWriter, sessionToken string) {
 	maxAge := int(router.admin.SessionTTL.Seconds())
 	http.SetCookie(writer, &http.Cookie{
@@ -194,7 +206,7 @@ func (router *Router) setAdminCookies(writer http.ResponseWriter, sessionToken s
 		MaxAge:   maxAge,
 		HttpOnly: true,
 		Secure:   router.admin.CookieSecure,
-		SameSite: http.SameSiteLaxMode,
+		SameSite: adminCookieSameSite(router.admin.CookieSecure),
 	})
 	http.SetCookie(writer, &http.Cookie{
 		Name:     adminCSRFCookieName,
@@ -202,7 +214,7 @@ func (router *Router) setAdminCookies(writer http.ResponseWriter, sessionToken s
 		Path:     "/",
 		MaxAge:   maxAge,
 		Secure:   router.admin.CookieSecure,
-		SameSite: http.SameSiteLaxMode,
+		SameSite: adminCookieSameSite(router.admin.CookieSecure),
 	})
 }
 
@@ -214,7 +226,7 @@ func clearAdminCookies(writer http.ResponseWriter, secure bool) {
 		MaxAge:   -1,
 		HttpOnly: true,
 		Secure:   secure,
-		SameSite: http.SameSiteLaxMode,
+		SameSite: adminCookieSameSite(secure),
 	})
 	http.SetCookie(writer, &http.Cookie{
 		Name:     adminCSRFCookieName,
@@ -222,7 +234,7 @@ func clearAdminCookies(writer http.ResponseWriter, secure bool) {
 		Path:     "/",
 		MaxAge:   -1,
 		Secure:   secure,
-		SameSite: http.SameSiteLaxMode,
+		SameSite: adminCookieSameSite(secure),
 	})
 }
 
