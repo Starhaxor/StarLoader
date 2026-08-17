@@ -6,6 +6,7 @@
 
 #include <QAbstractButton>
 #include <QApplication>
+#include <QClipboard>
 #include <QDebug>
 #include <QEvent>
 #include <QFrame>
@@ -30,6 +31,7 @@ private slots:
     void presentsSafeProfileInCompactSingleCard();
     void usesIconFreeChromeAndOnePanelAction();
     void requestsSignOutFromItsOnlyAction();
+    void copyButtonsCopyFullValuesToClipboard();
     void validatedAuthenticationShowsExactlyOneDashboard();
     void signOutClearsCredentialsAndReturnsToLogin();
     void closingDashboardDoesNotResurrectLogin();
@@ -202,11 +204,11 @@ void UserDashboardTest::presentsSafeProfileInCompactSingleCard()
     auto *brand = dashboard.findChild<QLabel *>(QStringLiteral("dashboardBrandLabel"));
     QVERIFY(brand);
     QCOMPARE(brand->text(), QStringLiteral("StarLoader"));
-    QVERIFY(brand->font().italic());
+    QVERIFY(!brand->font().italic());
 
     auto *activeIndicator = dashboard.findChild<QLabel *>(QStringLiteral("activeStatusIndicator"));
     QVERIFY(activeIndicator);
-    QCOMPARE(activeIndicator->text(), QStringLiteral("Active"));
+    QCOMPARE(activeIndicator->text(), QStringLiteral("\u25CF Active License"));
     QCOMPARE(activeIndicator->property("state").toString(), QStringLiteral("success"));
 
     int successIndicators = 0;
@@ -216,6 +218,20 @@ void UserDashboardTest::presentsSafeProfileInCompactSingleCard()
         }
     }
     QCOMPARE(successIndicators, 1);
+
+    const QStringList sectionLabels = {
+        QStringLiteral("accountSectionLabel"),
+        QStringLiteral("deviceSectionLabel"),
+        QStringLiteral("sessionSectionLabel")
+    };
+    for (const QString &objectName : sectionLabels) {
+        auto *section = dashboard.findChild<QLabel *>(objectName);
+        QVERIFY2(section, qPrintable(QStringLiteral("Missing dashboard section: %1").arg(objectName)));
+        QVERIFY(section->isVisible());
+    }
+
+    QVERIFY(dashboard.findChild<QToolButton *>(QStringLiteral("copyDeviceIdButton")));
+    QVERIFY(dashboard.findChild<QToolButton *>(QStringLiteral("copyHwidButton")));
 
     QCOMPARE(labelText("emailValue"), QStringLiteral("test2@test.com"));
     QCOMPARE(labelText("accountStatusValue"), QStringLiteral("Active"));
@@ -230,7 +246,7 @@ void UserDashboardTest::presentsSafeProfileInCompactSingleCard()
 
     QCOMPARE(dashboard.minimumSize(), dashboard.maximumSize());
     QVERIFY(dashboard.width() <= 520);
-    QVERIFY(dashboard.height() <= 620);
+    QVERIFY(dashboard.height() <= 720);
 }
 
 void UserDashboardTest::usesIconFreeChromeAndOnePanelAction()
@@ -256,10 +272,20 @@ void UserDashboardTest::usesIconFreeChromeAndOnePanelAction()
 
     auto *card = dashboard.findChild<QFrame *>(QStringLiteral("dashboardCard"));
     QVERIFY(card);
-    const auto panelActions = card->findChildren<QPushButton *>();
+
+    // Sign out is the single push-button action of the whole panel; it now
+    // lives outside the info card, below it.
+    const auto panelActions = dashboard.findChildren<QPushButton *>();
     QCOMPARE(panelActions.size(), 1);
     QCOMPARE(panelActions.constFirst()->objectName(), QStringLiteral("signOutButton"));
     QCOMPARE(panelActions.constFirst()->text(), QStringLiteral("Sign out"));
+
+    auto *copyDeviceId = card->findChild<QToolButton *>(QStringLiteral("copyDeviceIdButton"));
+    auto *copyHwid = card->findChild<QToolButton *>(QStringLiteral("copyHwidButton"));
+    QVERIFY(copyDeviceId);
+    QVERIFY(copyHwid);
+    QVERIFY(copyDeviceId->icon().isNull() == false);
+    QVERIFY(copyHwid->icon().isNull() == false);
 
     const QStringList forbiddenTerms = {
         QStringLiteral("launch"),
@@ -296,6 +322,25 @@ void UserDashboardTest::requestsSignOutFromItsOnlyAction()
     QTest::mouseClick(signOutButton, Qt::LeftButton);
 
     QCOMPARE(signOutSpy.count(), 1);
+}
+
+void UserDashboardTest::copyButtonsCopyFullValuesToClipboard()
+{
+    UserDashboard dashboard(literalProfile(), QStringLiteral("ABCDEF-123456"));
+    dashboard.show();
+    QCoreApplication::processEvents();
+
+    auto *copyDeviceId = dashboard.findChild<QToolButton *>(QStringLiteral("copyDeviceIdButton"));
+    auto *copyHwid = dashboard.findChild<QToolButton *>(QStringLiteral("copyHwidButton"));
+    QVERIFY(copyDeviceId);
+    QVERIFY(copyHwid);
+
+    QTest::mouseClick(copyDeviceId, Qt::LeftButton);
+    QCOMPARE(QApplication::clipboard()->text(),
+             QStringLiteral("019ffc3f-0396-7266-b82c-35371486cc4e"));
+
+    QTest::mouseClick(copyHwid, Qt::LeftButton);
+    QCOMPARE(QApplication::clipboard()->text(), QStringLiteral("ABCDEF-123456"));
 }
 
 void UserDashboardTest::validatedAuthenticationShowsExactlyOneDashboard()

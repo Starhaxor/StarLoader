@@ -503,28 +503,48 @@ QLineEdit#passwordLineEdit {
     font-size: 11px;
 }
 
-/* Authenticated dashboard: one compact card and one status accent. */
+/* Authenticated dashboard: card + grouped info rows. */
 QFrame#dashboardCard {
-    background-color: #0D141C;
-    border: 1px solid #1B2732;
-    border-radius: 6px;
+    background-color: #10161D;
+    border: 1px solid #222F39;
+    border-radius: 10px;
 }
 
 QLabel#dashboardBrandLabel {
     color: #EDF4F6;
     font-family: "Segoe UI", "Arial";
-    font-size: 20pt;
+    font-size: 18pt;
     font-weight: 600;
 }
 
 QLabel#activeStatusIndicator {
-    color: #8ff0a4;
-    background-color: #1f3b2a;
-    border: 1px solid #2f6540;
-    border-radius: 9px;
-    padding: 2px 10px;
+    color: #43D19E;
+    background-color: #12352A;
+    border: 1px solid #1E4A38;
+    border-radius: 12px;
+    padding: 3px 12px;
     font-size: 11px;
     font-weight: 600;
+}
+
+QLabel#activeStatusIndicator[state="warning"] {
+    color: #F4B860;
+    background-color: #33291A;
+    border-color: #5A4A28;
+}
+
+QLabel#activeStatusIndicator[state="error"] {
+    color: #FF647C;
+    background-color: #331A22;
+    border-color: #5A2832;
+}
+
+QLabel#accountSectionLabel,
+QLabel#deviceSectionLabel,
+QLabel#sessionSectionLabel {
+    color: #71818A;
+    font-size: 9px;
+    font-weight: 700;
 }
 
 QLabel#emailLabel,
@@ -553,10 +573,51 @@ QLabel#hwidValue,
 QLabel#sessionExpiryValue {
     color: #EDF4F6;
     font-size: 11px;
+    font-weight: 600;
+}
+
+QFrame#dashboardSeparator1,
+QFrame#dashboardSeparator2 {
+    background-color: #25343D;
+    border: none;
+    max-height: 1px;
+}
+
+QToolButton#copyDeviceIdButton,
+QToolButton#copyHwidButton {
+    background-color: #1B2732;
+    border: 1px solid #22303B;
+    border-radius: 6px;
+}
+
+QToolButton#copyDeviceIdButton:hover,
+QToolButton#copyHwidButton:hover {
+    background-color: #22303B;
+}
+
+QToolButton#copyDeviceIdButton:pressed,
+QToolButton#copyHwidButton:pressed {
+    background-color: #0D141C;
 }
 
 QPushButton#signOutButton {
-    min-width: 96px;
+    color: #EDF4F6;
+    background-color: #151B22;
+    border: 1px solid #28333D;
+    border-radius: 7px;
+    font-size: 12px;
+    font-weight: 600;
+    min-width: 140px;
+    min-height: 34px;
+}
+
+QPushButton#signOutButton:hover {
+    background-color: #1C2730;
+    border-color: #32404C;
+}
+
+QPushButton#signOutButton:pressed {
+    background-color: #0F161D;
 }
 
 QLabel#hwidLink {
