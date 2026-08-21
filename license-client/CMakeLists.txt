@@ -14,6 +14,10 @@ endif()
 if(NOT STARLOADER_API_URL MATCHES "^https://")
     message(FATAL_ERROR "STARLOADER_API_URL must be set to an https:// URL. Configure with the qt-mingw preset (CMakePresets.json) or -DSTARLOADER_API_URL=https://your-server.example.")
 endif()
+string(LENGTH "${STARLOADER_APPLICATION_ID}" STARLOADER_APPLICATION_ID_LENGTH)
+if(NOT STARLOADER_APPLICATION_ID_LENGTH EQUAL 36 OR NOT STARLOADER_APPLICATION_ID MATCHES "^[0-9a-f]+-[0-9a-f]+-[1-8][0-9a-f]+-[89ab][0-9a-f]+-[0-9a-f]+$")
+    message(FATAL_ERROR "STARLOADER_APPLICATION_ID must be a canonical UUID. Configure it with the qt-mingw preset (CMakePresets.json) or -DSTARLOADER_APPLICATION_ID=<application-id>.")
+endif()
 configure_file(
     "${CMAKE_CURRENT_SOURCE_DIR}/src/config/ClientSecurityConfig.h.in"
     "${CMAKE_CURRENT_BINARY_DIR}/generated/ClientSecurityConfig.h"
@@ -182,7 +186,7 @@ target_link_libraries(WindowTitleBarTest PRIVATE Qt6::Widgets Qt6::Test)
 target_link_libraries(UserDashboardTest PRIVATE DeviceIdentityShared Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Test OpenSSL::Crypto)
 target_link_libraries(NativeLiveFlowTest PRIVATE DeviceIdentityShared Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Test OpenSSL::Crypto)
 
-target_include_directories(ApiClientTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_include_directories(ApiClientTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_CURRENT_BINARY_DIR}/generated)
 target_include_directories(AuthManagerTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_SOURCE_DIR}/shared)
 target_include_directories(SessionTokenVerifierTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_include_directories(HwidDialogTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)

@@ -10,7 +10,8 @@
         "CMAKE_PREFIX_PATH": "C:/Qt/6.11.1/mingw_64",
         "OPENSSL_ROOT_DIR": "C:/Qt/Tools/mingw1310_64/opt",
         "STARLOADER_ED25519_PUBLIC_KEY": "eyEwiKM3twBdJ7glFmsoRXG3d/D9kLs7z4y+q9FAHRE=",
-        "STARLOADER_API_URL": "https://keystarbackend-8080-domgge2y7n.outplane.app"
+        "STARLOADER_API_URL": "https://keystarbackend-8080-domgge2y7n.outplane.app",
+        "STARLOADER_APPLICATION_ID": "01a023a5-346a-7011-af97-e39a9a4e5baa"
       }
     }
   ],
