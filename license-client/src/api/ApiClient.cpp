@@ -185,6 +185,7 @@ void ApiClient::postJson(const QString &path, const QJsonObject &body, bool devi
     QNetworkRequest networkRequest(baseUrl_.resolved(QUrl(path)));
     networkRequest.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
     networkRequest.setRawHeader("X-KeyStar-App", QByteArrayLiteral(STARLOADER_APPLICATION_ID));
+    networkRequest.setRawHeader("Authorization", QByteArrayLiteral("Bearer ") + QByteArrayLiteral(STARLOADER_PUBLISHABLE_KEY));
     networkRequest.setRawHeader("X-Request-ID", requestId.toUtf8());
     QNetworkReply *reply = network_.post(networkRequest, QJsonDocument(body).toJson(QJsonDocument::Compact));
     reply->setReadBufferSize(MaxResponseBytes);

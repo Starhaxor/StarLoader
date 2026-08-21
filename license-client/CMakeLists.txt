@@ -19,6 +19,10 @@ string(LENGTH "${STARLOADER_APPLICATION_ID}" STARLOADER_APPLICATION_ID_LENGTH)
 if(NOT STARLOADER_APPLICATION_ID_LENGTH EQUAL 36 OR NOT STARLOADER_APPLICATION_ID MATCHES "^[0-9a-f]+-[0-9a-f]+-[1-8][0-9a-f]+-[89ab][0-9a-f]+-[0-9a-f]+$")
     message(FATAL_ERROR "STARLOADER_APPLICATION_ID must be a canonical UUID. Configure it with the qt-mingw preset (CMakePresets.json) or -DSTARLOADER_APPLICATION_ID=<application-id>.")
 endif()
+set(STARLOADER_PUBLISHABLE_KEY "" CACHE STRING "KeyStar publishable API key used by the StarLoader client")
+if(NOT STARLOADER_PUBLISHABLE_KEY MATCHES "^ks_pk_(live|test)_[A-Za-z0-9_-]+$")
+    message(FATAL_ERROR "STARLOADER_PUBLISHABLE_KEY must be a KeyStar publishable key. Configure it with the qt-mingw preset (CMakePresets.json) or -DSTARLOADER_PUBLISHABLE_KEY=ks_pk_live_<key>.")
+endif()
 configure_file(
     "${CMAKE_CURRENT_SOURCE_DIR}/src/config/ClientSecurityConfig.h.in"
     "${CMAKE_CURRENT_BINARY_DIR}/generated/ClientSecurityConfig.h"

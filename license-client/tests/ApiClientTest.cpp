@@ -47,6 +47,8 @@ void ApiClientTest::sendsExactLoginContractAndParsesReply()
     QVERIFY(request.contains("Content-Type: application/json"));
     QVERIFY(request.toLower().contains("x-request-id: "));
     QVERIFY(request.toLower().contains("x-keystar-app: 01a023f4-df13-717a-b54c-49378290b74c"));
+    const QRegularExpression publishableKeyPattern(QStringLiteral("(?im)^Authorization: Bearer ks_pk_(?:live|test)_[A-Za-z0-9_-]+\\r?$"));
+    QVERIFY(publishableKeyPattern.match(QString::fromLatin1(request)).hasMatch());
     const QRegularExpression requestIdPattern(QStringLiteral("(?im)^x-request-id: [0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\\r?$"));
     QVERIFY(requestIdPattern.match(QString::fromLatin1(request)).hasMatch());
     QVERIFY(request.contains("\"email\":\"person@example.com\""));
@@ -122,6 +124,8 @@ void ApiClientTest::sendsExactDeviceVerificationContract()
     client.verifyDevice({QStringLiteral("0198940d-7cec-7000-8000-000000000001"), QStringLiteral("Y2hhbGxlbmdl"), QStringLiteral("c2lnbmF0dXJl"), QStringLiteral("cHVibGljLWtleQ=="), {QStringLiteral("smbios"), QStringLiteral("board"), QStringLiteral("bios"), QStringLiteral("disk"), QStringLiteral("guid"), QStringLiteral("fingerprint")}}, 23);
     if (complete.isEmpty()) QVERIFY(complete.wait(3000));
     QVERIFY(request.startsWith("POST /v1/device/verify HTTP/1.1\r\n"));
+    const QRegularExpression publishableKeyPattern(QStringLiteral("(?im)^Authorization: Bearer ks_pk_(?:live|test)_[A-Za-z0-9_-]+\\r?$"));
+    QVERIFY(publishableKeyPattern.match(QString::fromLatin1(request)).hasMatch());
     QVERIFY(request.contains("\"session_id\":\"0198940d-7cec-7000-8000-000000000001\""));
     QVERIFY(request.contains("\"challenge\":\"Y2hhbGxlbmdl\""));
     QVERIFY(request.contains("\"challenge_signature\":\"c2lnbmF0dXJl\""));
