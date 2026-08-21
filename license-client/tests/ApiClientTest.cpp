@@ -46,7 +46,7 @@ void ApiClientTest::sendsExactLoginContractAndParsesReply()
     QVERIFY(request.startsWith("POST /v1/auth/login HTTP/1.1\r\n"));
     QVERIFY(request.contains("Content-Type: application/json"));
     QVERIFY(request.toLower().contains("x-request-id: "));
-    QVERIFY(request.toLower().contains("x-keystar-app: 01a023a5-346a-7011-af97-e39a9a4e5baa"));
+    QVERIFY(request.toLower().contains("x-keystar-app: 01a023f4-df13-717a-b54c-49378290b74c"));
     const QRegularExpression requestIdPattern(QStringLiteral("(?im)^x-request-id: [0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\\r?$"));
     QVERIFY(requestIdPattern.match(QString::fromLatin1(request)).hasMatch());
     QVERIFY(request.contains("\"email\":\"person@example.com\""));
