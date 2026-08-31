@@ -18,6 +18,10 @@ target_link_libraries(HwidObtainer PRIVATE
     Qt6::Concurrent
 )
 
+if(STARLOADER_STATIC AND TARGET Qt6::QWindowsIntegrationPlugin)
+    target_link_libraries(HwidObtainer PRIVATE Qt6::QWindowsIntegrationPlugin)
+endif()
+
 qt_add_executable(HwidObtainerPresentationTest
     src/DiagnosticPresentation.cpp
     src/DiagnosticPresentation.h

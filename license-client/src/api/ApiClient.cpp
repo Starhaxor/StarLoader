@@ -70,8 +70,10 @@ ApiClient::ApiClient(QUrl baseUrl, int timeoutMs, QObject *parent)
 bool ApiClient::isAllowedTransport() const
 {
     if (baseUrl_.scheme().compare(QStringLiteral("https"), Qt::CaseInsensitive) == 0) return true;
+    const bool localDevelopment = STARLOADER_LOCAL_DEVELOPMENT == 1 ||
+        qEnvironmentVariableIntValue("STARLOADER_ALLOW_HTTP_LOCAL") == 1;
     return baseUrl_.scheme().compare(QStringLiteral("http"), Qt::CaseInsensitive) == 0 &&
-        qEnvironmentVariableIntValue("STARLOADER_ALLOW_HTTP_LOCAL") == 1 && loopbackHost(baseUrl_.host());
+        localDevelopment && loopbackHost(baseUrl_.host());
 }
 
 QString ApiClient::newRequestId() const

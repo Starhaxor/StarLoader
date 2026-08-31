@@ -1,4 +1,10 @@
+if(STARLOADER_STATIC)
+    set(OPENSSL_USE_STATIC_LIBS TRUE)
+endif()
 find_package(OpenSSL REQUIRED COMPONENTS Crypto)
+if(STARLOADER_STATIC AND MINGW)
+    target_link_libraries(OpenSSL::Crypto INTERFACE z)
+endif()
 
 set(STARLOADER_ED25519_PUBLIC_KEY "" CACHE STRING "Canonical standard-base64 Ed25519 session-token public key")
 string(LENGTH "${STARLOADER_ED25519_PUBLIC_KEY}" STARLOADER_ED25519_PUBLIC_KEY_LENGTH)
@@ -11,10 +17,15 @@ endif()
 # placeholder default and no runtime environment override: a build without an
 # explicit https:// URL must fail loudly instead of silently shipping a client
 # that talks to the wrong endpoint.
-if(NOT STARLOADER_API_URL MATCHES "^https://")
-    message(FATAL_ERROR "STARLOADER_API_URL must be set to an https:// URL. Configure with the qt-mingw preset (CMakePresets.json) or -DSTARLOADER_API_URL=https://your-server.example.")
+option(STARLOADER_LOCAL_DEVELOPMENT "Allow a numeric loopback HTTP API URL in an explicitly local build" OFF)
+if(STARLOADER_LOCAL_DEVELOPMENT)
+    if(NOT STARLOADER_API_URL MATCHES "^http://127\\.0\\.0\\.1(:[0-9]+)?/?$")
+        message(FATAL_ERROR "STARLOADER_LOCAL_DEVELOPMENT only permits http://127.0.0.1 with an optional port.")
+    endif()
+elseif(NOT STARLOADER_API_URL MATCHES "^https://")
+    message(FATAL_ERROR "STARLOADER_API_URL must be set to an https:// URL. Use the qt-mingw-local preset only for loopback development.")
 endif()
-set(STARLOADER_APPLICATION_ID "01a023f4-df13-717a-b54c-49378290b74c" CACHE STRING "KeyStar application UUID used by the StarLoader client" FORCE)
+set(STARLOADER_APPLICATION_ID "" CACHE STRING "KeyStar application UUID used by the StarLoader client")
 string(LENGTH "${STARLOADER_APPLICATION_ID}" STARLOADER_APPLICATION_ID_LENGTH)
 if(NOT STARLOADER_APPLICATION_ID_LENGTH EQUAL 36 OR NOT STARLOADER_APPLICATION_ID MATCHES "^[0-9a-f]+-[0-9a-f]+-[1-8][0-9a-f]+-[89ab][0-9a-f]+-[0-9a-f]+$")
     message(FATAL_ERROR "STARLOADER_APPLICATION_ID must be a canonical UUID. Configure it with the qt-mingw preset (CMakePresets.json) or -DSTARLOADER_APPLICATION_ID=<application-id>.")
@@ -182,6 +193,33 @@ target_include_directories(LicenseClient PRIVATE
     ${CMAKE_CURRENT_BINARY_DIR}/generated
 )
 
+if(STARLOADER_STATIC)
+    if(TARGET Qt6::QWindowsIntegrationPlugin)
+        target_link_libraries(LicenseClient PRIVATE Qt6::QWindowsIntegrationPlugin)
+    endif()
+    message(STATUS "STARLOADER_STATIC=ON -> windeployqt atlaniyor (tek EXE)")
+elseif(WIN32)
+    get_target_property(QT_QMAKE_EXECUTABLE Qt6::qmake IMPORTED_LOCATION)
+    get_filename_component(QT_RUNTIME_DIR "${QT_QMAKE_EXECUTABLE}" DIRECTORY)
+    get_filename_component(QT_INSTALL_ROOT "${QT_RUNTIME_DIR}" DIRECTORY)
+    set(QT_PLATFORM_PLUGIN_DIR "${QT_INSTALL_ROOT}/plugins/platforms")
+    find_program(WINDEPLOYQT_EXECUTABLE
+        NAMES windeployqt
+        HINTS "${QT_RUNTIME_DIR}"
+        REQUIRED)
+    add_custom_command(TARGET LicenseClient POST_BUILD
+        COMMAND "${WINDEPLOYQT_EXECUTABLE}"
+            --no-translations
+            --compiler-runtime
+            --openssl-root "${OPENSSL_ROOT_DIR}"
+            "$<TARGET_FILE:LicenseClient>"
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+            "${OPENSSL_CRYPTO_RUNTIME}"
+            "$<TARGET_FILE_DIR:LicenseClient>"
+        COMMENT "Deploying the Qt, MinGW, and OpenSSL runtime beside LicenseClient"
+        VERBATIM)
+endif()
+
 target_link_libraries(ApiClientTest PRIVATE Qt6::Core Qt6::Network Qt6::Test)
 target_link_libraries(AuthManagerTest PRIVATE DeviceIdentityShared Qt6::Core Qt6::Network Qt6::Concurrent Qt6::Test OpenSSL::Crypto)
 target_link_libraries(SessionTokenVerifierTest PRIVATE Qt6::Core Qt6::Test OpenSSL::Crypto)
@@ -220,6 +258,10 @@ add_test(NAME NativeLiveFlowTest COMMAND NativeLiveFlowTest)
 foreach(test_name IN ITEMS ApiClientTest AuthManagerTest SessionTokenVerifierTest HwidDialogTest LoginWindowUiTest WindowTitleBarTest UserDashboardTest NativeLiveFlowTest)
     set_tests_properties(${test_name} PROPERTIES
         ENVIRONMENT "PATH=$<TARGET_FILE_DIR:Qt6::Core>\\;${OPENSSL_CRYPTO_RUNTIME_DIR}\\;$ENV{PATH}")
+    if(WIN32)
+        set_property(TEST ${test_name} APPEND PROPERTY ENVIRONMENT
+            "QT_QPA_PLATFORM_PLUGIN_PATH=${QT_PLATFORM_PLUGIN_DIR}")
+    endif()
 endforeach()
 set_property(TEST HwidDialogTest APPEND PROPERTY ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 set_property(TEST LoginWindowUiTest APPEND PROPERTY ENVIRONMENT "QT_QPA_PLATFORM=offscreen")

@@ -19,6 +19,7 @@ private slots:
     void profileFailuresNeverExposeBearerToken();
     void cancelledProfileDoesNotBlockNextRequest();
     void abortsTimedOutRequest();
+    void allowsLoopbackHttpInLocalDevelopmentBuild();
     void rejectsNonLoopbackHttpUnlessExplicitlyEnabled();
     void rejectsLocalhostNameEvenWhenLocalHttpIsEnabled();
 };
@@ -46,7 +47,7 @@ void ApiClientTest::sendsExactLoginContractAndParsesReply()
     QVERIFY(request.startsWith("POST /v1/auth/login HTTP/1.1\r\n"));
     QVERIFY(request.contains("Content-Type: application/json"));
     QVERIFY(request.toLower().contains("x-request-id: "));
-    QVERIFY(request.toLower().contains("x-keystar-app: 01a023f4-df13-717a-b54c-49378290b74c"));
+    QVERIFY(request.toLower().contains("x-keystar-app: 01a04caa-baa0-72ec-9b69-b4ba548bb3e5"));
     const QRegularExpression publishableKeyPattern(QStringLiteral("(?im)^Authorization: Bearer ks_pk_(?:live|test)_[A-Za-z0-9_-]+\\r?$"));
     QVERIFY(publishableKeyPattern.match(QString::fromLatin1(request)).hasMatch());
     const QRegularExpression requestIdPattern(QStringLiteral("(?im)^x-request-id: [0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\\r?$"));
@@ -303,6 +304,30 @@ void ApiClientTest::abortsTimedOutRequest()
     client.login({QStringLiteral("a@b.c"), QStringLiteral("password"), QStringLiteral("fingerprint")});
     QVERIFY(failed.wait(1000));
     QCOMPARE(failed.at(0).at(0).value<ApiError>().code, QStringLiteral("TIMEOUT"));
+}
+
+void ApiClientTest::allowsLoopbackHttpInLocalDevelopmentBuild()
+{
+    qunsetenv("STARLOADER_ALLOW_HTTP_LOCAL");
+    QTcpServer server;
+    QVERIFY(server.listen(QHostAddress::LocalHost));
+    connect(&server, &QTcpServer::newConnection, this, [&] {
+        QTcpSocket *socket = server.nextPendingConnection();
+        connect(socket, &QTcpSocket::readyRead, socket, [socket] {
+            const QByteArray request = socket->readAll();
+            if (!request.contains("\r\n\r\n")) return;
+            const QByteArray response = "{\"ok\":true,\"session_id\":\"0198940d-7cec-7000-8000-000000000001\",\"challenge\":\"Y2hhbGxlbmdl\",\"challenge_expires_at\":\"2026-08-10T12:00:00Z\"}";
+            socket->write("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: " + QByteArray::number(response.size()) + "\r\n\r\n" + response);
+            socket->disconnectFromHost();
+        });
+    });
+    ApiClient client(QUrl(QStringLiteral("http://127.0.0.1:%1").arg(server.serverPort())));
+    QSignalSpy complete(&client, &ApiClient::loginSucceeded);
+    QSignalSpy failed(&client, &ApiClient::loginFailed);
+    client.login({QStringLiteral("person@example.com"), QStringLiteral("password"), QStringLiteral("fingerprint")});
+    if (complete.isEmpty() && failed.isEmpty()) QVERIFY(complete.wait(3000));
+    QCOMPARE(failed.size(), 0);
+    QCOMPARE(complete.size(), 1);
 }
 
 void ApiClientTest::rejectsNonLoopbackHttpUnlessExplicitlyEnabled()

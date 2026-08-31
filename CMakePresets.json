@@ -9,10 +9,33 @@
       "cacheVariables": {
         "CMAKE_PREFIX_PATH": "C:/Qt/6.11.1/mingw_64",
         "OPENSSL_ROOT_DIR": "C:/Qt/Tools/mingw1310_64/opt",
+        "STARLOADER_LOCAL_DEVELOPMENT": "OFF",
         "STARLOADER_ED25519_PUBLIC_KEY": "eyEwiKM3twBdJ7glFmsoRXG3d/D9kLs7z4y+q9FAHRE=",
         "STARLOADER_API_URL": "https://keystarbackend-8080-domgge2y7n.outplane.app",
         "STARLOADER_APPLICATION_ID": "01a023f4-df13-717a-b54c-49378290b74c",
         "STARLOADER_PUBLISHABLE_KEY": "ks_pk_live_ZP16TSKKQG_g2WUklNoPRyPyCMP3wYPdz7iZQ2Jgr9Fi0ra1LX0jyc"
+      }
+    },
+    {
+      "name": "qt-mingw-local",
+      "displayName": "Qt 6.11.1 MinGW — Local KeyStar",
+      "inherits": "qt-mingw",
+      "cacheVariables": {
+        "STARLOADER_LOCAL_DEVELOPMENT": "ON",
+        "STARLOADER_API_URL": "http://127.0.0.1:8080",
+        "STARLOADER_APPLICATION_ID": "01a04caa-baa0-72ec-9b69-b4ba548bb3e5",
+        "STARLOADER_ED25519_PUBLIC_KEY": "e/40nbaaIxXaqAopnL6j/M0w7WeF70Nk8uIij1nr5SQ=",
+        "STARLOADER_PUBLISHABLE_KEY": "ks_pk_test_3MQ61B26VW_l7Xh56LE9PuaGEAZz1YD0hsJoe_myOKLPWnPtS9dxbQ"
+      }
+    },
+    {
+      "name": "qt-static",
+      "displayName": "Qt 6.11.1 Static MinGW — tek EXE",
+      "inherits": "qt-mingw",
+      "binaryDir": "${sourceDir}/build-static",
+      "cacheVariables": {
+        "CMAKE_PREFIX_PATH": "C:/Qt/6-static",
+        "STARLOADER_STATIC": "ON"
       }
     }
   ],
@@ -20,6 +43,14 @@
     {
       "name": "qt-mingw-build",
       "configurePreset": "qt-mingw"
+    },
+    {
+      "name": "qt-mingw-local-build",
+      "configurePreset": "qt-mingw-local"
+    },
+    {
+      "name": "qt-static-build",
+      "configurePreset": "qt-static"
     }
   ]
 }
