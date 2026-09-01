@@ -50,6 +50,7 @@ class TestProofSigner final : public IDeviceProofSigner
 {
 public:
     bool fail = false;
+    std::function<void()> onSign;
 
     bool publicKeyBlob(QByteArray *publicBlob, QString *) override
     {
@@ -61,15 +62,17 @@ public:
     bool sign(QByteArrayView, QByteArray *signature, QByteArray *publicBlob, QString *) override
     {
         if (fail) return false;
+        if (onSign) onSign();
         *signature = QByteArray(64, '\x33');
         *publicBlob = testPublicBlob();
         return true;
     }
 };
 
-DeviceProofBuilder makeProofBuilder(TestProofSigner &signer)
+std::shared_ptr<IDeviceProofBuilder> makeProofBuilder(TestProofSigner &signer)
 {
-    return DeviceProofBuilder(signer, [] { return FixedNow; }, [] { return QByteArray(16, '\x44'); });
+    return std::make_shared<DeviceProofBuilder>(
+        signer, [] { return FixedNow; }, [] { return QByteArray(16, '\x44'); });
 }
 
 QList<QByteArray> headerValues(const QByteArray &request, const QByteArray &name)
@@ -97,8 +100,10 @@ private slots:
     void sendsExactProfileContractAndParsesReply();
     void doesNotSendProtectedRequestWhenProofFails();
     void doesNotSendProtectedRequestWhenSessionExpired();
+    void doesNotSendWhenSessionExpiresDuringProofConstruction();
     void doesNotSendProtectedRequestForUnsafeUrl();
     void doesNotSendProtectedRequestWhenThumbprintMismatches();
+    void nullProofBuilderFailsWithoutNetworkRequest();
     void rejectsMalformedProfileResponses();
     void profileFailuresNeverExposeBearerToken();
     void cancelledProfileDoesNotBlockNextRequest();
@@ -239,7 +244,7 @@ void ApiClientTest::sendsExactProfileContractAndParsesReply()
         });
     });
     TestProofSigner signer;
-    DeviceProofBuilder proofBuilder = makeProofBuilder(signer);
+    auto proofBuilder = makeProofBuilder(signer);
     ApiClient client(QUrl(QStringLiteral("http://127.0.0.1:%1").arg(server.serverPort())),
                      proofBuilder, [] { return FixedNow; });
     QSignalSpy complete(&client, &ApiClient::profileLoaded);
@@ -283,7 +288,7 @@ void ApiClientTest::doesNotSendProtectedRequestWhenProofFails()
     QTcpServer server; QVERIFY(server.listen(QHostAddress::LocalHost));
     QSignalSpy connections(&server, &QTcpServer::newConnection);
     TestProofSigner signer; signer.fail = true;
-    DeviceProofBuilder proofBuilder = makeProofBuilder(signer);
+    auto proofBuilder = makeProofBuilder(signer);
     ApiClient client(QUrl(QStringLiteral("http://127.0.0.1:%1").arg(server.serverPort())),
                      proofBuilder, [] { return FixedNow; });
     QSignalSpy failed(&client, &ApiClient::profileFailed);
@@ -299,7 +304,7 @@ void ApiClientTest::doesNotSendProtectedRequestWhenSessionExpired()
     QTcpServer server; QVERIFY(server.listen(QHostAddress::LocalHost));
     QSignalSpy connections(&server, &QTcpServer::newConnection);
     TestProofSigner signer;
-    DeviceProofBuilder proofBuilder = makeProofBuilder(signer);
+    auto proofBuilder = makeProofBuilder(signer);
     ApiClient client(QUrl(QStringLiteral("http://127.0.0.1:%1").arg(server.serverPort())),
                      proofBuilder, [] { return FixedNow; });
     ProtectedSession session = validSession();
@@ -312,12 +317,31 @@ void ApiClientTest::doesNotSendProtectedRequestWhenSessionExpired()
     QCOMPARE(failed.at(0).at(0).value<ApiError>().code, QStringLiteral("SESSION_EXPIRED"));
 }
 
+void ApiClientTest::doesNotSendWhenSessionExpiresDuringProofConstruction()
+{
+    QTcpServer server; QVERIFY(server.listen(QHostAddress::LocalHost));
+    QSignalSpy connections(&server, &QTcpServer::newConnection);
+    qint64 now = FixedNow;
+    TestProofSigner signer;
+    signer.onSign = [&] { now = FixedNow + 60; };
+    auto proofBuilder = std::make_shared<DeviceProofBuilder>(
+        signer, [&] { return now; }, [] { return QByteArray(16, '\x44'); });
+    ApiClient client(QUrl(QStringLiteral("http://127.0.0.1:%1").arg(server.serverPort())),
+                     proofBuilder, [&] { return now; });
+    QSignalSpy failed(&client, &ApiClient::profileFailed);
+    client.loadProfile(validSession());
+    QTest::qWait(50);
+    QCOMPARE(connections.size(), 0);
+    QCOMPARE(failed.size(), 1);
+    QCOMPARE(failed.at(0).at(0).value<ApiError>().code, QStringLiteral("SESSION_EXPIRED"));
+}
+
 void ApiClientTest::doesNotSendProtectedRequestForUnsafeUrl()
 {
     QTcpServer server; QVERIFY(server.listen(QHostAddress::LocalHost));
     QSignalSpy connections(&server, &QTcpServer::newConnection);
     TestProofSigner signer;
-    DeviceProofBuilder proofBuilder = makeProofBuilder(signer);
+    auto proofBuilder = makeProofBuilder(signer);
     ApiClient client(QUrl(QStringLiteral("http://user@127.0.0.1:%1").arg(server.serverPort())),
                      proofBuilder, [] { return FixedNow; });
     QSignalSpy failed(&client, &ApiClient::profileFailed);
@@ -333,7 +357,7 @@ void ApiClientTest::doesNotSendProtectedRequestWhenThumbprintMismatches()
     QTcpServer server; QVERIFY(server.listen(QHostAddress::LocalHost));
     QSignalSpy connections(&server, &QTcpServer::newConnection);
     TestProofSigner signer;
-    DeviceProofBuilder proofBuilder = makeProofBuilder(signer);
+    auto proofBuilder = makeProofBuilder(signer);
     ApiClient client(QUrl(QStringLiteral("http://127.0.0.1:%1").arg(server.serverPort())),
                      proofBuilder, [] { return FixedNow; });
     ProtectedSession session = validSession();
@@ -344,6 +368,20 @@ void ApiClientTest::doesNotSendProtectedRequestWhenThumbprintMismatches()
     QTest::qWait(50);
     QCOMPARE(connections.size(), 0);
     QCOMPARE(failed.at(0).at(0).value<ApiError>().code, QStringLiteral("DEVICE_PROOF_FAILED"));
+}
+
+void ApiClientTest::nullProofBuilderFailsWithoutNetworkRequest()
+{
+    QTcpServer server; QVERIFY(server.listen(QHostAddress::LocalHost));
+    QSignalSpy connections(&server, &QTcpServer::newConnection);
+    ApiClient client(QUrl(QStringLiteral("http://127.0.0.1:%1").arg(server.serverPort())),
+                     std::shared_ptr<IDeviceProofBuilder>{}, [] { return FixedNow; });
+    QSignalSpy failed(&client, &ApiClient::profileFailed);
+    client.loadProfile(validSession());
+    QCOMPARE(failed.size(), 1);
+    QTest::qWait(50);
+    QCOMPARE(connections.size(), 0);
+    QCOMPARE(failed.at(0).at(0).value<ApiError>().code, QStringLiteral("INVALID_SESSION"));
 }
 
 void ApiClientTest::rejectsMalformedProfileResponses()
@@ -388,7 +426,7 @@ void ApiClientTest::rejectsMalformedProfileResponses()
             });
         });
         TestProofSigner signer;
-        DeviceProofBuilder proofBuilder = makeProofBuilder(signer);
+        auto proofBuilder = makeProofBuilder(signer);
         ApiClient client(QUrl(QStringLiteral("http://127.0.0.1:%1").arg(server.serverPort())),
                          proofBuilder, [] { return FixedNow; });
         QSignalSpy failed(&client, &ApiClient::profileFailed);
@@ -422,7 +460,7 @@ void ApiClientTest::profileFailuresNeverExposeBearerToken()
         });
     });
     TestProofSigner signer;
-    DeviceProofBuilder proofBuilder = makeProofBuilder(signer);
+    auto proofBuilder = makeProofBuilder(signer);
     ApiClient client(QUrl(QStringLiteral("http://127.0.0.1:%1").arg(server.serverPort())),
                      proofBuilder, [] { return FixedNow; });
     QSignalSpy failed(&client, &ApiClient::profileFailed);
@@ -464,7 +502,7 @@ void ApiClientTest::cancelledProfileDoesNotBlockNextRequest()
     });
 
     TestProofSigner signer;
-    DeviceProofBuilder proofBuilder = makeProofBuilder(signer);
+    auto proofBuilder = makeProofBuilder(signer);
     ApiClient client(QUrl(QStringLiteral("http://127.0.0.1:%1").arg(server.serverPort())),
                      proofBuilder, [] { return FixedNow; });
     client.loadProfile(validSession(), 1);

@@ -18,7 +18,7 @@ public:
     using IApiClient::IApiClient;
     LoginRequest lastLogin;
     DeviceVerifyRequest lastVerify;
-    QString lastProfileToken;
+    ProtectedSession lastProfileSession;
     quint64 lastLoginGeneration = 0;
     quint64 lastVerifyGeneration = 0;
     quint64 lastProfileGeneration = 0;
@@ -28,7 +28,7 @@ public:
     int cancelProfileCount = 0;
     void login(const LoginRequest &request, quint64 generation) override { lastLogin = request; lastLoginGeneration = generation; ++loginCount; }
     void verifyDevice(const DeviceVerifyRequest &request, quint64 generation) override { lastVerify = request; lastVerifyGeneration = generation; ++verifyCount; }
-    void loadProfile(const QString &token, quint64 generation) override { lastProfileToken = token; lastProfileGeneration = generation; ++profileCount; }
+    void loadProfile(const ProtectedSession &session, quint64 generation) override { lastProfileSession = session; lastProfileGeneration = generation; ++profileCount; }
     void cancelProfile() override { ++cancelProfileCount; }
     void completeLogin(const LoginResponse &response) { completeLogin(response, lastLoginGeneration); }
     void completeLogin(const LoginResponse &response, quint64 generation) { emit loginSucceeded(response, generation); }
@@ -151,10 +151,13 @@ void AuthManagerTest::reachesAuthenticatedOnlyAfterVerifiedDeviceToken()
     QTRY_COMPARE(api.verifyCount, 1);
     QCOMPARE(api.lastVerify.challenge, QStringLiteral("Y2hhbGxlbmdl"));
     QCOMPARE(api.lastVerify.challengeSignature, QStringLiteral("c2lnbmF0dXJl"));
-    const QString token = tokenFor(validClaims());
+    const QJsonObject claims = validClaims();
+    const QString token = tokenFor(claims);
     api.completeVerify(verifiedResponse(token));
     QCOMPARE(api.profileCount, 1);
-    QCOMPARE(api.lastProfileToken, token);
+    QCOMPARE(api.lastProfileSession.accessToken, token);
+    QCOMPARE(api.lastProfileSession.deviceKeyThumbprint, QStringLiteral("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"));
+    QCOMPARE(api.lastProfileSession.expiresAt.toSecsSinceEpoch(), claims.value(QStringLiteral("exp")).toInteger());
     const quint64 profileGeneration = api.lastProfileGeneration;
     QVERIFY(manager.state() != AuthState::Authenticated);
     QCOMPARE(authenticated.size(), 0);

@@ -211,7 +211,7 @@ void AuthManager::handleDeviceVerified(const DeviceVerifyResponse &response, qui
     userProfile_ = {};
     profileLoading_ = true;
     transition(AuthState::Authenticating, QStringLiteral("Loading profile."));
-    apiClient_.loadProfile(sessionToken_, attempt_);
+    apiClient_.loadProfile({sessionToken_, verified.deviceKeyThumbprint, verified.expiresAt}, attempt_);
 }
 
 void AuthManager::handleDeviceVerificationFailed(const ApiError &error, quint64 generation) { if (generation == attempt_ && state_ == AuthState::VerifyingDevice) fail(error); }

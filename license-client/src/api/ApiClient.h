@@ -10,6 +10,7 @@
 #include <QUrl>
 
 #include <functional>
+#include <memory>
 
 class QNetworkRequest;
 
@@ -79,7 +80,7 @@ public:
     using Clock = std::function<qint64()>;
     static constexpr int RequestTimeoutMs = 15'000;
     explicit ApiClient(QUrl baseUrl, int timeoutMs = RequestTimeoutMs, QObject *parent = nullptr);
-    ApiClient(QUrl baseUrl, DeviceProofBuilder &proofBuilder, Clock clock,
+    ApiClient(QUrl baseUrl, std::shared_ptr<IDeviceProofBuilder> proofBuilder, Clock clock,
               int timeoutMs = RequestTimeoutMs, QObject *parent = nullptr);
     void login(const LoginRequest &request, quint64 generation = 0) override;
     void verifyDevice(const DeviceVerifyRequest &request, quint64 generation = 0) override;
@@ -91,8 +92,7 @@ private:
     QNetworkAccessManager network_;
     int timeoutMs_;
     TpmProofSigner defaultProofSigner_;
-    DeviceProofBuilder defaultProofBuilder_;
-    DeviceProofBuilder *proofBuilder_ = nullptr;
+    std::shared_ptr<IDeviceProofBuilder> proofBuilder_;
     Clock clock_;
     bool requestActive_ = false;
     QPointer<QNetworkReply> profileReply_;

@@ -32,7 +32,16 @@ struct ProofResult
     QString error;
 };
 
-class DeviceProofBuilder
+class IDeviceProofBuilder
+{
+public:
+    virtual ~IDeviceProofBuilder() = default;
+    virtual ProofResult build(const QString &method, const QUrl &url,
+                              const QString &accessToken,
+                              const QString &expectedThumbprint) const = 0;
+};
+
+class DeviceProofBuilder final : public IDeviceProofBuilder
 {
 public:
     using Clock = std::function<qint64()>;
@@ -44,7 +53,7 @@ public:
 
     ProofResult build(const QString &method, const QUrl &url,
                       const QString &accessToken,
-                      const QString &expectedThumbprint) const;
+                      const QString &expectedThumbprint) const override;
 
 private:
     IDeviceProofSigner &signer_;

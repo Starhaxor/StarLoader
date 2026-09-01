@@ -60,7 +60,7 @@ ApiError withoutSecret(ApiError error, const QString &secret)
 
 ApiClient::ApiClient(QUrl baseUrl, int timeoutMs, QObject *parent)
     : IApiClient(parent), baseUrl_(std::move(baseUrl)), timeoutMs_(qBound(1, timeoutMs, RequestTimeoutMs)),
-      defaultProofBuilder_(defaultProofSigner_), proofBuilder_(&defaultProofBuilder_),
+      proofBuilder_(std::make_shared<DeviceProofBuilder>(defaultProofSigner_)),
       clock_([] { return QDateTime::currentSecsSinceEpoch(); })
 {
     qRegisterMetaType<LoginResponse>();
@@ -69,10 +69,10 @@ ApiClient::ApiClient(QUrl baseUrl, int timeoutMs, QObject *parent)
     qRegisterMetaType<ApiError>();
 }
 
-ApiClient::ApiClient(QUrl baseUrl, DeviceProofBuilder &proofBuilder, Clock clock,
+ApiClient::ApiClient(QUrl baseUrl, std::shared_ptr<IDeviceProofBuilder> proofBuilder, Clock clock,
                      int timeoutMs, QObject *parent)
     : IApiClient(parent), baseUrl_(std::move(baseUrl)), timeoutMs_(qBound(1, timeoutMs, RequestTimeoutMs)),
-      defaultProofBuilder_(defaultProofSigner_), proofBuilder_(&proofBuilder),
+      proofBuilder_(std::move(proofBuilder)),
       clock_(clock ? std::move(clock) : Clock([] { return QDateTime::currentSecsSinceEpoch(); }))
 {
     qRegisterMetaType<LoginResponse>();
@@ -136,6 +136,9 @@ bool ApiClient::buildProtectedRequest(const QString &path, const QString &method
         || proof.jwkThumbprint != session.deviceKeyThumbprint) {
         return reject(QStringLiteral("DEVICE_PROOF_FAILED"), QStringLiteral("Device proof could not be created."));
     }
+    if (session.expiresAt.toSecsSinceEpoch() <= clock_()) {
+        return reject(QStringLiteral("SESSION_EXPIRED"), QStringLiteral("The session has expired. Sign in again."));
+    }
 
     *request = QNetworkRequest(requestUrl);
     request->setRawHeader("Authorization", QByteArrayLiteral("DPoP ") + session.accessToken.toLatin1());
@@ -155,6 +158,10 @@ void ApiClient::loadProfile(const ProtectedSession &session, quint64 generation)
     if (!buildProtectedRequest(QStringLiteral("/v1/me"), QStringLiteral("GET"), session,
                                requestId, &networkRequest, &preparationError)) {
         fail(preparationError);
+        return;
+    }
+    if (session.expiresAt.toSecsSinceEpoch() <= clock_()) {
+        fail({QStringLiteral("SESSION_EXPIRED"), QStringLiteral("The session has expired. Sign in again."), requestId});
         return;
     }
 
