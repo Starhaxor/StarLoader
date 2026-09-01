@@ -227,9 +227,9 @@ QVERIFY(!policy.verify(QUrl(QStringLiteral("https://redirect.example.test/v1/me"
 - Consumes all previous tasks.
 - Produces documented client/KeyStar activation boundary and release ordering.
 
-- [ ] Document that the build is proof-ready but production activation requires KeyStar token-profile/DPoP support; no bearer fallback exists.
-- [ ] Document exact no-secret key-ring syntax, VMProtect SDK/project inputs, protected smoke tests, malware scanning, then Authenticode SHA-256 plus RFC 3161 timestamp.
-- [ ] Run `cmake --preset qt-mingw-local`, build all targets, and `ctest --preset qt-mingw-local --output-on-failure`.
-- [ ] Run the native live-flow test against a matching proof-enabled KeyStar fixture when available; otherwise record the explicit dependency without weakening unit/API coverage.
-- [ ] Run `git diff --check` and secret scans for access tokens, passwords, private keys, and proof bodies.
-- [ ] Commit `docs: define StarLoader protected-client activation`.
+- [x] Document that the build is proof-ready but production activation requires KeyStar token-profile/DPoP support; no bearer fallback exists.
+- [x] Document exact no-secret key-ring syntax, VMProtect SDK/project inputs, protected smoke tests, malware scanning, then Authenticode SHA-256 plus RFC 3161 timestamp.
+- [x] Run `cmake --preset qt-mingw-local`, build all targets, and `ctest --preset qt-mingw-local --output-on-failure` (19/19 passed on 2026-09-01).
+- [x] Run the native live-flow test against a matching proof-enabled KeyStar fixture when available; otherwise record the explicit dependency without weakening unit/API coverage. The fixture was unavailable: `STARLOADER_NATIVE_LIVE_EMAIL`, `STARLOADER_NATIVE_LIVE_PASSWORD`, and `STARLOADER_NATIVE_LIVE_MAX_DEVICES` were unset, so `NativeLiveFlowTest` skipped its live proof flow.
+- [x] Run `git diff --check` and secret scans for access tokens, passwords, private keys, and proof bodies. The focused scan excluded generated, vendor, Git, test, and known public configuration paths; no prohibited literal was found.
+- [x] Commit `docs: define StarLoader protected-client activation`.

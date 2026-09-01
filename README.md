@@ -339,6 +339,20 @@ The backend intentionally rejects unknown JSON fields, multiple JSON values, ove
 - Monitor rate-limit responses, revocations, unusual activation patterns, and request UUIDv7 support codes.
 - Test TPM replacement, motherboard service, disk replacement, license revocation, and database restore procedures before launch.
 
+## Proof-bound protected-client activation
+
+The desktop client is **proof-ready**, not automatically production-active. It
+accepts only a 600-second, application-bound KeyStar access-token profile and
+sends every protected request with `Authorization: DPoP <token>` plus one
+TPM-signed `DPoP` proof. There is no bearer-token compatibility path, refresh
+flow, offline lease, or runtime switch that can weaken this policy.
+
+Production activation is blocked until the deployed KeyStar backend issues the
+matching strict `kid`/`sid`/`jti`/`nbf`/`cnf.jkt` profile and validates DPoP
+proofs and replay state. The complete no-secret CMake configuration contract,
+VMProtect requirements, release order, smoke-test matrix, and protection
+limits are in [the protected-release activation guide](docs/STARLOADER_PROTECTED_RELEASE.md).
+
 ## Reset and recovery implications
 
 Clearing the TPM, deleting the persistent CNG key, or reinstalling Windows in a way that removes it changes the cryptographic device identity. StarLoader may treat the computer as a new activation even if other serials match. Do not silently weaken the proof policy to work around this.
