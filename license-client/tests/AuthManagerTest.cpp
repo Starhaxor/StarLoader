@@ -81,7 +81,7 @@ public:
 
 QString tokenFor(const QJsonObject &claims)
 {
-    const QByteArray header = QJsonDocument(QJsonObject{{QStringLiteral("alg"), QStringLiteral("EdDSA")}, {QStringLiteral("typ"), QStringLiteral("JWT")}}).toJson(QJsonDocument::Compact).toBase64(QByteArray::Base64UrlEncoding | QByteArray::OmitTrailingEquals);
+    const QByteArray header = QJsonDocument(QJsonObject{{QStringLiteral("alg"), QStringLiteral("EdDSA")}, {QStringLiteral("typ"), QStringLiteral("JWT")}, {QStringLiteral("kid"), QStringLiteral("test-kid")}}).toJson(QJsonDocument::Compact).toBase64(QByteArray::Base64UrlEncoding | QByteArray::OmitTrailingEquals);
     const QByteArray payload = QJsonDocument(claims).toJson(QJsonDocument::Compact).toBase64(QByteArray::Base64UrlEncoding | QByteArray::OmitTrailingEquals);
     const QByteArray message = header + '.' + payload;
     const QByteArray privateKey(32, '\x02');
@@ -102,13 +102,13 @@ SessionTokenVerifier verifier()
     EVP_PKEY *key = EVP_PKEY_new_raw_private_key(EVP_PKEY_ED25519, nullptr, reinterpret_cast<const unsigned char *>(privateKey.constData()), privateKey.size());
     QByteArray publicKey(32, Qt::Uninitialized); size_t publicKeySize = static_cast<size_t>(publicKey.size());
     const bool extracted = key != nullptr && EVP_PKEY_get_raw_public_key(key, reinterpret_cast<unsigned char *>(publicKey.data()), &publicKeySize) == 1 && publicKeySize == 32;
-    EVP_PKEY_free(key); if (!extracted) return SessionTokenVerifier(QByteArray(), QStringLiteral("starloader"), QStringLiteral("starloader-client"), QStringLiteral("StarLoader"));
-    return SessionTokenVerifier(publicKey, QStringLiteral("starloader"), QStringLiteral("starloader-client"), QStringLiteral("StarLoader"));
+    EVP_PKEY_free(key); if (!extracted) return SessionTokenVerifier({}, QStringLiteral("starloader"), QStringLiteral("starloader-client"), QStringLiteral("app-1"), QStringLiteral("product-1"), QStringLiteral("StarLoader"));
+    return SessionTokenVerifier({{QStringLiteral("test-kid"), publicKey}}, QStringLiteral("starloader"), QStringLiteral("starloader-client"), QStringLiteral("app-1"), QStringLiteral("product-1"), QStringLiteral("StarLoader"));
 }
 
 LoginResponse challengeResponse() { return {QStringLiteral("0198940d-7cec-7000-8000-000000000001"), QStringLiteral("Y2hhbGxlbmdl"), {}, QStringLiteral("request-1")}; }
 DeviceVerifyResponse verifiedResponse(QString token = {}) { return {token, {}, QStringLiteral("license-1"), QStringLiteral("device-1"), QStringLiteral("request-2")}; }
-QJsonObject validClaims() { const qint64 now = QDateTime::currentSecsSinceEpoch(); return {{QStringLiteral("sub"), QStringLiteral("user-1")}, {QStringLiteral("license_id"), QStringLiteral("license-1")}, {QStringLiteral("device_id"), QStringLiteral("device-1")}, {QStringLiteral("product"), QStringLiteral("StarLoader")}, {QStringLiteral("features"), QJsonArray{}}, {QStringLiteral("iss"), QStringLiteral("starloader")}, {QStringLiteral("aud"), QStringLiteral("starloader-client")}, {QStringLiteral("iat"), now}, {QStringLiteral("exp"), now + 3600}}; }
+QJsonObject validClaims() { const qint64 now = QDateTime::currentSecsSinceEpoch(); return {{QStringLiteral("sub"), QStringLiteral("user-1")}, {QStringLiteral("app"), QStringLiteral("app-1")}, {QStringLiteral("product_id"), QStringLiteral("product-1")}, {QStringLiteral("license_id"), QStringLiteral("license-1")}, {QStringLiteral("device_id"), QStringLiteral("device-1")}, {QStringLiteral("product"), QStringLiteral("StarLoader")}, {QStringLiteral("sid"), QStringLiteral("session-1")}, {QStringLiteral("jti"), QStringLiteral("token-1")}, {QStringLiteral("features"), QJsonArray{}}, {QStringLiteral("cnf"), QJsonObject{{QStringLiteral("jkt"), QStringLiteral("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")}}}, {QStringLiteral("iss"), QStringLiteral("starloader")}, {QStringLiteral("aud"), QStringLiteral("starloader-client")}, {QStringLiteral("iat"), now}, {QStringLiteral("nbf"), now}, {QStringLiteral("exp"), now + 600}}; }
 UserProfileResponse validProfile()
 {
     return {

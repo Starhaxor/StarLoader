@@ -2,22 +2,32 @@
 
 #include <QByteArray>
 #include <QDateTime>
+#include <QHash>
 #include <QString>
 
-struct VerificationResult { bool valid = false; QString error; QDateTime expiresAt; };
+struct VerifiedSession {
+    bool valid = false;
+    QString error;
+    QDateTime expiresAt;
+    QString sessionId;
+    QString tokenId;
+    QString deviceKeyThumbprint;
+};
 
 class SessionTokenVerifier
 {
 public:
-    SessionTokenVerifier(QByteArray publicKey, QString issuer, QString audience, QString product);
-    static SessionTokenVerifier fromBase64(const QString &encodedPublicKey, QString issuer, QString audience, QString product);
+    SessionTokenVerifier(QHash<QString, QByteArray> keys, QString issuer, QString audience, QString applicationID, QString productID, QString product);
+    static SessionTokenVerifier fromConfiguredKeyRing(const QString &encodedKeys, QString issuer, QString audience, QString applicationID, QString productID, QString product);
     bool isConfigured() const;
-    VerificationResult verify(const QString &token, const QString &expectedDevice, const QString &expectedLicense) const;
+    VerifiedSession verify(const QString &token, const QString &expectedDevice, const QString &expectedLicense) const;
 
 private:
-    QByteArray publicKey_;
+    QHash<QString, QByteArray> keys_;
     QString issuer_;
     QString audience_;
+    QString applicationID_;
+    QString productID_;
     QString product_;
-    bool verifySignature(const QByteArray &message, const QByteArray &signature) const;
+    bool verifySignature(const QByteArray &publicKey, const QByteArray &message, const QByteArray &signature) const;
 };

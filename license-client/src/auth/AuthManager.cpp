@@ -185,7 +185,7 @@ void AuthManager::handleLoginFailed(const ApiError &error, quint64 generation) {
 void AuthManager::handleDeviceVerified(const DeviceVerifyResponse &response, quint64 generation)
 {
     if (generation != attempt_ || state_ != AuthState::VerifyingDevice) return;
-    const VerificationResult verified = verifier_.verify(response.token, response.deviceId, response.licenseId);
+    const VerifiedSession verified = verifier_.verify(response.token, response.deviceId, response.licenseId);
     if (!verified.valid) { fail({QStringLiteral("INVALID_SESSION_TOKEN"), QStringLiteral("Server session token is invalid."), response.requestId}); return; }
     sessionToken_ = response.token;
     userProfile_ = {};

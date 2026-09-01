@@ -30,9 +30,10 @@ LoginWindow::LoginWindow(QWidget *parent)
     apiClient_ = new ApiClient(QUrl(QString::fromUtf8(STARLOADER_API_URL)), ApiClient::RequestTimeoutMs, this);
     hardwareCollector_ = std::make_unique<SystemHardwareCollector>();
     deviceSigner_ = std::make_unique<TpmDeviceSigner>();
-    const SessionTokenVerifier verifier = SessionTokenVerifier::fromBase64(
-        QString::fromLatin1(STARLOADER_ED25519_PUBLIC_KEY_BASE64),
-        QStringLiteral("keystar"), QStringLiteral("keystar-clients"), QStringLiteral("StarLoader"));
+    const SessionTokenVerifier verifier = SessionTokenVerifier::fromConfiguredKeyRing(
+        QString::fromLatin1(STARLOADER_ED25519_KEY_RING),
+        QStringLiteral("keystar"), QStringLiteral("keystar-clients"), QString::fromLatin1(STARLOADER_APPLICATION_ID),
+        QString::fromLatin1(STARLOADER_PRODUCT_ID), QStringLiteral("StarLoader"));
     authManager_ = new AuthManager(*apiClient_, *hardwareCollector_, *deviceSigner_, verifier, this);
 
     connect(ui->loginButton, &QPushButton::clicked, this, &LoginWindow::startLogin);
