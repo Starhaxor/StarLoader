@@ -156,6 +156,11 @@ QString AuthManager::deviceDisplayId() const { return hardware_.finalFingerprint
 void AuthManager::transition(AuthState state, const QString &status)
 {
     state_ = state;
+    emitTransitionSignals(status);
+}
+
+void AuthManager::emitTransitionSignals(const QString &status)
+{
     emit stateChanged(state_);
     emit statusChanged(status);
 }
@@ -324,8 +329,9 @@ void AuthManager::handleProfileLoaded(const UserProfileResponse &response, quint
     STARLOADER_VM_BEGIN("starloader.auth.verified-profile-transition.v1");
     userProfile_ = response;
     profileLoading_ = false;
+    state_ = AuthState::Authenticated;
     STARLOADER_VM_END();
-    transition(AuthState::Authenticated, QStringLiteral("Authenticated."));
+    emitTransitionSignals(QStringLiteral("Authenticated."));
     emit authenticated();
 }
 

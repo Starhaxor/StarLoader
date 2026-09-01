@@ -15,6 +15,12 @@ set(STARLOADER_VMPROTECT_SDK_INCLUDE_DIR "" CACHE PATH "Directory containing VMP
 set(STARLOADER_VMPROTECT_SDK_LIBRARY "" CACHE FILEPATH "VMProtect SDK library for protected releases")
 set(STARLOADER_VMPROTECT_PROJECT_FILE "" CACHE FILEPATH "VMProtect project file used by the release pipeline")
 if(STARLOADER_PROTECTED_RELEASE)
+    get_property(STARLOADER_VMPROTECT_MULTI_CONFIG GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
+    if(STARLOADER_VMPROTECT_MULTI_CONFIG)
+        set(CMAKE_CONFIGURATION_TYPES "Release" CACHE STRING "Configurations permitted for a protected release" FORCE)
+    elseif(NOT CMAKE_BUILD_TYPE STREQUAL "Release")
+        message(FATAL_ERROR "STARLOADER_PROTECTED_RELEASE=ON requires CMAKE_BUILD_TYPE=Release for a single-config generator")
+    endif()
     foreach(STARLOADER_VMPROTECT_REQUIRED_INPUT IN ITEMS
             STARLOADER_VMPROTECT_SDK_INCLUDE_DIR
             STARLOADER_VMPROTECT_SDK_LIBRARY
@@ -373,6 +379,11 @@ target_link_libraries(SessionTokenVerifierTest PRIVATE Qt6::Core Qt6::Test OpenS
 target_link_libraries(DeviceProofTest PRIVATE DeviceIdentityShared Qt6::Core Qt6::Network Qt6::Test)
 target_link_libraries(TlsPinPolicyTest PRIVATE Qt6::Core Qt6::Network Qt6::Test OpenSSL::Crypto)
 target_include_directories(ProtectionMarkersTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+if(STARLOADER_PROTECTED_RELEASE)
+    target_compile_definitions(ProtectionMarkersTest PRIVATE STARLOADER_PROTECTED_RELEASE=1)
+    target_include_directories(ProtectionMarkersTest PRIVATE "${STARLOADER_VMPROTECT_SDK_INCLUDE_DIR}")
+    target_link_libraries(ProtectionMarkersTest PRIVATE "${STARLOADER_VMPROTECT_SDK_LIBRARY}")
+endif()
 target_link_libraries(HwidDialogTest PRIVATE DeviceIdentityShared Qt6::Widgets Qt6::Concurrent Qt6::Test)
 target_link_libraries(LoginWindowUiTest PRIVATE DeviceIdentityShared Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Test OpenSSL::Crypto)
 target_link_libraries(WindowTitleBarTest PRIVATE Qt6::Widgets Qt6::Test)
@@ -409,8 +420,18 @@ add_test(NAME ProtectedReleaseConfigurationTest
     COMMAND "${CMAKE_COMMAND}"
         "-DSTARLOADER_CMAKE_COMMAND=${CMAKE_COMMAND}"
         "-DSTARLOADER_SOURCE_DIR=${CMAKE_SOURCE_DIR}"
-        "-DSTARLOADER_TEST_BINARY_DIR=${CMAKE_CURRENT_BINARY_DIR}/protected-release-configuration-test"
+        "-DSTARLOADER_TEST_BINARY_DIR=${CMAKE_CURRENT_BINARY_DIR}/p"
+        "-DSTARLOADER_CMAKE_GENERATOR=${CMAKE_GENERATOR}"
+        "-DSTARLOADER_CMAKE_GENERATOR_PLATFORM=${CMAKE_GENERATOR_PLATFORM}"
+        "-DSTARLOADER_CMAKE_GENERATOR_TOOLSET=${CMAKE_GENERATOR_TOOLSET}"
+        "-DSTARLOADER_CMAKE_MAKE_PROGRAM=${CMAKE_MAKE_PROGRAM}"
+        "-DSTARLOADER_CMAKE_C_COMPILER=${CMAKE_C_COMPILER}"
+        "-DSTARLOADER_CMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}"
+        "-DSTARLOADER_CMAKE_AR=${CMAKE_AR}"
+        "-DSTARLOADER_CMAKE_RANLIB=${CMAKE_RANLIB}"
+        "-DSTARLOADER_CMAKE_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE}"
         "-DSTARLOADER_CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}"
+        "-DSTARLOADER_QT6_DIR=${Qt6_DIR}"
         "-DSTARLOADER_OPENSSL_ROOT_DIR=${OPENSSL_ROOT_DIR}"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/VerifyProtectedReleaseConfiguration.cmake")
 add_test(NAME HwidDialogTest COMMAND HwidDialogTest)

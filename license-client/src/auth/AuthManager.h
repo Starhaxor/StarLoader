@@ -115,6 +115,7 @@ private:
     Clock clock_;
     std::unique_ptr<ISessionExpiryTimer> expiryTimer_;
     void transition(AuthState state, const QString &status);
+    void emitTransitionSignals(const QString &status);
     void fail(const ApiError &error);
     void clearSession();
     void requireReauthentication(quint64 generation);
