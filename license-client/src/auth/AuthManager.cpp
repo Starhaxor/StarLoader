@@ -40,9 +40,29 @@ bool SystemHardwareCollector::collect(HardwareIdentity *identity, QString *error
 
 bool TpmDeviceSigner::sign(const QByteArray &challenge, QByteArray *signature, QByteArray *publicKey, QString *error)
 {
-    *publicKey = TpmIdentity::publicKeyBlob();
-    *signature = TpmIdentity::signChallenge(challenge, error);
-    return !publicKey->isEmpty() && !signature->isEmpty();
+    return sign(QByteArrayView(challenge), signature, publicKey, error);
+}
+
+bool TpmDeviceSigner::publicKeyBlob(QByteArray *publicBlob, QString *error)
+{
+    if (!publicBlob)
+        return false;
+    if (error)
+        error->clear();
+    *publicBlob = TpmIdentity::publicKeyBlob();
+    if (!publicBlob->isEmpty())
+        return true;
+    if (error)
+        *error = QStringLiteral("The TPM public key is unavailable.");
+    return false;
+}
+
+bool TpmDeviceSigner::sign(QByteArrayView input, QByteArray *signature, QByteArray *publicBlob, QString *error)
+{
+    if (!signature || !publicBlob || input.isEmpty() || !publicKeyBlob(publicBlob, error))
+        return false;
+    *signature = TpmIdentity::signChallenge(input, error);
+    return !signature->isEmpty();
 }
 
 AuthManager::AuthManager(IApiClient &apiClient, IHardwareCollector &hardwareCollector, IDeviceSigner &deviceSigner, SessionTokenVerifier verifier, QObject *parent)

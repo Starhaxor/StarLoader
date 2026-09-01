@@ -3,6 +3,7 @@
 #include "api/ApiClient.h"
 #include "auth/AuthState.h"
 #include "security/SessionTokenVerifier.h"
+#include "security/DeviceProof.h"
 
 #include "hardware/HardwareIdentity.h"
 
@@ -40,10 +41,12 @@ private:
     SystemHardwareDependencies dependencies_;
 };
 
-class TpmDeviceSigner final : public IDeviceSigner
+class TpmDeviceSigner final : public IDeviceSigner, public IDeviceProofSigner
 {
 public:
     bool sign(const QByteArray &challenge, QByteArray *signature, QByteArray *publicKey, QString *error) override;
+    bool publicKeyBlob(QByteArray *publicBlob, QString *error) override;
+    bool sign(QByteArrayView input, QByteArray *signature, QByteArray *publicBlob, QString *error) override;
 };
 
 class AuthManager final : public QObject
