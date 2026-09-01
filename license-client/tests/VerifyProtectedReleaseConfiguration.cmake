@@ -1,5 +1,9 @@
 function(parent_configure_arguments output)
     set(arguments)
+    set(without_prefix_path FALSE)
+    if(ARGC GREATER 1 AND "${ARGV1}" STREQUAL "WITHOUT_PREFIX_PATH")
+        set(without_prefix_path TRUE)
+    endif()
     if(NOT "${STARLOADER_CMAKE_GENERATOR}" STREQUAL "")
         list(APPEND arguments -G "${STARLOADER_CMAKE_GENERATOR}")
     endif()
@@ -17,14 +21,44 @@ function(parent_configure_arguments output)
             CMAKE_RANLIB
             CMAKE_TOOLCHAIN_FILE
             CMAKE_PREFIX_PATH
-            QT6_DIR
             OPENSSL_ROOT_DIR)
+        if(without_prefix_path AND variable STREQUAL "CMAKE_PREFIX_PATH")
+            continue()
+        endif()
         set(value "${STARLOADER_${variable}}")
         if(NOT "${value}" STREQUAL "")
             list(APPEND arguments "-D${variable}=${value}")
         endif()
     endforeach()
+    if(NOT "${STARLOADER_QT6_DIR}" STREQUAL "")
+        list(APPEND arguments "-DQt6_DIR=${STARLOADER_QT6_DIR}")
+    endif()
     set(${output} "${arguments}" PARENT_SCOPE)
+endfunction()
+
+function(configure_protected_with_qt6_dir_only binary_dir expected_message)
+    parent_configure_arguments(configure_arguments WITHOUT_PREFIX_PATH)
+    execute_process(
+        COMMAND "${STARLOADER_CMAKE_COMMAND}"
+            -S "${STARLOADER_SOURCE_DIR}"
+            -B "${binary_dir}"
+            ${configure_arguments}
+            -DCMAKE_BUILD_TYPE=Release
+            -DSTARLOADER_LOCAL_DEVELOPMENT=ON
+            -DSTARLOADER_API_URL=http://127.0.0.1:8080
+            -DSTARLOADER_TLS_PINNED_HOST=127.0.0.1
+            -DSTARLOADER_TLS_SPKI_PINS=
+            -DSTARLOADER_ED25519_KEY_RING=local-test=e/40nbaaIxXaqAopnL6j/M0w7WeF70Nk8uIij1nr5SQ=
+            -DSTARLOADER_APPLICATION_ID=01a04caa-baa0-72ec-9b69-b4ba548bb3e5
+            -DSTARLOADER_PRODUCT_ID=starloader
+            -DSTARLOADER_PUBLISHABLE_KEY=ks_pk_test_3MQ61B26VW_l7Xh56LE9PuaGEAZz1YD0hsJoe_myOKLPWnPtS9dxbQ
+            -DSTARLOADER_PROTECTED_RELEASE=ON
+        RESULT_VARIABLE configure_result
+        OUTPUT_VARIABLE configure_stdout
+        ERROR_VARIABLE configure_stderr)
+    if(configure_result EQUAL 0 OR NOT "${configure_stdout}${configure_stderr}" MATCHES "${expected_message}")
+        message(FATAL_ERROR "Protected-release configuration with only Qt6_DIR did not reach: ${expected_message}")
+    endif()
 endfunction()
 
 function(configure_protected binary_dir expected_message)
@@ -87,6 +121,9 @@ configure_protected_debug(
     "CMAKE_BUILD_TYPE=Release")
 configure_protected(
     "${STARLOADER_TEST_BINARY_DIR}/missing-sdk"
+    "STARLOADER_VMPROTECT_SDK_INCLUDE_DIR")
+configure_protected_with_qt6_dir_only(
+    "${STARLOADER_TEST_BINARY_DIR}/qt6-dir-only"
     "STARLOADER_VMPROTECT_SDK_INCLUDE_DIR")
 
 set(fake_sdk_dir "${STARLOADER_TEST_BINARY_DIR}/fake-sdk")
