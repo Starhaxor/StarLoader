@@ -43,6 +43,15 @@
         "CMAKE_PREFIX_PATH": "C:/Qt/6-static",
         "STARLOADER_STATIC": "ON"
       }
+    },
+    {
+      "name": "qt-mingw-protected",
+      "displayName": "Qt 6.11.1 MinGW — VMProtect release",
+      "inherits": "qt-mingw",
+      "binaryDir": "${sourceDir}/build-protected",
+      "cacheVariables": {
+        "STARLOADER_PROTECTED_RELEASE": "ON"
+      }
     }
   ],
   "buildPresets": [
@@ -57,6 +66,10 @@
     {
       "name": "qt-static-build",
       "configurePreset": "qt-static"
+    },
+    {
+      "name": "qt-mingw-protected-build",
+      "configurePreset": "qt-mingw-protected"
     }
     ,
     {

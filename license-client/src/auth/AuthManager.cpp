@@ -2,6 +2,7 @@
 
 #include "hardware/HardwareCollector.h"
 #include "security/Fingerprint.h"
+#include "security/ProtectionMarkers.h"
 #include "security/TpmIdentity.h"
 
 #include <QtConcurrent/QtConcurrentRun>
@@ -320,8 +321,10 @@ void AuthManager::handleProfileLoaded(const UserProfileResponse &response, quint
         requireReauthentication(generation);
         return;
     }
+    STARLOADER_VM_BEGIN("starloader.auth.verified-profile-transition.v1");
     userProfile_ = response;
     profileLoading_ = false;
+    STARLOADER_VM_END();
     transition(AuthState::Authenticated, QStringLiteral("Authenticated."));
     emit authenticated();
 }

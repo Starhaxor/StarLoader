@@ -1,6 +1,7 @@
 #include "DeviceProof.h"
 
 #include "ClientSecurityConfig.h"
+#include "security/ProtectionMarkers.h"
 #include "security/TpmIdentity.h"
 
 #include <QCryptographicHash>
@@ -270,6 +271,9 @@ ProofResult DeviceProofBuilder::build(const QString &method, const QUrl &url,
     const QString jti = QString::fromLatin1(base64Url(random));
     secureClear(&random);
 
+    const QString dpopMethod = method.toUpper();
+    const qint64 issuedAt = clock_();
+    STARLOADER_MUTATE_BEGIN("starloader.dpop.field-binding-policy.v1");
     const QJsonObject jwk{
         {QStringLiteral("crv"), QStringLiteral("P-256")},
         {QStringLiteral("kty"), QStringLiteral("EC")},
@@ -283,11 +287,12 @@ ProofResult DeviceProofBuilder::build(const QString &method, const QUrl &url,
     };
     const QJsonObject payload{
         {QStringLiteral("ath"), ath},
-        {QStringLiteral("htm"), method.toUpper()},
+        {QStringLiteral("htm"), dpopMethod},
         {QStringLiteral("htu"), htu},
-        {QStringLiteral("iat"), clock_()},
+        {QStringLiteral("iat"), issuedAt},
         {QStringLiteral("jti"), jti},
     };
+    STARLOADER_MUTATE_END();
 
     const QByteArray encodedHeader = base64Url(QJsonDocument(header).toJson(QJsonDocument::Compact));
     const QByteArray encodedPayload = base64Url(QJsonDocument(payload).toJson(QJsonDocument::Compact));

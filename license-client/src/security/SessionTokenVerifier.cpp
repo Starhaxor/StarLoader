@@ -1,4 +1,5 @@
 #include "SessionTokenVerifier.h"
+#include "security/ProtectionMarkers.h"
 
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -214,7 +215,17 @@ VerifiedSession SessionTokenVerifier::verify(const QString &token, const QString
     if (!validStringClaim(confirmationObject, QStringLiteral("jkt"), &thumbprint) || !decodeCanonicalBase64Url(thumbprint.toLatin1(), &thumbprintBytes) || thumbprintBytes.size() != 32) return invalidSession();
 
     const qint64 now = QDateTime::currentSecsSinceEpoch();
-    if (issuer != issuer_ || audience != audience_ || applicationID != applicationID_ || productID != productID_ || product != product_ || license != expectedLicense || device != expectedDevice || issuedAt > now + kMaxClockSkewSeconds || notBefore > now + kMaxClockSkewSeconds || expiresAt <= now || expiresAt <= issuedAt || expiresAt - issuedAt != kRequiredLifetimeSeconds || notBefore > expiresAt) return invalidSession();
+    bool claimPolicyAccepted = false;
+    STARLOADER_VM_BEGIN("starloader.session.claim-policy.v1");
+    claimPolicyAccepted = issuer == issuer_ && audience == audience_
+        && applicationID == applicationID_ && productID == productID_
+        && product == product_ && license == expectedLicense && device == expectedDevice
+        && issuedAt <= now + kMaxClockSkewSeconds
+        && notBefore <= now + kMaxClockSkewSeconds && expiresAt > now
+        && expiresAt > issuedAt && expiresAt - issuedAt == kRequiredLifetimeSeconds
+        && notBefore <= expiresAt;
+    STARLOADER_VM_END();
+    if (!claimPolicyAccepted) return invalidSession();
     return {true, {}, QDateTime::fromSecsSinceEpoch(expiresAt, QTimeZone::UTC), sessionID, tokenID, thumbprint};
 }
 

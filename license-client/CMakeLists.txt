@@ -6,6 +6,35 @@ if(STARLOADER_STATIC AND MINGW)
     target_link_libraries(OpenSSL::Crypto INTERFACE z)
 endif()
 
+# VMProtect is a release-only post-build protection dependency. Its SDK and
+# project are supplied from a private release environment and are never stored
+# in this repository. Development and test builds deliberately use inert
+# markers and require none of these inputs.
+option(STARLOADER_PROTECTED_RELEASE "Enable VMProtect markers for a protected release build" OFF)
+set(STARLOADER_VMPROTECT_SDK_INCLUDE_DIR "" CACHE PATH "Directory containing VMProtectSDK.h for protected releases")
+set(STARLOADER_VMPROTECT_SDK_LIBRARY "" CACHE FILEPATH "VMProtect SDK library for protected releases")
+set(STARLOADER_VMPROTECT_PROJECT_FILE "" CACHE FILEPATH "VMProtect project file used by the release pipeline")
+if(STARLOADER_PROTECTED_RELEASE)
+    foreach(STARLOADER_VMPROTECT_REQUIRED_INPUT IN ITEMS
+            STARLOADER_VMPROTECT_SDK_INCLUDE_DIR
+            STARLOADER_VMPROTECT_SDK_LIBRARY
+            STARLOADER_VMPROTECT_PROJECT_FILE)
+        if("${${STARLOADER_VMPROTECT_REQUIRED_INPUT}}" STREQUAL "" OR NOT EXISTS "${${STARLOADER_VMPROTECT_REQUIRED_INPUT}}")
+            message(FATAL_ERROR "STARLOADER_PROTECTED_RELEASE=ON requires an existing ${STARLOADER_VMPROTECT_REQUIRED_INPUT}; VMProtect SDK and project inputs are release-environment only.")
+        endif()
+    endforeach()
+    if(NOT IS_DIRECTORY "${STARLOADER_VMPROTECT_SDK_INCLUDE_DIR}" OR NOT EXISTS "${STARLOADER_VMPROTECT_SDK_INCLUDE_DIR}/VMProtectSDK.h")
+        message(FATAL_ERROR "STARLOADER_VMPROTECT_SDK_INCLUDE_DIR must contain VMProtectSDK.h when STARLOADER_PROTECTED_RELEASE=ON")
+    endif()
+    if(IS_DIRECTORY "${STARLOADER_VMPROTECT_SDK_LIBRARY}")
+        message(FATAL_ERROR "STARLOADER_VMPROTECT_SDK_LIBRARY must be a VMProtect SDK library file when STARLOADER_PROTECTED_RELEASE=ON")
+    endif()
+    if(IS_DIRECTORY "${STARLOADER_VMPROTECT_PROJECT_FILE}")
+        message(FATAL_ERROR "STARLOADER_VMPROTECT_PROJECT_FILE must be a VMProtect project file when STARLOADER_PROTECTED_RELEASE=ON")
+    endif()
+endif()
+
+
 set(STARLOADER_ED25519_KEY_RING "" CACHE STRING "Comma-separated kid=canonical-standard-base64 Ed25519 session-token public keys")
 string(REPLACE "," ";" STARLOADER_ED25519_KEY_RING_ENTRIES "${STARLOADER_ED25519_KEY_RING}")
 list(LENGTH STARLOADER_ED25519_KEY_RING_ENTRIES STARLOADER_ED25519_KEY_RING_COUNT)
@@ -193,6 +222,10 @@ qt_add_executable(TlsPinPolicyTest
     tests/TlsPinPolicyTest.cpp
 )
 
+add_executable(ProtectionMarkersTest
+    tests/ProtectionMarkersTest.cpp
+)
+
 qt_add_executable(HwidDialogTest
     src/ui/HwidDialog.cpp
     src/ui/HwidDialog.h
@@ -295,6 +328,13 @@ target_link_libraries(LicenseClient PRIVATE
     OpenSSL::Crypto
 )
 
+if(STARLOADER_PROTECTED_RELEASE)
+    target_compile_definitions(LicenseClient PRIVATE STARLOADER_PROTECTED_RELEASE=1)
+    target_include_directories(LicenseClient PRIVATE "${STARLOADER_VMPROTECT_SDK_INCLUDE_DIR}")
+    target_link_libraries(LicenseClient PRIVATE "${STARLOADER_VMPROTECT_SDK_LIBRARY}")
+endif()
+
+
 target_include_directories(LicenseClient PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CMAKE_CURRENT_BINARY_DIR}/generated
@@ -332,6 +372,7 @@ target_link_libraries(AuthManagerTest PRIVATE DeviceIdentityShared Qt6::Core Qt6
 target_link_libraries(SessionTokenVerifierTest PRIVATE Qt6::Core Qt6::Test OpenSSL::Crypto)
 target_link_libraries(DeviceProofTest PRIVATE DeviceIdentityShared Qt6::Core Qt6::Network Qt6::Test)
 target_link_libraries(TlsPinPolicyTest PRIVATE Qt6::Core Qt6::Network Qt6::Test OpenSSL::Crypto)
+target_include_directories(ProtectionMarkersTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(HwidDialogTest PRIVATE DeviceIdentityShared Qt6::Widgets Qt6::Concurrent Qt6::Test)
 target_link_libraries(LoginWindowUiTest PRIVATE DeviceIdentityShared Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Test OpenSSL::Crypto)
 target_link_libraries(WindowTitleBarTest PRIVATE Qt6::Widgets Qt6::Test)
@@ -363,12 +404,21 @@ add_test(NAME AuthManagerTest COMMAND AuthManagerTest)
 add_test(NAME SessionTokenVerifierTest COMMAND SessionTokenVerifierTest)
 add_test(NAME DeviceProofTest COMMAND DeviceProofTest)
 add_test(NAME TlsPinPolicyTest COMMAND TlsPinPolicyTest)
+add_test(NAME ProtectionMarkersTest COMMAND ProtectionMarkersTest)
+add_test(NAME ProtectedReleaseConfigurationTest
+    COMMAND "${CMAKE_COMMAND}"
+        "-DSTARLOADER_CMAKE_COMMAND=${CMAKE_COMMAND}"
+        "-DSTARLOADER_SOURCE_DIR=${CMAKE_SOURCE_DIR}"
+        "-DSTARLOADER_TEST_BINARY_DIR=${CMAKE_CURRENT_BINARY_DIR}/protected-release-configuration-test"
+        "-DSTARLOADER_CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}"
+        "-DSTARLOADER_OPENSSL_ROOT_DIR=${OPENSSL_ROOT_DIR}"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/VerifyProtectedReleaseConfiguration.cmake")
 add_test(NAME HwidDialogTest COMMAND HwidDialogTest)
 add_test(NAME LoginWindowUiTest COMMAND LoginWindowUiTest)
 add_test(NAME WindowTitleBarTest COMMAND WindowTitleBarTest)
 add_test(NAME UserDashboardTest COMMAND UserDashboardTest)
 add_test(NAME NativeLiveFlowTest COMMAND NativeLiveFlowTest)
-foreach(test_name IN ITEMS ApiClientTest AuthManagerTest SessionTokenVerifierTest DeviceProofTest TlsPinPolicyTest HwidDialogTest LoginWindowUiTest WindowTitleBarTest UserDashboardTest NativeLiveFlowTest)
+foreach(test_name IN ITEMS ApiClientTest AuthManagerTest SessionTokenVerifierTest DeviceProofTest TlsPinPolicyTest ProtectionMarkersTest HwidDialogTest LoginWindowUiTest WindowTitleBarTest UserDashboardTest NativeLiveFlowTest)
     set_tests_properties(${test_name} PROPERTIES
         ENVIRONMENT "PATH=$<TARGET_FILE_DIR:Qt6::Core>\\;${OPENSSL_CRYPTO_RUNTIME_DIR}\\;$ENV{PATH}")
     if(WIN32)
