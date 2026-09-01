@@ -49,12 +49,12 @@ struct VerifiedSession {
 };
 ```
 
-- [ ] Write tests whose tokens contain `kid`, `app`, `product_id`, `sid`, `jti`, `nbf`, and `cnf.jkt`; assert a valid 600-second token returns every verified binding.
-- [ ] Add table-driven rejection tests for unknown `kid`, missing/duplicate critical fields, wrong app/product/device/license, malformed thumbprint, `nbf` outside skew, and lifetimes 599/601/3600.
-- [ ] Run `cmake --build --preset qt-mingw-local --target SessionTokenVerifierTest && ctest --preset qt-mingw-local -R SessionTokenVerifierTest --output-on-failure`; verify RED because the new profile is unsupported.
-- [ ] Implement strict header/key selection and claim validation. Reject unknown/extra JOSE members and non-canonical encodings. Return only sanitized `Invalid session token.` failures.
-- [ ] Add `STARLOADER_ED25519_KEY_RING` compile-time validation; require at least one unique `kid`, canonical standard Base64, and 32-byte decoded keys without embedding a usable production example.
-- [ ] Re-run the focused test and commit `feat(auth): verify proof-bound StarLoader tokens`.
+- [x] Write tests whose tokens contain `kid`, `app`, `product_id`, `sid`, `jti`, `nbf`, and `cnf.jkt`; assert a valid 600-second token returns every verified binding.
+- [x] Add table-driven rejection tests for unknown `kid`, missing/duplicate critical fields, wrong app/product/device/license, malformed thumbprint, `nbf` outside skew, and lifetimes 599/601/3600.
+- [x] Run `cmake --build --preset qt-mingw-local --target SessionTokenVerifierTest && ctest --preset qt-mingw-local -R SessionTokenVerifierTest --output-on-failure`; verify RED because the new profile is unsupported.
+- [x] Implement strict header/key selection and claim validation. Reject unknown/extra JOSE members and non-canonical encodings. Return only sanitized `Invalid session token.` failures.
+- [x] Add `STARLOADER_ED25519_KEY_RING` compile-time validation; require at least one unique `kid`, canonical standard Base64, and 32-byte decoded keys without embedding a usable production example.
+- [x] Re-run the focused test and commit `feat(auth): verify proof-bound StarLoader tokens`.
 
 ### Task 2: Build TPM P-256 JWK and DPoP Proofs
 
@@ -84,12 +84,12 @@ struct ProofResult {
 };
 ```
 
-- [ ] Write deterministic tests with injected clock, 16-byte random source, and signer. Assert exact `typ`, `alg`, JWK X/Y, `jti`, uppercase `htm`, canonical `htu`, `iat`, `ath`, and 64-byte signature encoding.
-- [ ] Add rejection cases for wrong CNG magic/length, non-HTTPS production URL, query/fragment retention, non-64-byte signature, empty token, and token/JWK thumbprint mismatch.
-- [ ] Run the focused target and verify RED because `DeviceProofBuilder` does not exist.
-- [ ] Implement strict CNG blob parsing, RFC 7638 canonical thumbprint, canonical compact JSON/JWS, and SHA-256 `ath`. Clear temporary signing input after use.
-- [ ] Make `TpmDeviceSigner` implement the new signer interface using the existing non-exportable TPM key; do not change CNG key policy.
-- [ ] Run focused tests and commit `feat(security): create TPM-bound DPoP proofs`.
+- [x] Write deterministic tests with injected clock, 16-byte random source, and signer. Assert exact `typ`, `alg`, JWK X/Y, `jti`, uppercase `htm`, canonical `htu`, `iat`, `ath`, and 64-byte signature encoding.
+- [x] Add rejection cases for wrong CNG magic/length, non-HTTPS production URL, query/fragment retention, non-64-byte signature, empty token, and token/JWK thumbprint mismatch.
+- [x] Run the focused target and verify RED because `DeviceProofBuilder` does not exist.
+- [x] Implement strict CNG blob parsing, RFC 7638 canonical thumbprint, canonical compact JSON/JWS, and SHA-256 `ath`. Clear temporary signing input after use.
+- [x] Make `TpmDeviceSigner` implement the new signer interface using the existing non-exportable TPM key; do not change CNG key policy.
+- [x] Run focused tests and commit `feat(security): create TPM-bound DPoP proofs`.
 
 ### Task 3: Make Protected Requests Proof-Required
 
@@ -114,12 +114,12 @@ struct ProtectedSession {
 // DPoP: <compact ES256 proof>
 ```
 
-- [ ] Write a loopback transport test that captures `/v1/me` and proves it carries exactly one `Authorization: DPoP <token>` and one matching `DPoP` proof.
-- [ ] Add tests proving no socket request is sent when proof construction fails, token is expired, URL is noncanonical, or the proof thumbprint mismatches.
-- [ ] Verify focused RED; current code sends bearer-only.
-- [ ] Inject a proof builder into `ApiClient`, centralize protected request creation, and remove the bearer-only profile path. Sanitize all proof/token failures.
-- [ ] Keep login/device endpoints publishable-credential authenticated and unchanged.
-- [ ] Run `ApiClientTest` and commit `feat(api): require TPM proof on protected requests`.
+- [x] Write a loopback transport test that captures `/v1/me` and proves it carries exactly one `Authorization: DPoP <token>` and one matching `DPoP` proof.
+- [x] Add tests proving no socket request is sent when proof construction fails, token is expired, URL is noncanonical, or the proof thumbprint mismatches.
+- [x] Verify focused RED; current code sends bearer-only.
+- [x] Inject a proof builder into `ApiClient`, centralize protected request creation, and remove the bearer-only profile path. Sanitize all proof/token failures.
+- [x] Keep login/device endpoints publishable-credential authenticated and unchanged.
+- [x] Run `ApiClientTest` and commit `feat(api): require TPM proof on protected requests`.
 
 ### Task 4: Expire Sessions into Full Reauthentication
 
@@ -146,12 +146,12 @@ QVERIFY(manager.sessionToken().isEmpty());
 QCOMPARE(api.loginCount, 1); // no automatic login or refresh
 ```
 
-- [ ] Add tests with an injectable timer/clock proving expiry cancels protected work, overwrites token state, clears profile/device/session state, emits reauthentication, and never calls login/device/refresh automatically.
-- [ ] Add tests proving the password buffer is overwritten/cleared immediately after login serialization and is absent from failure/status strings.
-- [ ] Add UI tests proving launch always shows credentials and expiry closes the dashboard and restores the credential form with a safe reason.
-- [ ] Verify focused RED.
-- [ ] Implement the timer from verified `exp`, make all auth/proof failures call one memory-clearing path, and keep email only as ordinary UI state.
-- [ ] Run auth/UI tests and commit `feat(auth): require full reauthentication on expiry`.
+- [x] Add tests with an injectable timer/clock proving expiry cancels protected work, overwrites token state, clears profile/device/session state, emits reauthentication, and never calls login/device/refresh automatically.
+- [x] Add tests proving the password buffer is overwritten/cleared immediately after login serialization and is absent from failure/status strings.
+- [x] Add UI tests proving launch always shows credentials and expiry closes the dashboard and restores the credential form with a safe reason.
+- [x] Verify focused RED.
+- [x] Implement the timer from verified `exp`, make all auth/proof failures call one memory-clearing path, and keep email only as ordinary UI state.
+- [x] Run auth/UI tests and commit `feat(auth): require full reauthentication on expiry`.
 
 ### Task 5: Pin the Production KeyStar SPKI
 
@@ -177,12 +177,12 @@ QVERIFY(policy.verify(QUrl(QStringLiteral("https://api.example.test/v1/me")), cu
 QVERIFY(!policy.verify(QUrl(QStringLiteral("https://redirect.example.test/v1/me")), currentCertificate));
 ```
 
-- [ ] Add policy tests with generated X.509 fixtures proving current and staged-next SPKI pins pass, while wrong host/key, empty certificate, malformed pin, redirect host, and a third pin fail.
-- [ ] Verify focused RED because `TlsPinPolicy` does not exist.
-- [ ] Implement SPKI extraction with OpenSSL `d2i_X509`, `X509_get_X509_PUBKEY`, and `i2d_X509_PUBKEY`, then SHA-256 compare without disabling normal Qt TLS validation.
-- [ ] Require exact compile-time syntax `sha256/<standard-base64>,sha256/<standard-base64>` for production; require two distinct 32-byte pins. Local-development presets carry no pins and allow only numeric loopback HTTP.
-- [ ] Connect `QNetworkAccessManager::encrypted` and `sslErrors`; abort on missing/mismatched pins or any TLS error, and reject redirects whose host differs from the configured host.
-- [ ] Run `TlsPinPolicyTest` and `ApiClientTest`; commit `feat(tls): pin KeyStar production SPKI`.
+- [x] Add policy tests with generated X.509 fixtures proving current and staged-next SPKI pins pass, while wrong host/key, empty certificate, malformed pin, redirect host, and a third pin fail.
+- [x] Verify focused RED because `TlsPinPolicy` does not exist.
+- [x] Implement SPKI extraction with OpenSSL `d2i_X509`, `X509_get_X509_PUBKEY`, and `i2d_X509_PUBKEY`, then SHA-256 compare without disabling normal Qt TLS validation.
+- [x] Require exact compile-time syntax `sha256/<standard-base64>,sha256/<standard-base64>` for production; require two distinct 32-byte pins. Local-development presets carry no pins and allow only numeric loopback HTTP.
+- [x] Connect `QNetworkAccessManager::encrypted` and `sslErrors`; abort on missing/mismatched pins or any TLS error, and reject redirects whose host differs from the configured host.
+- [x] Run `TlsPinPolicyTest` and `ApiClientTest`; commit `feat(tls): pin KeyStar production SPKI`.
 
 ### Task 6: Add Selective VMProtect Marker Abstraction
 
@@ -209,12 +209,12 @@ QVERIFY(!policy.verify(QUrl(QStringLiteral("https://redirect.example.test/v1/me"
 #endif
 ```
 
-- [ ] Add compile tests proving ordinary/test builds require no VMProtect SDK and every macro is a valid no-op statement pair.
-- [ ] Add a configure-negative test proving `STARLOADER_PROTECTED_RELEASE=ON` fails when the VMProtect SDK/project path is absent.
-- [ ] Verify RED before the marker header/options exist.
-- [ ] Implement no-op macros by default and VMProtect SDK mappings only under `STARLOADER_PROTECTED_RELEASE`.
-- [ ] Mark only token claim-policy decision, DPoP field/binding decision, and verified-profile-to-authenticated transition. Keep parsing, crypto, network, and Qt loops outside regions.
-- [ ] Run configure/build tests and commit `feat(release): add selective VMProtect markers`.
+- [x] Add compile tests proving ordinary/test builds require no VMProtect SDK and every macro is a valid no-op statement pair.
+- [x] Add a configure-negative test proving `STARLOADER_PROTECTED_RELEASE=ON` fails when the VMProtect SDK/project path is absent.
+- [x] Verify RED before the marker header/options exist.
+- [x] Implement no-op macros by default and VMProtect SDK mappings only under `STARLOADER_PROTECTED_RELEASE`.
+- [x] Mark only token claim-policy decision, DPoP field/binding decision, and verified-profile-to-authenticated transition. Keep parsing, crypto, network, and Qt loops outside regions.
+- [x] Run configure/build tests and commit `feat(release): add selective VMProtect markers`.
 
 ### Task 7: Verification and Activation Boundary
 
@@ -229,7 +229,7 @@ QVERIFY(!policy.verify(QUrl(QStringLiteral("https://redirect.example.test/v1/me"
 
 - [x] Document that the build is proof-ready but production activation requires KeyStar token-profile/DPoP support; no bearer fallback exists.
 - [x] Document exact no-secret key-ring syntax, VMProtect SDK/project inputs, protected smoke tests, malware scanning, then Authenticode SHA-256 plus RFC 3161 timestamp.
-- [x] Run `cmake --preset qt-mingw-local`, build all targets, and `ctest --preset qt-mingw-local --output-on-failure` (19/19 passed on 2026-09-01).
+- [x] Run `cmake --preset qt-mingw-local`, build all targets, and `ctest --preset qt-mingw-local --output-on-failure` (19/19 passed on 2026-09-02).
 - [x] Run the native live-flow test against a matching proof-enabled KeyStar fixture when available; otherwise record the explicit dependency without weakening unit/API coverage. The fixture was unavailable: `STARLOADER_NATIVE_LIVE_EMAIL`, `STARLOADER_NATIVE_LIVE_PASSWORD`, and `STARLOADER_NATIVE_LIVE_MAX_DEVICES` were unset, so `NativeLiveFlowTest` skipped its live proof flow.
-- [x] Run `git diff --check` and secret scans for access tokens, passwords, private keys, and proof bodies. The focused scan excluded generated, vendor, Git, test, and known public configuration paths; no prohibited literal was found.
-- [x] Commit `docs: define StarLoader protected-client activation`.
+- [x] Run `git diff --check` and a reproducible literal-secret scan for access tokens, passwords, private keys, and proof bodies. The documented scan includes authored source/configuration/docs (including CMake presets) and excludes only build/generated/vendor/Git/nested-worktree/test-fixture paths; no prohibited literal was found.
+- [x] Commit `fix(docs): align protected release instructions`.

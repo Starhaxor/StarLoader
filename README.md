@@ -32,7 +32,7 @@ All three screens share one design language: a cold slate-black background (`#0B
 |---|---|---|
 | `LicenseClient` | Qt 6 / C++ | Collects identity signals, performs login, signs the challenge through Windows TPM/CNG, verifies the Ed25519 session token, loads the authenticated profile, and holds the token in memory while displaying the dashboard. |
 | `HwidObtainer` | Qt 6 / C++ | Displays normalized hardware diagnostics and locally tests valid, modified-challenge, and modified-signature behavior. It does not send data to the API. |
-| `backend` | Go 1.24 | Authenticates accounts/licenses, issues and consumes challenges transactionally, evaluates device similarity, enforces activation limits, and signs one-hour session tokens. |
+| `backend` | Go 1.24 | Authenticates accounts/licenses, issues and consumes challenges transactionally, evaluates device similarity, enforces activation limits, and must issue the strict 600-second proof-bound KeyStar access-token profile before protected-client production activation. |
 | PostgreSQL | PostgreSQL 17 | Stores users, HMAC-protected licenses and hardware signals, devices, sessions, and challenges. |
 
 ## Comparison with common licensing approaches
@@ -66,7 +66,7 @@ The table above compares *approaches*; this section compares StarLoader with the
 
 There is a consistent pattern behind these rows. Most commercial products bind to **account state** rather than to hardware: whoever holds the credentials or an offline code can activate from anywhere, and the only protection is a device counter the server maintains. Classic keygen-style protection binds to hardware but only by **hashing readable strings** — values that can be copied, spoofed, or invalidated by a single hardware change. Hardware dongles are the only widely deployed approach with real possession proof, and they pay for it with logistics.
 
-StarLoader takes the dongle idea and makes it software-defined. Instead of carrying a token, the machine proves possession of a non-exportable TPM P-256 private key by signing a fresh, single-use server challenge, and weighted hardware signals decide whether a slightly changed machine is still "the same device". The server keeps full control — license status, revocation, device limits, one-hour tokens — which is the strength of the account model, while the TPM proof closes the hole that model usually has: a stolen credential no longer works from another machine.
+StarLoader takes the dongle idea and makes it software-defined. Instead of carrying a token, the machine proves possession of a non-exportable TPM P-256 private key by signing a fresh, single-use server challenge, and weighted hardware signals decide whether a slightly changed machine is still "the same device". The server keeps full control — license status, revocation, device limits, and strict 600-second proof-bound access tokens — while the TPM proof closes the hole that account-only models have: a stolen credential cannot complete protected requests from another machine.
 
 In practice, compared with the products above:
 
@@ -84,9 +84,9 @@ In practice, compared with the products above:
 4. The server atomically creates a UUIDv7 pending session and a random 32-byte challenge. Only the challenge SHA-256 digest is stored.
 5. The client signs the decoded challenge with the TPM key and sends the exact challenge, raw CNG `r || s` signature, CNG public-key blob, and hardware signals to `POST /v1/device/verify`.
 6. Inside one PostgreSQL transaction, the server locks the challenge, session, license, and relevant device rows. It validates expiry, proof, revocation, similarity, and activation limits before consuming the challenge.
-7. The server creates or refreshes the device and returns a compact Ed25519-signed token with an exact one-hour lifetime.
-8. The client verifies the embedded trust key, JWS header, signature, issuer, audience, product, device, license, features, `iat`, and `exp`, then retains the token only in memory.
-9. The client sends that token as its sole `Authorization: Bearer ...` credential to `GET /v1/me`. The API derives the user, license, and device identity only from verified claims and reloads their current database state.
+7. The matching KeyStar server creates or refreshes the device and returns a compact Ed25519-signed access token with an exact 600-second lifetime.
+8. The client verifies the configured key-ring `kid`, exact JWS header/signature, issuer, audience, application/product, device, license, `sid`, `jti`, `nbf`, `cnf.jkt`, features, `iat`, and `exp`, then retains the token only in memory.
+9. For `GET /v1/me`, the client sends exactly `Authorization: DPoP <access-token>` and one TPM-signed ES256 `DPoP` proof bound to the method, canonical HTTPS URI, token hash, and TPM key. KeyStar must validate that proof and reject replay; there is no bearer-only fallback.
 10. The dashboard is shown only after `/v1/me` returns the safe authenticated profile. Signing out destroys the in-memory session/profile state and returns to an empty login form.
 11. Replaying the same challenge returns `CHALLENGE_CONSUMED` and cannot create another device.
 
@@ -111,14 +111,14 @@ This is intentionally different from exact-string HWID matching. For example, a 
 - License keys and hardware signals use separate HMAC secrets.
 - Raw license keys, raw challenge bytes, passwords, and raw serial values are not persisted or logged.
 - Challenges are short-lived, single-use, and consumed only after the verification transaction succeeds.
-- Session tokens use Ed25519 and expire exactly 3,600 seconds after `iat`.
-- Session tokens are retained only in process memory, are never persisted by the client, and are cleared on profile failure or sign-out.
-- The Qt client verifies the server public key embedded at build time; a runtime environment variable cannot replace the trust root.
-- HTTP is rejected by the client except for an explicit loopback-only development switch.
+- Access tokens use Ed25519, expire exactly 600 seconds after `iat`, and must carry the proof-bound token profile.
+- Access tokens are retained only in process memory, are never persisted by the client, and are cleared on profile failure, expiry, or sign-out.
+- The Qt client verifies a build-time `STARLOADER_ED25519_KEY_RING`; a runtime environment variable cannot replace the trust root.
+- Production keeps normal TLS validation and additionally requires two configured SPKI pins. HTTP is available only in the compile-time `qt-mingw-local` profile for numeric loopback `127.0.0.1`.
 - Rate limits apply per client IP for login and per session for device verification.
 - UUIDv7 improves index locality and operational tracing, but UUIDs are identifiers—not authorization secrets.
 
-This project does not provide certificate pinning, refresh tokens, offline grace periods, an admin web panel, automatic account recovery, or remote TPM attestation. TPM possession proves access to the local key, not that the operating system is malware-free.
+This project does not provide refresh tokens, offline grace periods, an admin web panel, automatic account recovery, or remote TPM attestation. TPM possession proves access to the local key, not that the operating system is malware-free.
 
 ## Repository layout
 
@@ -186,9 +186,9 @@ docker run --rm -v "${PWD}:/workspace" -w /workspace/backend golang:1.24 go run 
 The command prints two lines:
 
 - Put `ED25519_PRIVATE_KEY` only in the repository-root `.env` file used by the documented `--env-file .env` commands, or in a production secret manager. Do not create a separate `backend/.env` for this quick-start path.
-- Pass `STARLOADER_ED25519_PUBLIC_KEY` to CMake when building the trusted client.
+- Add the corresponding public key to the build-time `STARLOADER_ED25519_KEY_RING` as `<kid>=<32-byte-standard-base64-public-key>`. The `kid` must match the strict KeyStar token profile. Production also requires the application ID, product ID, publishable key, exact KeyStar host, and two distinct TLS SPKI pins described in [the protected-release guide](docs/STARLOADER_PROTECTED_RELEASE.md).
 
-Never distribute the private key with the desktop applications. Rotating this key requires rebuilding/redeploying clients or implementing an explicit multi-key rotation policy.
+Never distribute the private key with the desktop applications. Key rotation adds a staged `kid=base64` public key to the client key ring before KeyStar begins issuing that `kid`.
 
 ### 3. Apply the migration
 
@@ -240,17 +240,15 @@ The backend serves plain HTTP itself. In production, expose it only behind a cor
 
 ### 7. Configure and build both Qt applications
 
-Replace `<PUBLIC_KEY>` with the generated public key:
+The local preset compiles the numeric-loopback development profile into the
+client. It sets the local API URL, key ring, application/product IDs,
+publishable key, and pin policy at CMake configuration time; runtime
+environment variables cannot replace them.
 
 ```powershell
-$env:Path = "C:\Qt\Tools\mingw1310_64\bin;C:\Qt\6.11.1\mingw_64\bin;C:\Qt\Tools\Ninja;C:\Qt\Tools\mingw1310_64\opt\bin;$env:Path"
-& 'C:\Qt\Tools\CMake_64\bin\cmake.exe' -S . -B build -G Ninja `
-  -DCMAKE_PREFIX_PATH=C:\Qt\6.11.1\mingw_64 `
-  -DOPENSSL_ROOT_DIR=C:\Qt\Tools\mingw1310_64\opt `
-  -DSTARLOADER_ED25519_PUBLIC_KEY=<PUBLIC_KEY> `
-  -DSTARLOADER_API_URL=https://api.example.com
-& 'C:\Qt\Tools\CMake_64\bin\cmake.exe' --build build
-& 'C:\Qt\Tools\CMake_64\bin\ctest.exe' --test-dir build --output-on-failure
+cmake --preset qt-mingw-local
+cmake --build --preset qt-mingw-local
+ctest --preset qt-mingw-local --output-on-failure
 ```
 
 Expected executables:
@@ -264,18 +262,20 @@ Non-deployed MinGW builds need the Qt, MinGW, and OpenSSL runtime DLL directorie
 
 ```powershell
 $env:Path = "C:\Qt\Tools\mingw1310_64\bin;C:\Qt\6.11.1\mingw_64\bin;C:\Qt\Tools\mingw1310_64\opt\bin;$env:Path"
-$env:STARLOADER_API_URL = 'http://127.0.0.1:8080'
-$env:STARLOADER_ALLOW_HTTP_LOCAL = '1'
 & .\build\license-client\LicenseClient.exe
 ```
 
 Keep PostgreSQL and the API from steps 1 and 6 running while logging in. Enter the account email and password created in step 4. A successful TPM/device verification is followed automatically by `GET /v1/me`; the login window is replaced only after that profile request succeeds.
 
-Do not set `STARLOADER_ALLOW_HTTP_LOCAL` in production. A non-loopback HTTP URL remains blocked even if the variable is present. A packaged deployment should carry its runtime DLLs beside the executable (for example via Qt deployment tooling) instead of depending on a developer `PATH`.
+The local HTTP exception exists only because `qt-mingw-local` compiled the
+`STARLOADER_LOCAL_DEVELOPMENT` profile for numeric `127.0.0.1`. It cannot be
+enabled at runtime and is not available in production. A packaged deployment
+should carry its runtime DLLs beside the executable (for example via Qt
+deployment tooling) instead of depending on a developer `PATH`.
 
 ## Authenticated dashboard and sign-out
 
-The dashboard presents the safe profile fields inside a single card, grouped into **Account**, **Device**, and **Session** sections: license status and expiry, product, email, account status, maximum devices, device status, the shortened server device ID, session expiry, and the local masked display HWID. A status badge summarizes the license (`● Active License`, turning red for revoked/expired and amber for warning states), status-bearing values are colored (green for active, red for revoked/expired, amber for warnings), and the device ID and HWID rows each carry a one-click copy button. It never receives or displays the bearer token, password, license key, HMAC values, TPM keys/signatures, or raw hardware serials; the client keeps the token only in its in-memory authentication state.
+The dashboard presents the safe profile fields inside a single card, grouped into **Account**, **Device**, and **Session** sections: license status and expiry, product, email, account status, maximum devices, device status, the shortened server device ID, session expiry, and the local masked display HWID. A status badge summarizes the license (`● Active License`, turning red for revoked/expired and amber for warning states), status-bearing values are colored (green for active, red for revoked/expired, amber for warnings), and the device ID and HWID rows each carry a one-click copy button. It never receives or displays the access token, password, license key, HMAC values, TPM keys/signatures, or raw hardware serials; the client keeps the token only in its in-memory authentication state.
 
 Select **Sign out** to clear the in-memory token, profile, and authentication identifiers, close the dashboard, clear both credential inputs, and return to the login window. Closing the dashboard normally exits the application instead. The login window, HWID dialog, and dashboard all use the same custom dark title bar without a native icon slot.
 
@@ -307,7 +307,7 @@ Run the complete test entry point from PowerShell:
 The script creates an isolated PostgreSQL 17 container, then runs:
 
 - all Go unit and real-PostgreSQL integration tests with the race detector;
-- black-box health, login, P-256 challenge, device verification, Ed25519 token, claim-bound `/v1/me`, invalid/expired bearer rejection, exact safe profile fields, and replay checks;
+- black-box health, login, P-256 challenge, device verification, exact safe profile fields, and replay checks, plus the client-side strict-token, DPoP, TLS-pin, and protected-request tests in CTest;
 - `go vet`;
 - migration, admin user, admin license, and key-generation command checks;
 - complete Qt configure/build and CTest;
@@ -321,9 +321,13 @@ The temporary database container is removed in a `finally` block. Override its h
 
 ## API contract
 
-The exact JSON fields, status behavior, cryptographic byte formats, response schema, and safe error codes are documented in [server-contract/API.md](server-contract/API.md).
+The original backend JSON fields, status behavior, cryptographic byte formats,
+response schema, and safe error codes are documented in
+[server-contract/API.md](server-contract/API.md). For a protected-client
+release, the proof-bound contract below supersedes any earlier bearer-only
+endpoint wording until matching KeyStar enforcement is deployed.
 
-`GET /v1/me` requires exactly one valid bearer session token. It accepts no request body or request-supplied identity, returns the current safe account/license/device projection, and rejects invalid or expired tokens with `401 INVALID_SESSION_TOKEN`. The endpoint checks current PostgreSQL status on every call, so a still-signed token does not bypass later account, license, or device restrictions.
+For protected-client activation, `GET /v1/me` requires exactly one valid 600-second proof-bound access token in `Authorization: DPoP <access-token>` and exactly one TPM-signed `DPoP` header. It accepts no request body or request-supplied identity, returns the current safe account/license/device projection, and must reject invalid, expired, malformed, bearer-only, or replayed proofs. The deployed KeyStar backend checks current account/license/device state on every call so a still-signed token does not bypass later restrictions. Until that matching KeyStar deployment exists, this is a fail-closed activation contract, not a passed live-flow claim.
 
 The backend intentionally rejects unknown JSON fields, multiple JSON values, oversized bodies, unsupported content types, malformed canonical UUIDs, expired sessions/challenges/licenses, consumed challenges, invalid TPM proofs, revoked entities, and activation-limit violations.
 
@@ -331,7 +335,7 @@ The backend intentionally rejects unknown JSON fields, multiple JSON values, ove
 
 - Generate fresh independent secrets; never use repository/test values.
 - Store the Ed25519 private key and HMAC keys in a secret manager.
-- Build the client with the matching public key and archive the build provenance.
+- Build the client with the matching `STARLOADER_ED25519_KEY_RING`, application/product IDs, publishable key, exact host, and current/staged TLS pins; archive build provenance.
 - Terminate TLS with modern settings and keep the Go listener private.
 - Configure PostgreSQL backups, encryption, least-privilege credentials, and monitoring.
 - Restrict `TRUSTED_PROXIES` to actual proxy CIDRs.
@@ -367,15 +371,30 @@ Confirm TPM 2.0 is enabled in firmware and Windows Security, then run `HwidObtai
 
 ### The client reports token verifier unavailable
 
-Reconfigure/rebuild `LicenseClient` with the Base64 public key corresponding to the backend private key. The trust root is embedded at build time and cannot be repaired with a runtime environment variable.
+Reconfigure/rebuild `LicenseClient` with a matching
+`STARLOADER_ED25519_KEY_RING` entry in exact
+`kid=<32-byte-standard-base64-public-key>` form. The token's `kid` must be in
+that build-time ring. The trust root cannot be repaired with a runtime
+environment variable.
 
 ### Local HTTP is rejected
 
-Both conditions are required: `STARLOADER_API_URL` must be a loopback URL and `STARLOADER_ALLOW_HTTP_LOCAL` must equal `1`.
+Use `cmake --preset qt-mingw-local` before building. That CMake preset compiles
+the sole HTTP exception: `http://127.0.0.1` (with an optional port) under
+`STARLOADER_LOCAL_DEVELOPMENT=ON`. The executable has no runtime URL or HTTP
+override. Any production configuration requires HTTPS, an exact configured
+host, and exactly two distinct SPKI pins.
 
 ### The client reports a network error against a deployed server
 
-The client resolves its API base URL in this order: the runtime `STARLOADER_API_URL` environment variable, then the `https://` URL baked at build time via `-DSTARLOADER_API_URL=...`. CMake warns (but does not fail) when the baked URL is still the placeholder `https://api.starloader.example`, and it refuses any non-`https://` value; use the `qt-mingw` preset or `-DSTARLOADER_API_URL=...` to bake the deployed endpoint. If neither source points at a reachable HTTPS endpoint, the login fails with `NETWORK_ERROR`.
+The API URL is compiled from the selected CMake preset or an explicit
+configure-time `-DSTARLOADER_API_URL=...` value; it has no runtime override.
+Production configuration fails unless that URL is HTTPS, its host exactly
+matches `STARLOADER_TLS_PINNED_HOST`, and
+`STARLOADER_TLS_SPKI_PINS` contains exactly two distinct valid pins. Configure
+all production inputs through the protected build command in [the
+protected-release guide](docs/STARLOADER_PROTECTED_RELEASE.md). If the compiled
+endpoint is unreachable, the login fails with `NETWORK_ERROR`.
 
 Verify from the machine running the client that `https://<your-server>/healthz` returns `200` over a certificate the OS trusts. Plain HTTP is rejected for non-loopback hosts (`INSECURE_TRANSPORT`) and self-signed certificates fail the TLS handshake (`NETWORK_ERROR`). Since the server ships plain HTTP, terminate TLS at a reverse proxy in front of it and set `TRUSTED_PROXIES` to that proxy's CIDR.
 
