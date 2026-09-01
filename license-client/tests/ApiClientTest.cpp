@@ -94,6 +94,7 @@ class ApiClientTest final : public QObject
 
 private slots:
     void sendsExactLoginContractAndParsesReply();
+    void overwritesSerializedLoginBodyImmediatelyAfterSubmission();
     void parsesStructuredFailuresWithoutLeakingCredentials();
     void rejectsMalformedSuccessJson();
     void sendsExactDeviceVerificationContract();
@@ -160,7 +161,7 @@ void ApiClientTest::parsesStructuredFailuresWithoutLeakingCredentials()
         QTcpSocket *socket = server.nextPendingConnection();
         connect(socket, &QTcpSocket::readyRead, socket, [socket] {
             socket->readAll();
-            const QByteArray response = "{\"ok\":false,\"code\":\"INVALID_CREDENTIALS\",\"message\":\"invalid credentials\",\"request_id\":\"req-body\"}";
+            const QByteArray response = "{\"ok\":false,\"code\":\"INVALID_CREDENTIALS\",\"message\":\"never-in-error\",\"request_id\":\"never-in-error\"}";
             socket->write("HTTP/1.1 401 Unauthorized\r\nContent-Type: application/json\r\nContent-Length: " + QByteArray::number(response.size()) + "\r\nX-Request-ID: req-header\r\n\r\n" + response);
             socket->disconnectFromHost();
         });
@@ -171,7 +172,7 @@ void ApiClientTest::parsesStructuredFailuresWithoutLeakingCredentials()
     if (failed.isEmpty()) QVERIFY(failed.wait(3000));
     const ApiError error = failed.at(0).at(0).value<ApiError>();
     QCOMPARE(error.code, QStringLiteral("INVALID_CREDENTIALS"));
-    QCOMPARE(error.requestId, QStringLiteral("req-body"));
+    QVERIFY(error.requestId.isEmpty());
     QVERIFY(!error.message.contains(QStringLiteral("never-in-error")));
     QCOMPARE(failed.at(0).at(1).toULongLong(), quint64(22));
 }
@@ -281,6 +282,23 @@ void ApiClientTest::sendsExactProfileContractAndParsesReply()
     QCOMPARE(profile.sessionExpiresAt, QDateTime::fromString(QStringLiteral("2026-08-13T18:50:15Z"), Qt::ISODate));
     QCOMPARE(profile.requestId, QStringLiteral("profile-request"));
     QCOMPARE(complete.at(0).at(1).toULongLong(), quint64(42));
+}
+
+void ApiClientTest::overwritesSerializedLoginBodyImmediatelyAfterSubmission()
+{
+    qputenv("STARLOADER_ALLOW_HTTP_LOCAL", "1");
+    QTcpServer server;
+    QVERIFY(server.listen(QHostAddress::LocalHost));
+    ApiClient client(QUrl(QStringLiteral("http://127.0.0.1:%1").arg(server.serverPort())));
+    bool observed = false;
+    client.setBodyCleanupObserverForTesting([&](QByteArrayView body) {
+        observed = true;
+        QVERIFY(!body.isEmpty());
+        for (const char byte : body) QCOMPARE(byte, '\0');
+    });
+    client.login({QStringLiteral("person@example.com"), QStringLiteral("secret-password"),
+                  QStringLiteral("fingerprint")});
+    QVERIFY(observed);
 }
 
 void ApiClientTest::doesNotSendProtectedRequestWhenProofFails()

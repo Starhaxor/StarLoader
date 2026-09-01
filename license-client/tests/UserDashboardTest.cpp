@@ -34,6 +34,7 @@ private slots:
     void copyButtonsCopyFullValuesToClipboard();
     void validatedAuthenticationShowsExactlyOneDashboard();
     void signOutClearsCredentialsAndReturnsToLogin();
+    void expiryClosesDashboardAndRestoresCredentials();
     void closingDashboardDoesNotResurrectLogin();
     void closingDashboardExitsRealApplicationLoop();
 };
@@ -404,6 +405,34 @@ void UserDashboardTest::signOutClearsCredentialsAndReturnsToLogin()
     QVERIFY(password->text().isEmpty());
     QVERIFY(login.isVisible());
     QCOMPARE(openDashboards().size(), 0);
+}
+
+void UserDashboardTest::expiryClosesDashboardAndRestoresCredentials()
+{
+    LoginWindow login;
+    auto *email = login.findChild<QLineEdit *>(QStringLiteral("emailLineEdit"));
+    auto *password = login.findChild<QLineEdit *>(QStringLiteral("passwordLineEdit"));
+    auto *subtitle = login.findChild<QLabel *>(QStringLiteral("subtitleLabel"));
+    QVERIFY(email);
+    QVERIFY(password);
+    QVERIFY(subtitle);
+    email->setText(QStringLiteral("person@example.com"));
+    password->setText(QStringLiteral("not-retained"));
+    login.show();
+    AuthManager *manager = authenticatedManager(login);
+    QVERIFY(manager);
+    QCOMPARE(openDashboards().size(), 1);
+
+    const QString reason = QStringLiteral("Session expired. Sign in again.");
+    QVERIFY(QMetaObject::invokeMethod(manager, "reauthenticationRequired", Qt::DirectConnection,
+                                      Q_ARG(QString, reason)));
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+
+    QVERIFY(login.isVisible());
+    QCOMPARE(openDashboards().size(), 0);
+    QCOMPARE(email->text(), QStringLiteral("person@example.com"));
+    QVERIFY(password->text().isEmpty());
+    QCOMPARE(subtitle->text(), reason);
 }
 
 void UserDashboardTest::closingDashboardDoesNotResurrectLogin()

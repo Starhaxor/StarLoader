@@ -51,6 +51,7 @@ LoginWindow::LoginWindow(QWidget *parent)
     connect(authManager_, &AuthManager::stateChanged, this, &LoginWindow::applyState);
     connect(authManager_, &AuthManager::failed, this, &LoginWindow::showFailure);
     connect(authManager_, &AuthManager::authenticated, this, &LoginWindow::showDashboard);
+    connect(authManager_, &AuthManager::reauthenticationRequired, this, &LoginWindow::showReauthentication);
 }
 
 LoginWindow::~LoginWindow()
@@ -84,7 +85,29 @@ void LoginWindow::openHwidDialog()
 
 void LoginWindow::startLogin()
 {
-    authManager_->login(ui->emailLineEdit->text(), ui->passwordLineEdit->text());
+    ui->subtitleLabel->setText(QStringLiteral("Sign in to continue to your account"));
+    QString password = ui->passwordLineEdit->text();
+    authManager_->login(ui->emailLineEdit->text(), password);
+    password.detach();
+    password.fill(QChar());
+    password.clear();
+    ui->passwordLineEdit->setText(QString(ui->passwordLineEdit->text().size(), QChar()));
+    ui->passwordLineEdit->clear();
+}
+
+void LoginWindow::showReauthentication(const QString &reason)
+{
+    if (dashboard_ != nullptr) {
+        dashboard_->hide();
+        dashboard_->deleteLater();
+        dashboard_.clear();
+    }
+    ui->passwordLineEdit->clear();
+    ui->subtitleLabel->setText(reason);
+    applyState(AuthState::LoggedOut);
+    show();
+    raise();
+    activateWindow();
 }
 
 void LoginWindow::showDashboard()

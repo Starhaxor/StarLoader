@@ -6,6 +6,8 @@
 #include <QJsonParseError>
 #include <QNetworkReply>
 #include <QNetworkRequest>
+#include <QRegularExpression>
+#include <QSet>
 #include <QTimer>
 #include <QUuid>
 
@@ -54,6 +56,25 @@ ApiError withoutSecret(ApiError error, const QString &secret)
     if (error.code.contains(secret)) error.code = QStringLiteral("INVALID_SESSION_TOKEN");
     if (error.message.contains(secret)) error.message = QStringLiteral("Profile request failed.");
     if (error.requestId.contains(secret)) error.requestId.clear();
+    return error;
+}
+
+ApiError sanitizedLoginError(ApiError error)
+{
+    static const QSet<QString> allowedCodes{
+        QStringLiteral("INVALID_CREDENTIALS"), QStringLiteral("LICENSE_EXPIRED"),
+        QStringLiteral("LICENSE_REVOKED"), QStringLiteral("DEVICE_LIMIT_REACHED"),
+        QStringLiteral("DEVICE_REVOKED"), QStringLiteral("RATE_LIMITED"),
+        QStringLiteral("NETWORK_ERROR"), QStringLiteral("INSECURE_TRANSPORT"),
+        QStringLiteral("TIMEOUT"), QStringLiteral("RESPONSE_TOO_LARGE"),
+        QStringLiteral("MALFORMED_RESPONSE"), QStringLiteral("REQUEST_IN_PROGRESS"),
+    };
+    if (!allowedCodes.contains(error.code)) error.code = QStringLiteral("AUTHENTICATION_FAILED");
+    if (error.code != QStringLiteral("NETWORK_ERROR") && error.code != QStringLiteral("TIMEOUT"))
+        error.message = QStringLiteral("Authentication failed.");
+    static const QRegularExpression safeRequestId(QStringLiteral(
+        "^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"));
+    if (!safeRequestId.match(error.requestId).hasMatch()) error.requestId.clear();
     return error;
 }
 } // namespace
@@ -145,6 +166,11 @@ bool ApiClient::buildProtectedRequest(const QString &path, const QString &method
     request->setRawHeader("DPoP", proof.compactJws.toLatin1());
     request->setRawHeader("X-Request-ID", requestId.toUtf8());
     return true;
+}
+
+void ApiClient::setBodyCleanupObserverForTesting(BodyCleanupObserver observer)
+{
+    bodyCleanupObserver_ = std::move(observer);
 }
 
 void ApiClient::loadProfile(const ProtectedSession &session, quint64 generation)
@@ -246,7 +272,13 @@ void ApiClient::postJson(const QString &path, const QJsonObject &body, bool devi
     networkRequest.setRawHeader("X-KeyStar-App", QByteArrayLiteral(STARLOADER_APPLICATION_ID));
     networkRequest.setRawHeader("Authorization", QByteArrayLiteral("Bearer ") + QByteArrayLiteral(STARLOADER_PUBLISHABLE_KEY));
     networkRequest.setRawHeader("X-Request-ID", requestId.toUtf8());
-    QNetworkReply *reply = network_.post(networkRequest, QJsonDocument(body).toJson(QJsonDocument::Compact));
+    QByteArray requestBody = QJsonDocument(body).toJson(QJsonDocument::Compact);
+    QNetworkReply *reply = network_.post(networkRequest, requestBody);
+    requestBody.detach();
+    requestBody.fill('\0');
+    if (bodyCleanupObserver_) bodyCleanupObserver_(QByteArrayView(requestBody));
+    requestBody.clear();
+    requestBody.squeeze();
     reply->setReadBufferSize(MaxResponseBytes);
     auto *timer = new QTimer(reply);
     timer->setSingleShot(true);
@@ -261,7 +293,8 @@ void ApiClient::postJson(const QString &path, const QJsonObject &body, bool devi
                 ? ApiError{QStringLiteral("TIMEOUT"), QStringLiteral("Network request timed out."), requestId}
                 : errorForReply(reply, body, requestId);
             if (body.size() > MaxResponseBytes) error = {QStringLiteral("RESPONSE_TOO_LARGE"), QStringLiteral("Server response is too large."), requestId};
-            if (deviceRequest) emit deviceVerificationFailed(error, generation); else emit loginFailed(error, generation);
+            if (deviceRequest) emit deviceVerificationFailed(error, generation);
+            else emit loginFailed(sanitizedLoginError(error), generation);
             reply->deleteLater(); return;
         }
         QJsonParseError parseError;

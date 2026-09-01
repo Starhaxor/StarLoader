@@ -45,6 +45,7 @@ private:
 
 private slots:
     void showFailure(const ApiError &error);
+    void showReauthentication(const QString &reason);
 };
 
 #endif

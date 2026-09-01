@@ -5,6 +5,10 @@
 #include "security/TpmIdentity.h"
 
 #include <QtConcurrent/QtConcurrentRun>
+#include <QRegularExpression>
+#include <QSet>
+#include <QTimer>
+#include <limits>
 
 namespace {
 bool strictBase64(const QString &encoded, QByteArray *decoded)
@@ -15,6 +19,58 @@ bool strictBase64(const QString &encoded, QByteArray *decoded)
     *decoded = value;
     return true;
 }
+
+void secureClear(QString &value)
+{
+    if (!value.isEmpty()) {
+        value.detach();
+        value.fill(QChar());
+    }
+    value.clear();
+    value.squeeze();
+}
+
+void secureClear(QByteArray &value)
+{
+    if (!value.isEmpty()) {
+        value.detach();
+        value.fill('\0');
+    }
+    value.clear();
+    value.squeeze();
+}
+
+class QtSessionExpiryTimer final : public ISessionExpiryTimer
+{
+public:
+    QtSessionExpiryTimer()
+    {
+        timer_.setSingleShot(true);
+        QObject::connect(&timer_, &QTimer::timeout, [this] {
+            const auto callback = std::move(callback_);
+            callback_ = {};
+            if (callback) callback();
+        });
+    }
+
+    void schedule(qint64 delayMs, std::function<void()> expiryCallback) override
+    {
+        cancel();
+        callback_ = std::move(expiryCallback);
+        timer_.start(static_cast<int>(qBound(qint64(0), delayMs,
+                                             qint64(std::numeric_limits<int>::max()))));
+    }
+
+    void cancel() override
+    {
+        timer_.stop();
+        callback_ = {};
+    }
+
+private:
+    QTimer timer_;
+    std::function<void()> callback_;
+};
 }
 
 SystemHardwareCollector::SystemHardwareCollector()
@@ -66,7 +122,17 @@ bool TpmDeviceSigner::sign(QByteArrayView input, QByteArray *signature, QByteArr
 }
 
 AuthManager::AuthManager(IApiClient &apiClient, IHardwareCollector &hardwareCollector, IDeviceSigner &deviceSigner, SessionTokenVerifier verifier, QObject *parent)
-    : QObject(parent), apiClient_(apiClient), hardwareCollector_(hardwareCollector), deviceSigner_(deviceSigner), verifier_(std::move(verifier))
+    : AuthManager(apiClient, hardwareCollector, deviceSigner, std::move(verifier),
+                  [] { return QDateTime::currentSecsSinceEpoch(); },
+                  std::make_unique<QtSessionExpiryTimer>(), parent)
+{}
+
+AuthManager::AuthManager(IApiClient &apiClient, IHardwareCollector &hardwareCollector, IDeviceSigner &deviceSigner,
+                         SessionTokenVerifier verifier, Clock clock,
+                         std::unique_ptr<ISessionExpiryTimer> expiryTimer, QObject *parent)
+    : QObject(parent), apiClient_(apiClient), hardwareCollector_(hardwareCollector), deviceSigner_(deviceSigner),
+      verifier_(std::move(verifier)), clock_(clock ? std::move(clock) : Clock([] { return QDateTime::currentSecsSinceEpoch(); })),
+      expiryTimer_(expiryTimer ? std::move(expiryTimer) : std::make_unique<QtSessionExpiryTimer>())
 {
     qRegisterMetaType<AuthState>();
     connect(&apiClient_, &IApiClient::loginSucceeded, this, &AuthManager::handleLoginSucceeded);
@@ -96,11 +162,33 @@ void AuthManager::transition(AuthState state, const QString &status)
 void AuthManager::fail(const ApiError &error)
 {
     ApiError safeError = error;
-    if (!sessionToken_.isEmpty()) {
-        if (safeError.code.contains(sessionToken_)) safeError.code = QStringLiteral("INVALID_SESSION_TOKEN");
-        if (safeError.message.contains(sessionToken_)) safeError.message = QStringLiteral("Authentication failed.");
-        if (safeError.requestId.contains(sessionToken_)) safeError.requestId.clear();
+    const QStringList secrets{sessionToken_, pendingLogin_.password};
+    for (const QString &secret : secrets) {
+        if (secret.isEmpty()) continue;
+        if (safeError.code.contains(secret)) safeError.code = QStringLiteral("AUTHENTICATION_FAILED");
+        if (safeError.message.contains(secret)) safeError.message = QStringLiteral("Authentication failed.");
+        if (safeError.requestId.contains(secret)) safeError.requestId.clear();
     }
+    static const QSet<QString> allowedCodes{
+        QStringLiteral("INVALID_CREDENTIALS"), QStringLiteral("LICENSE_EXPIRED"),
+        QStringLiteral("LICENSE_REVOKED"), QStringLiteral("DEVICE_LIMIT_REACHED"),
+        QStringLiteral("DEVICE_REVOKED"), QStringLiteral("RATE_LIMITED"),
+        QStringLiteral("TPM_UNAVAILABLE"), QStringLiteral("TOKEN_VERIFIER_UNAVAILABLE"),
+        QStringLiteral("INVALID_CHALLENGE"), QStringLiteral("DEVICE_SIGNING_FAILED"),
+        QStringLiteral("INVALID_SESSION_TOKEN"), QStringLiteral("INVALID_SESSION"),
+        QStringLiteral("SESSION_EXPIRED"), QStringLiteral("DEVICE_PROOF_FAILED"),
+        QStringLiteral("NETWORK_ERROR"), QStringLiteral("INSECURE_TRANSPORT"),
+        QStringLiteral("TIMEOUT"), QStringLiteral("RESPONSE_TOO_LARGE"),
+        QStringLiteral("MALFORMED_RESPONSE"), QStringLiteral("REQUEST_IN_PROGRESS"),
+    };
+    if (!allowedCodes.contains(safeError.code)) safeError.code = QStringLiteral("AUTHENTICATION_FAILED");
+    safeError.message = QStringLiteral("Authentication failed.");
+    static const QRegularExpression safeRequestId(QStringLiteral(
+        "^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"));
+    if (!safeRequestId.match(safeError.requestId).hasMatch()) safeError.requestId.clear();
+    expiryTimer_->cancel();
+    if (profileLoading_) apiClient_.cancelProfile();
+    ++attempt_;
     clearSession();
     transition(AuthState::Failed, QStringLiteral("Authentication failed."));
     emit failed(safeError);
@@ -108,20 +196,22 @@ void AuthManager::fail(const ApiError &error)
 
 void AuthManager::clearSession()
 {
-    pendingLogin_ = {};
+    secureClear(pendingLogin_.password);
+    pendingLogin_.email.clear();
     hardware_ = {};
-    sessionId_.clear();
-    challenge_.clear();
-    sessionToken_.clear();
+    secureClear(sessionId_);
+    secureClear(challenge_);
+    secureClear(sessionToken_);
     userProfile_ = {};
     profileLoading_ = false;
+    expiresAt_ = {};
 }
 
 void AuthManager::login(const QString &email, const QString &password)
 {
     if (state_ != AuthState::LoggedOut && state_ != AuthState::Failed) return;
-    sessionToken_.clear();
-    userProfile_ = {};
+    expiryTimer_->cancel();
+    clearSession();
     pendingLogin_ = {email, password};
     const quint64 attempt = ++attempt_;
     transition(AuthState::CollectingDevice, QStringLiteral("Collecting device identity."));
@@ -136,6 +226,7 @@ void AuthManager::login(const QString &email, const QString &password)
 void AuthManager::signOut()
 {
     cancelAndWait();
+    expiryTimer_->cancel();
     apiClient_.cancelProfile();
     clearSession();
     transition(AuthState::LoggedOut, QStringLiteral("Signed out."));
@@ -164,7 +255,7 @@ void AuthManager::completeCollection()
     if (!verifier_.isConfigured()) { fail({QStringLiteral("TOKEN_VERIFIER_UNAVAILABLE"), QStringLiteral("Client security configuration is unavailable."), {}}); return; }
     transition(AuthState::Authenticating, QStringLiteral("Authenticating."));
     apiClient_.login({pendingLogin_.email, pendingLogin_.password, hardware_.finalFingerprint}, attempt_);
-    pendingLogin_.password.clear();
+    secureClear(pendingLogin_.password);
 }
 
 void AuthManager::handleLoginSucceeded(const LoginResponse &response, quint64 generation)
@@ -208,6 +299,12 @@ void AuthManager::handleDeviceVerified(const DeviceVerifyResponse &response, qui
     const VerifiedSession verified = verifier_.verify(response.token, response.deviceId, response.licenseId);
     if (!verified.valid) { fail({QStringLiteral("INVALID_SESSION_TOKEN"), QStringLiteral("Server session token is invalid."), response.requestId}); return; }
     sessionToken_ = response.token;
+    expiresAt_ = verified.expiresAt;
+    if (expiresAt_.toSecsSinceEpoch() <= clock_()) {
+        requireReauthentication(generation);
+        return;
+    }
+    scheduleExpiry(expiresAt_, generation);
     userProfile_ = {};
     profileLoading_ = true;
     transition(AuthState::Authenticating, QStringLiteral("Loading profile."));
@@ -219,10 +316,32 @@ void AuthManager::handleDeviceVerificationFailed(const ApiError &error, quint64 
 void AuthManager::handleProfileLoaded(const UserProfileResponse &response, quint64 generation)
 {
     if (generation != attempt_ || state_ != AuthState::Authenticating || !profileLoading_ || sessionToken_.isEmpty()) return;
+    if (!expiresAt_.isValid() || expiresAt_.toSecsSinceEpoch() <= clock_()) {
+        requireReauthentication(generation);
+        return;
+    }
     userProfile_ = response;
     profileLoading_ = false;
     transition(AuthState::Authenticated, QStringLiteral("Authenticated."));
     emit authenticated();
+}
+
+void AuthManager::scheduleExpiry(const QDateTime &expiresAt, quint64 generation)
+{
+    const qint64 delayMs = qMax<qint64>(0, (expiresAt.toSecsSinceEpoch() - clock_()) * 1000);
+    expiryTimer_->schedule(delayMs, [this, generation] { requireReauthentication(generation); });
+}
+
+void AuthManager::requireReauthentication(quint64 generation)
+{
+    if (generation != attempt_ || sessionToken_.isEmpty()) return;
+    expiryTimer_->cancel();
+    apiClient_.cancelProfile();
+    ++attempt_;
+    clearSession();
+    const QString reason = QStringLiteral("Session expired. Sign in again.");
+    transition(AuthState::LoggedOut, reason);
+    emit reauthenticationRequired(reason);
 }
 
 void AuthManager::handleProfileFailed(const ApiError &error, quint64 generation)

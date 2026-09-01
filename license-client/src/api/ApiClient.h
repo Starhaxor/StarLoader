@@ -78,6 +78,7 @@ class ApiClient final : public IApiClient
     Q_OBJECT
 public:
     using Clock = std::function<qint64()>;
+    using BodyCleanupObserver = std::function<void(QByteArrayView)>;
     static constexpr int RequestTimeoutMs = 15'000;
     explicit ApiClient(QUrl baseUrl, int timeoutMs = RequestTimeoutMs, QObject *parent = nullptr);
     ApiClient(QUrl baseUrl, std::shared_ptr<IDeviceProofBuilder> proofBuilder, Clock clock,
@@ -86,6 +87,7 @@ public:
     void verifyDevice(const DeviceVerifyRequest &request, quint64 generation = 0) override;
     void loadProfile(const ProtectedSession &session, quint64 generation = 0) override;
     void cancelProfile() override;
+    void setBodyCleanupObserverForTesting(BodyCleanupObserver observer);
 
 private:
     QUrl baseUrl_;
@@ -94,6 +96,7 @@ private:
     TpmProofSigner defaultProofSigner_;
     std::shared_ptr<IDeviceProofBuilder> proofBuilder_;
     Clock clock_;
+    BodyCleanupObserver bodyCleanupObserver_;
     bool requestActive_ = false;
     QPointer<QNetworkReply> profileReply_;
     bool isAllowedTransport() const;

@@ -9,6 +9,7 @@
 
 #include <QFutureWatcher>
 #include <functional>
+#include <memory>
 
 class IHardwareCollector
 {
@@ -49,11 +50,23 @@ public:
     bool sign(QByteArrayView input, QByteArray *signature, QByteArray *publicBlob, QString *error) override;
 };
 
+class ISessionExpiryTimer
+{
+public:
+    virtual ~ISessionExpiryTimer() = default;
+    virtual void schedule(qint64 delayMs, std::function<void()> expiryCallback) = 0;
+    virtual void cancel() = 0;
+};
+
 class AuthManager final : public QObject
 {
     Q_OBJECT
 public:
+    using Clock = std::function<qint64()>;
     AuthManager(IApiClient &apiClient, IHardwareCollector &hardwareCollector, IDeviceSigner &deviceSigner, SessionTokenVerifier verifier, QObject *parent = nullptr);
+    AuthManager(IApiClient &apiClient, IHardwareCollector &hardwareCollector, IDeviceSigner &deviceSigner,
+                SessionTokenVerifier verifier, Clock clock, std::unique_ptr<ISessionExpiryTimer> expiryTimer,
+                QObject *parent = nullptr);
     ~AuthManager() override;
     AuthState state() const;
     QString sessionToken() const;
@@ -68,6 +81,7 @@ signals:
     void statusChanged(const QString &status);
     void failed(const ApiError &error);
     void authenticated();
+    void reauthenticationRequired(const QString &reason);
 
 private slots:
     void handleLoginSucceeded(const LoginResponse &response, quint64 generation);
@@ -90,6 +104,7 @@ private:
     QString sessionToken_;
     UserProfileResponse userProfile_;
     bool profileLoading_ = false;
+    QDateTime expiresAt_;
     struct CollectionResult { quint64 attempt = 0; bool success = false; HardwareIdentity identity; QString error; };
     struct SigningResult { quint64 attempt = 0; bool success = false; QByteArray signature; QByteArray publicKey; QString encodedChallenge; QString requestId; QString error; };
     struct PendingLogin { QString email; QString password; };
@@ -97,9 +112,13 @@ private:
     QFutureWatcher<SigningResult> signingWatcher_;
     PendingLogin pendingLogin_;
     quint64 attempt_ = 0;
+    Clock clock_;
+    std::unique_ptr<ISessionExpiryTimer> expiryTimer_;
     void transition(AuthState state, const QString &status);
     void fail(const ApiError &error);
     void clearSession();
+    void requireReauthentication(quint64 generation);
+    void scheduleExpiry(const QDateTime &expiresAt, quint64 generation);
     void completeCollection();
     void completeSigning();
 };

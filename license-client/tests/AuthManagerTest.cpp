@@ -42,6 +42,31 @@ public:
     void rejectProfile(const ApiError &error, quint64 generation) { emit profileFailed(error, generation); }
 };
 
+class FakeExpiryTimer final : public ISessionExpiryTimer
+{
+public:
+    qint64 lastDelayMs = -1;
+    int scheduleCount = 0;
+    int cancelCount = 0;
+    std::function<void()> callback;
+    void schedule(qint64 delayMs, std::function<void()> expiryCallback) override
+    {
+        lastDelayMs = delayMs;
+        callback = std::move(expiryCallback);
+        ++scheduleCount;
+    }
+    void cancel() override
+    {
+        callback = {};
+        ++cancelCount;
+    }
+    void fire()
+    {
+        const auto current = callback;
+        if (current) current();
+    }
+};
+
 class FakeHardwareCollector final : public IHardwareCollector
 {
 public:
@@ -135,6 +160,10 @@ private slots:
     void systemCollectorGeneratesFingerprintBeforeAuthentication();
     void signsDeviceChallengeWithoutBlockingManagerThread();
     void destructionWaitsForInFlightSigning();
+    void expiryRequiresFullReauthenticationExactlyOnce();
+    void alreadyExpiredTokenNeverStartsProtectedRequest();
+    void staleExpiryCallbackCannotEndANewerAttempt();
+    void passwordStateIsClearedBeforeLoginCanComplete();
 };
 
 void AuthManagerTest::reachesAuthenticatedOnlyAfterVerifiedDeviceToken()
@@ -175,6 +204,104 @@ void AuthManagerTest::reachesAuthenticatedOnlyAfterVerifiedDeviceToken()
     QCOMPARE(states.at(3).at(0).value<AuthState>(), AuthState::VerifyingDevice);
     QCOMPARE(states.at(4).at(0).value<AuthState>(), AuthState::Authenticating);
     QCOMPARE(states.at(5).at(0).value<AuthState>(), AuthState::Authenticated);
+}
+
+void AuthManagerTest::expiryRequiresFullReauthenticationExactlyOnce()
+{
+    const qint64 now = QDateTime::currentSecsSinceEpoch();
+    FakeApiClient api; FakeHardwareCollector collector; FakeDeviceSigner signer;
+    auto timer = std::make_unique<FakeExpiryTimer>();
+    FakeExpiryTimer *timerView = timer.get();
+    AuthManager manager(api, collector, signer, verifier(), [=] { return now; }, std::move(timer));
+    QSignalSpy reauth(&manager, &AuthManager::reauthenticationRequired);
+
+    manager.login(QStringLiteral("person@example.com"), QStringLiteral("password"));
+    QTRY_COMPARE(api.loginCount, 1);
+    api.completeLogin(challengeResponse());
+    QTRY_COMPARE(api.verifyCount, 1);
+    QJsonObject claims = validClaims();
+    claims.insert(QStringLiteral("iat"), now);
+    claims.insert(QStringLiteral("nbf"), now);
+    claims.insert(QStringLiteral("exp"), now + 600);
+    api.completeVerify(verifiedResponse(tokenFor(claims)));
+    QCOMPARE(api.profileCount, 1);
+    QCOMPARE(timerView->scheduleCount, 1);
+    QCOMPARE(timerView->lastDelayMs, qint64(600'000));
+    api.completeProfile(validProfile(), api.lastProfileGeneration);
+    QCOMPARE(manager.state(), AuthState::Authenticated);
+
+    timerView->fire();
+    QCOMPARE(reauth.count(), 1);
+    QCOMPARE(manager.state(), AuthState::LoggedOut);
+    QVERIFY(manager.sessionToken().isEmpty());
+    QVERIFY(manager.userProfile().email.isEmpty());
+    QVERIFY(manager.deviceDisplayId().isEmpty());
+    QCOMPARE(api.cancelProfileCount, 1);
+    QCOMPARE(api.loginCount, 1);
+    QCOMPARE(api.verifyCount, 1);
+    QCOMPARE(api.profileCount, 1);
+    timerView->fire();
+    QCOMPARE(reauth.count(), 1);
+}
+
+void AuthManagerTest::alreadyExpiredTokenNeverStartsProtectedRequest()
+{
+    const qint64 managerNow = QDateTime::currentSecsSinceEpoch() + 601;
+    FakeApiClient api; FakeHardwareCollector collector; FakeDeviceSigner signer;
+    auto timer = std::make_unique<FakeExpiryTimer>();
+    AuthManager manager(api, collector, signer, verifier(), [=] { return managerNow; }, std::move(timer));
+    QSignalSpy reauth(&manager, &AuthManager::reauthenticationRequired);
+    manager.login(QStringLiteral("person@example.com"), QStringLiteral("password"));
+    QTRY_COMPARE(api.loginCount, 1);
+    api.completeLogin(challengeResponse());
+    QTRY_COMPARE(api.verifyCount, 1);
+    api.completeVerify(verifiedResponse(tokenFor(validClaims())));
+    QCOMPARE(api.profileCount, 0);
+    QCOMPARE(reauth.count(), 1);
+    QCOMPARE(manager.state(), AuthState::LoggedOut);
+    QVERIFY(manager.sessionToken().isEmpty());
+}
+
+void AuthManagerTest::staleExpiryCallbackCannotEndANewerAttempt()
+{
+    const qint64 now = QDateTime::currentSecsSinceEpoch();
+    FakeApiClient api; FakeHardwareCollector collector; FakeDeviceSigner signer;
+    auto timer = std::make_unique<FakeExpiryTimer>();
+    FakeExpiryTimer *timerView = timer.get();
+    AuthManager manager(api, collector, signer, verifier(), [=] { return now; }, std::move(timer));
+    QSignalSpy reauth(&manager, &AuthManager::reauthenticationRequired);
+    manager.login(QStringLiteral("first@example.com"), QStringLiteral("password"));
+    QTRY_COMPARE(api.loginCount, 1);
+    api.completeLogin(challengeResponse());
+    QTRY_COMPARE(api.verifyCount, 1);
+    api.completeVerify(verifiedResponse(tokenFor(validClaims())));
+    const auto staleCallback = timerView->callback;
+    manager.signOut();
+    manager.login(QStringLiteral("second@example.com"), QStringLiteral("password"));
+    QTRY_COMPARE(api.loginCount, 2);
+    staleCallback();
+    QCOMPARE(reauth.count(), 0);
+    QCOMPARE(manager.state(), AuthState::Authenticating);
+}
+
+void AuthManagerTest::passwordStateIsClearedBeforeLoginCanComplete()
+{
+    FakeApiClient api; FakeHardwareCollector collector; FakeDeviceSigner signer;
+    AuthManager manager(api, collector, signer, verifier());
+    const QString password = QStringLiteral("correct horse battery staple");
+    QSignalSpy statuses(&manager, &AuthManager::statusChanged);
+    QSignalSpy failures(&manager, &AuthManager::failed);
+    manager.login(QStringLiteral("person@example.com"), password);
+    QTRY_COMPARE(api.loginCount, 1);
+    QVERIFY(manager.pendingLogin_.password.isEmpty());
+    for (const auto &arguments : statuses) QVERIFY(!arguments.constFirst().toString().contains(password));
+    api.rejectLogin({password, password, password});
+    QVERIFY(manager.pendingLogin_.password.isEmpty());
+    QCOMPARE(failures.count(), 1);
+    const ApiError error = failures.constFirst().constFirst().value<ApiError>();
+    QVERIFY(!error.code.contains(password));
+    QVERIFY(!error.message.contains(password));
+    QVERIFY(!error.requestId.contains(password));
 }
 
 void AuthManagerTest::profileFailureClearsAuthenticatedSession()

@@ -19,6 +19,7 @@ private slots:
     void exposesOnlyEmailAndPasswordInputs();
     void usesIconFreeCustomWindowChrome();
     void failureOpensMessageBoxWithErrorCode();
+    void launchAlwaysShowsCredentialForm();
 };
 
 void LoginWindowUiTest::usesCompactBrandedLayout()
@@ -35,6 +36,17 @@ void LoginWindowUiTest::usesCompactBrandedLayout()
     QVERIFY(window.width() <= 340);
     QVERIFY(window.height() <= 400);
     QVERIFY(!window.findChild<QLabel *>(QStringLiteral("logoLabel")));
+}
+
+void LoginWindowUiTest::launchAlwaysShowsCredentialForm()
+{
+    LoginWindow window;
+    window.show();
+    QCoreApplication::processEvents();
+    QVERIFY(window.isVisible());
+    QVERIFY(window.findChild<QLineEdit *>(QStringLiteral("emailLineEdit"))->isVisible());
+    QVERIFY(window.findChild<QLineEdit *>(QStringLiteral("passwordLineEdit"))->isVisible());
+    QVERIFY(window.findChild<QPushButton *>(QStringLiteral("loginButton"))->isVisible());
 }
 
 void LoginWindowUiTest::exposesOnlyEmailAndPasswordInputs()
