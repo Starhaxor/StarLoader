@@ -1,6 +1,7 @@
 #pragma once
 
 #include "security/DeviceProof.h"
+#include "security/TlsPinPolicy.h"
 
 #include <QJsonObject>
 #include <QDateTime>
@@ -91,6 +92,7 @@ public:
 
 private:
     QUrl baseUrl_;
+    TlsPinPolicy tlsPinPolicy_;
     QNetworkAccessManager network_;
     int timeoutMs_;
     TpmProofSigner defaultProofSigner_;
@@ -100,6 +102,8 @@ private:
     bool requestActive_ = false;
     QPointer<QNetworkReply> profileReply_;
     bool isAllowedTransport() const;
+    void initializeNetworkSecurity();
+    void configureReplySecurity(QNetworkReply *reply);
     bool buildProtectedRequest(const QString &path, const QString &method,
                                const ProtectedSession &session, const QString &requestId,
                                QNetworkRequest *request, ApiError *error);

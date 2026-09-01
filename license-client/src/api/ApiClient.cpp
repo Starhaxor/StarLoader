@@ -1,18 +1,35 @@
 #include "ApiClient.h"
 #include "ClientSecurityConfig.h"
 
-#include <QHostAddress>
 #include <QJsonDocument>
 #include <QJsonParseError>
 #include <QNetworkReply>
 #include <QNetworkRequest>
 #include <QRegularExpression>
 #include <QSet>
+#include <QSslConfiguration>
+#include <QSslError>
 #include <QTimer>
 #include <QUuid>
 
 namespace {
 constexpr qsizetype MaxResponseBytes = 64 * 1024;
+
+QList<QByteArray> configuredTlsPins()
+{
+    const QByteArray configured(STARLOADER_TLS_SPKI_PINS);
+    return configured.isEmpty() ? QList<QByteArray>{} : configured.split(',');
+}
+
+ApiError transportSecurityError(QNetworkReply *reply, const QString &requestId)
+{
+    const QString code = reply->property("starloader.transportSecurityError").toString();
+    if (code == QStringLiteral("TLS_REDIRECT_REJECTED")) {
+        return {code, QStringLiteral("The server redirect was rejected."), requestId};
+    }
+    return {QStringLiteral("TLS_VALIDATION_FAILED"),
+            QStringLiteral("The secure connection could not be verified."), requestId};
+}
 
 ApiError errorForReply(QNetworkReply *reply, const QByteArray &body, const QString &fallbackRequestId)
 {
@@ -44,12 +61,6 @@ ApiError errorForReply(QNetworkReply *reply, const QByteArray &body, const QStri
     return error;
 }
 
-bool loopbackHost(const QString &host)
-{
-    QHostAddress address;
-    return address.setAddress(host) && address.isLoopback();
-}
-
 ApiError withoutSecret(ApiError error, const QString &secret)
 {
     if (secret.isEmpty()) return error;
@@ -66,6 +77,7 @@ ApiError sanitizedLoginError(ApiError error)
         QStringLiteral("LICENSE_REVOKED"), QStringLiteral("DEVICE_LIMIT_REACHED"),
         QStringLiteral("DEVICE_REVOKED"), QStringLiteral("RATE_LIMITED"),
         QStringLiteral("NETWORK_ERROR"), QStringLiteral("INSECURE_TRANSPORT"),
+        QStringLiteral("TLS_VALIDATION_FAILED"), QStringLiteral("TLS_REDIRECT_REJECTED"),
         QStringLiteral("TIMEOUT"), QStringLiteral("RESPONSE_TOO_LARGE"),
         QStringLiteral("MALFORMED_RESPONSE"), QStringLiteral("REQUEST_IN_PROGRESS"),
     };
@@ -80,10 +92,14 @@ ApiError sanitizedLoginError(ApiError error)
 } // namespace
 
 ApiClient::ApiClient(QUrl baseUrl, int timeoutMs, QObject *parent)
-    : IApiClient(parent), baseUrl_(std::move(baseUrl)), timeoutMs_(qBound(1, timeoutMs, RequestTimeoutMs)),
+    : IApiClient(parent), baseUrl_(std::move(baseUrl)),
+      tlsPinPolicy_(QStringLiteral(STARLOADER_TLS_PINNED_HOST), configuredTlsPins(),
+                    STARLOADER_LOCAL_DEVELOPMENT == 1),
+      timeoutMs_(qBound(1, timeoutMs, RequestTimeoutMs)),
       proofBuilder_(std::make_shared<DeviceProofBuilder>(defaultProofSigner_)),
       clock_([] { return QDateTime::currentSecsSinceEpoch(); })
 {
+    initializeNetworkSecurity();
     qRegisterMetaType<LoginResponse>();
     qRegisterMetaType<DeviceVerifyResponse>();
     qRegisterMetaType<UserProfileResponse>();
@@ -92,10 +108,14 @@ ApiClient::ApiClient(QUrl baseUrl, int timeoutMs, QObject *parent)
 
 ApiClient::ApiClient(QUrl baseUrl, std::shared_ptr<IDeviceProofBuilder> proofBuilder, Clock clock,
                      int timeoutMs, QObject *parent)
-    : IApiClient(parent), baseUrl_(std::move(baseUrl)), timeoutMs_(qBound(1, timeoutMs, RequestTimeoutMs)),
+    : IApiClient(parent), baseUrl_(std::move(baseUrl)),
+      tlsPinPolicy_(QStringLiteral(STARLOADER_TLS_PINNED_HOST), configuredTlsPins(),
+                    STARLOADER_LOCAL_DEVELOPMENT == 1),
+      timeoutMs_(qBound(1, timeoutMs, RequestTimeoutMs)),
       proofBuilder_(std::move(proofBuilder)),
       clock_(clock ? std::move(clock) : Clock([] { return QDateTime::currentSecsSinceEpoch(); }))
 {
+    initializeNetworkSecurity();
     qRegisterMetaType<LoginResponse>();
     qRegisterMetaType<DeviceVerifyResponse>();
     qRegisterMetaType<UserProfileResponse>();
@@ -104,11 +124,36 @@ ApiClient::ApiClient(QUrl baseUrl, std::shared_ptr<IDeviceProofBuilder> proofBui
 
 bool ApiClient::isAllowedTransport() const
 {
-    if (baseUrl_.scheme().compare(QStringLiteral("https"), Qt::CaseInsensitive) == 0) return true;
-    const bool localDevelopment = STARLOADER_LOCAL_DEVELOPMENT == 1 ||
-        qEnvironmentVariableIntValue("STARLOADER_ALLOW_HTTP_LOCAL") == 1;
-    return baseUrl_.scheme().compare(QStringLiteral("http"), Qt::CaseInsensitive) == 0 &&
-        localDevelopment && loopbackHost(baseUrl_.host());
+    return tlsPinPolicy_.isValid() && tlsPinPolicy_.permitsRequestUrl(baseUrl_);
+}
+
+void ApiClient::initializeNetworkSecurity()
+{
+    connect(&network_, &QNetworkAccessManager::sslErrors, this,
+            [this](QNetworkReply *reply, const QList<QSslError> &) {
+        if (!reply) return;
+        reply->setProperty("starloader.transportSecurityError", QStringLiteral("TLS_VALIDATION_FAILED"));
+        reply->abort();
+    });
+    connect(&network_, &QNetworkAccessManager::encrypted, this, [this](QNetworkReply *reply) {
+        if (!reply || tlsPinPolicy_.verify(reply->url(), reply->sslConfiguration().peerCertificate())) return;
+        reply->setProperty("starloader.transportSecurityError", QStringLiteral("TLS_VALIDATION_FAILED"));
+        reply->abort();
+    });
+}
+
+void ApiClient::configureReplySecurity(QNetworkReply *reply)
+{
+    if (!reply) return;
+    connect(reply, &QNetworkReply::redirected, reply, [this, reply](const QUrl &redirectUrl) {
+        const QUrl target = reply->url().resolved(redirectUrl);
+        if (tlsPinPolicy_.permitsRequestUrl(target)) {
+            reply->redirectAllowed();
+            return;
+        }
+        reply->setProperty("starloader.transportSecurityError", QStringLiteral("TLS_REDIRECT_REJECTED"));
+        reply->abort();
+    });
 }
 
 QString ApiClient::newRequestId() const
@@ -162,6 +207,8 @@ bool ApiClient::buildProtectedRequest(const QString &path, const QString &method
     }
 
     *request = QNetworkRequest(requestUrl);
+    request->setAttribute(QNetworkRequest::RedirectPolicyAttribute,
+                          QNetworkRequest::UserVerifiedRedirectPolicy);
     request->setRawHeader("Authorization", QByteArrayLiteral("DPoP ") + session.accessToken.toLatin1());
     request->setRawHeader("DPoP", proof.compactJws.toLatin1());
     request->setRawHeader("X-Request-ID", requestId.toUtf8());
@@ -193,6 +240,7 @@ void ApiClient::loadProfile(const ProtectedSession &session, quint64 generation)
 
     requestActive_ = true;
     QNetworkReply *reply = network_.get(networkRequest);
+    configureReplySecurity(reply);
     const QString compactProof = QString::fromLatin1(networkRequest.rawHeader("DPoP"));
     profileReply_ = reply;
     reply->setReadBufferSize(MaxResponseBytes);
@@ -208,10 +256,12 @@ void ApiClient::loadProfile(const ProtectedSession &session, quint64 generation)
         }
         if (profileReply_ == reply) profileReply_.clear();
         requestActive_ = false;
-        const QByteArray body = reply->readAll();
+        const QByteArray body = reply->isOpen() ? reply->readAll() : QByteArray{};
         const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
         if (body.size() > MaxResponseBytes || reply->error() != QNetworkReply::NoError || status < 200 || status >= 300) {
-            ApiError error = reply->property("starloader.timeout").toBool()
+            ApiError error = !reply->property("starloader.transportSecurityError").toString().isEmpty()
+                ? transportSecurityError(reply, requestId)
+                : reply->property("starloader.timeout").toBool()
                 ? ApiError{QStringLiteral("TIMEOUT"), QStringLiteral("Network request timed out."), requestId}
                 : errorForReply(reply, body, requestId);
             if (body.size() > MaxResponseBytes) error = {QStringLiteral("RESPONSE_TOO_LARGE"), QStringLiteral("Server response is too large."), requestId};
@@ -268,12 +318,15 @@ void ApiClient::postJson(const QString &path, const QJsonObject &body, bool devi
     if (requestActive_) { fail({QStringLiteral("REQUEST_IN_PROGRESS"), QStringLiteral("A request is already in progress."), requestId}); return; }
     requestActive_ = true;
     QNetworkRequest networkRequest(baseUrl_.resolved(QUrl(path)));
+    networkRequest.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
+                                QNetworkRequest::UserVerifiedRedirectPolicy);
     networkRequest.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
     networkRequest.setRawHeader("X-KeyStar-App", QByteArrayLiteral(STARLOADER_APPLICATION_ID));
     networkRequest.setRawHeader("Authorization", QByteArrayLiteral("Bearer ") + QByteArrayLiteral(STARLOADER_PUBLISHABLE_KEY));
     networkRequest.setRawHeader("X-Request-ID", requestId.toUtf8());
     QByteArray requestBody = QJsonDocument(body).toJson(QJsonDocument::Compact);
     QNetworkReply *reply = network_.post(networkRequest, requestBody);
+    configureReplySecurity(reply);
     requestBody.detach();
     requestBody.fill('\0');
     if (bodyCleanupObserver_) bodyCleanupObserver_(QByteArrayView(requestBody));
@@ -286,10 +339,12 @@ void ApiClient::postJson(const QString &path, const QJsonObject &body, bool devi
     timer->start(timeoutMs_);
     connect(reply, &QNetworkReply::finished, this, [this, reply, deviceRequest, requestId, generation] {
         requestActive_ = false;
-        const QByteArray body = reply->readAll();
+        const QByteArray body = reply->isOpen() ? reply->readAll() : QByteArray{};
         const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
         if (body.size() > MaxResponseBytes || reply->error() != QNetworkReply::NoError || status < 200 || status >= 300) {
-            ApiError error = reply->property("starloader.timeout").toBool()
+            ApiError error = !reply->property("starloader.transportSecurityError").toString().isEmpty()
+                ? transportSecurityError(reply, requestId)
+                : reply->property("starloader.timeout").toBool()
                 ? ApiError{QStringLiteral("TIMEOUT"), QStringLiteral("Network request timed out."), requestId}
                 : errorForReply(reply, body, requestId);
             if (body.size() > MaxResponseBytes) error = {QStringLiteral("RESPONSE_TOO_LARGE"), QStringLiteral("Server response is too large."), requestId};

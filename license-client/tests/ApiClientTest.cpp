@@ -112,6 +112,7 @@ private slots:
     void allowsLoopbackHttpInLocalDevelopmentBuild();
     void rejectsNonLoopbackHttpUnlessExplicitlyEnabled();
     void rejectsLocalhostNameEvenWhenLocalHttpIsEnabled();
+    void rejectsRedirectThatEscapesConfiguredHost();
 };
 
 void ApiClientTest::sendsExactLoginContractAndParsesReply()
@@ -367,7 +368,7 @@ void ApiClientTest::doesNotSendProtectedRequestForUnsafeUrl()
     QCOMPARE(failed.size(), 1);
     QTest::qWait(50);
     QCOMPARE(connections.size(), 0);
-    QCOMPARE(failed.at(0).at(0).value<ApiError>().code, QStringLiteral("DEVICE_PROOF_FAILED"));
+    QCOMPARE(failed.at(0).at(0).value<ApiError>().code, QStringLiteral("INSECURE_TRANSPORT"));
 }
 
 void ApiClientTest::doesNotSendProtectedRequestWhenThumbprintMismatches()
@@ -589,6 +590,36 @@ void ApiClientTest::rejectsLocalhostNameEvenWhenLocalHttpIsEnabled()
     client.login({QStringLiteral("a@b.c"), QStringLiteral("p"), QStringLiteral("f")});
     if (failed.isEmpty()) QVERIFY(failed.wait(1000));
     QCOMPARE(failed.at(0).at(0).value<ApiError>().code, QStringLiteral("INSECURE_TRANSPORT"));
+}
+
+void ApiClientTest::rejectsRedirectThatEscapesConfiguredHost()
+{
+    QTcpServer destination;
+    QVERIFY(destination.listen(QHostAddress::LocalHost));
+    QSignalSpy escapedConnections(&destination, &QTcpServer::newConnection);
+
+    QTcpServer origin;
+    QVERIFY(origin.listen(QHostAddress::LocalHost));
+    connect(&origin, &QTcpServer::newConnection, this, [&] {
+        QTcpSocket *socket = origin.nextPendingConnection();
+        connect(socket, &QTcpSocket::readyRead, socket, [&, socket] {
+            if (!socket->readAll().contains("\r\n\r\n")) return;
+            const QByteArray location = QByteArrayLiteral("http://localhost:")
+                + QByteArray::number(destination.serverPort()) + QByteArrayLiteral("/capture");
+            socket->write("HTTP/1.1 302 Found\r\nLocation: " + location
+                          + "\r\nContent-Length: 0\r\n\r\n");
+            socket->disconnectFromHost();
+        });
+    });
+
+    ApiClient client(QUrl(QStringLiteral("http://127.0.0.1:%1").arg(origin.serverPort())));
+    QSignalSpy failed(&client, &ApiClient::loginFailed);
+    client.login({QStringLiteral("a@b.c"), QStringLiteral("password"), QStringLiteral("fingerprint")});
+    if (failed.isEmpty()) QVERIFY(failed.wait(3000));
+    QCOMPARE(failed.size(), 1);
+    QCOMPARE(failed.at(0).at(0).value<ApiError>().code, QStringLiteral("TLS_REDIRECT_REJECTED"));
+    QTest::qWait(50);
+    QCOMPARE(escapedConnections.size(), 0);
 }
 
 QTEST_MAIN(ApiClientTest)

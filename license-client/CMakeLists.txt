@@ -38,12 +38,59 @@ endforeach()
 # explicit https:// URL must fail loudly instead of silently shipping a client
 # that talks to the wrong endpoint.
 option(STARLOADER_LOCAL_DEVELOPMENT "Allow a numeric loopback HTTP API URL in an explicitly local build" OFF)
+set(STARLOADER_TLS_PINNED_HOST "" CACHE STRING "Exact KeyStar host protected by SPKI pinning")
+set(STARLOADER_TLS_SPKI_PINS "" CACHE STRING "Exactly two comma-separated sha256/<canonical-standard-base64> SPKI pins")
 if(STARLOADER_LOCAL_DEVELOPMENT)
     if(NOT STARLOADER_API_URL MATCHES "^http://127\\.0\\.0\\.1(:[0-9]+)?/?$")
         message(FATAL_ERROR "STARLOADER_LOCAL_DEVELOPMENT only permits http://127.0.0.1 with an optional port.")
     endif()
+    if(NOT STARLOADER_TLS_PINNED_HOST STREQUAL "127.0.0.1" OR NOT STARLOADER_TLS_SPKI_PINS STREQUAL "")
+        message(FATAL_ERROR "Local development requires STARLOADER_TLS_PINNED_HOST=127.0.0.1 and no TLS pins")
+    endif()
 elseif(NOT STARLOADER_API_URL MATCHES "^https://")
     message(FATAL_ERROR "STARLOADER_API_URL must be set to an https:// URL. Use the qt-mingw-local preset only for loopback development.")
+endif()
+if(NOT STARLOADER_LOCAL_DEVELOPMENT)
+    if(STARLOADER_TLS_PINNED_HOST STREQUAL "" OR NOT STARLOADER_TLS_PINNED_HOST MATCHES "^[A-Za-z0-9.-]+$")
+        message(FATAL_ERROR "STARLOADER_TLS_PINNED_HOST must be the exact production KeyStar DNS host")
+    endif()
+    string(REGEX MATCH "^https://([^/:?#]+)" STARLOADER_TLS_API_HOST_MATCH "${STARLOADER_API_URL}")
+    if(NOT STARLOADER_TLS_API_HOST_MATCH)
+        message(FATAL_ERROR "STARLOADER_API_URL must include the exact production KeyStar host")
+    endif()
+    string(TOLOWER "${CMAKE_MATCH_1}" STARLOADER_TLS_API_HOST)
+    string(TOLOWER "${STARLOADER_TLS_PINNED_HOST}" STARLOADER_TLS_CONFIGURED_HOST)
+    if(NOT STARLOADER_TLS_API_HOST STREQUAL STARLOADER_TLS_CONFIGURED_HOST)
+        message(FATAL_ERROR "STARLOADER_API_URL host must match STARLOADER_TLS_PINNED_HOST exactly")
+    endif()
+    string(REPLACE "," ";" STARLOADER_TLS_SPKI_PIN_ENTRIES "${STARLOADER_TLS_SPKI_PINS}")
+    list(LENGTH STARLOADER_TLS_SPKI_PIN_ENTRIES STARLOADER_TLS_SPKI_PIN_COUNT)
+    if(NOT STARLOADER_TLS_SPKI_PIN_COUNT EQUAL 2)
+        message(FATAL_ERROR "STARLOADER_TLS_SPKI_PINS must contain exactly two pins")
+    endif()
+    set(STARLOADER_TLS_SPKI_PIN_DIGESTS)
+    foreach(STARLOADER_TLS_SPKI_PIN IN LISTS STARLOADER_TLS_SPKI_PIN_ENTRIES)
+        string(REGEX MATCH "^sha256/([A-Za-z0-9+/]+)=$" STARLOADER_TLS_SPKI_PIN_MATCH "${STARLOADER_TLS_SPKI_PIN}")
+        if(NOT STARLOADER_TLS_SPKI_PIN_MATCH)
+            message(FATAL_ERROR "TLS pins must use sha256/<canonical-standard-base64> syntax")
+        endif()
+        set(STARLOADER_TLS_SPKI_PIN_DIGEST "${CMAKE_MATCH_1}=")
+        string(LENGTH "${STARLOADER_TLS_SPKI_PIN_DIGEST}" STARLOADER_TLS_SPKI_PIN_LENGTH)
+        if(STARLOADER_TLS_SPKI_PIN_LENGTH EQUAL 44)
+            string(SUBSTRING "${STARLOADER_TLS_SPKI_PIN_DIGEST}" 42 1 STARLOADER_TLS_SPKI_PIN_LAST_CHARACTER)
+        else()
+            set(STARLOADER_TLS_SPKI_PIN_LAST_CHARACTER "")
+        endif()
+        if(NOT STARLOADER_TLS_SPKI_PIN_LENGTH EQUAL 44 OR NOT STARLOADER_TLS_SPKI_PIN_LAST_CHARACTER MATCHES "^[AEIMQUYcgkosw048]$")
+            message(FATAL_ERROR "TLS pins must encode exactly 32 bytes using canonical standard Base64")
+        endif()
+        list(APPEND STARLOADER_TLS_SPKI_PIN_DIGESTS "${STARLOADER_TLS_SPKI_PIN_DIGEST}")
+    endforeach()
+    list(GET STARLOADER_TLS_SPKI_PIN_DIGESTS 0 STARLOADER_TLS_SPKI_PIN_CURRENT)
+    list(GET STARLOADER_TLS_SPKI_PIN_DIGESTS 1 STARLOADER_TLS_SPKI_PIN_NEXT)
+    if(STARLOADER_TLS_SPKI_PIN_CURRENT STREQUAL STARLOADER_TLS_SPKI_PIN_NEXT)
+        message(FATAL_ERROR "Current and staged-next TLS pins must be distinct")
+    endif()
 endif()
 set(STARLOADER_APPLICATION_ID "" CACHE STRING "KeyStar application UUID used by the StarLoader client")
 string(LENGTH "${STARLOADER_APPLICATION_ID}" STARLOADER_APPLICATION_ID_LENGTH)
@@ -88,6 +135,8 @@ qt_add_executable(LicenseClient WIN32
     src/security/SessionTokenVerifier.h
     src/security/DeviceProof.cpp
     src/security/DeviceProof.h
+    src/security/TlsPinPolicy.cpp
+    src/security/TlsPinPolicy.h
     src/ui/LoginWindow.cpp
     src/ui/LoginWindow.h
     src/ui/WindowTitleBar.cpp
@@ -106,6 +155,8 @@ qt_add_executable(ApiClientTest
     src/api/ApiClient.h
     src/security/DeviceProof.cpp
     src/security/DeviceProof.h
+    src/security/TlsPinPolicy.cpp
+    src/security/TlsPinPolicy.h
     tests/ApiClientTest.cpp
 )
 
@@ -114,6 +165,8 @@ qt_add_executable(AuthManagerTest
     src/api/ApiClient.h
     src/security/DeviceProof.cpp
     src/security/DeviceProof.h
+    src/security/TlsPinPolicy.cpp
+    src/security/TlsPinPolicy.h
     src/auth/AuthManager.cpp
     src/auth/AuthManager.h
     src/auth/AuthState.h
@@ -134,6 +187,12 @@ qt_add_executable(DeviceProofTest
     tests/DeviceProofTest.cpp
 )
 
+qt_add_executable(TlsPinPolicyTest
+    src/security/TlsPinPolicy.cpp
+    src/security/TlsPinPolicy.h
+    tests/TlsPinPolicyTest.cpp
+)
+
 qt_add_executable(HwidDialogTest
     src/ui/HwidDialog.cpp
     src/ui/HwidDialog.h
@@ -148,6 +207,8 @@ qt_add_executable(LoginWindowUiTest
     src/api/ApiClient.h
     src/security/DeviceProof.cpp
     src/security/DeviceProof.h
+    src/security/TlsPinPolicy.cpp
+    src/security/TlsPinPolicy.h
     src/auth/AuthManager.cpp
     src/auth/AuthManager.h
     src/auth/AuthState.h
@@ -178,6 +239,8 @@ qt_add_executable(UserDashboardTest
     src/api/ApiClient.h
     src/security/DeviceProof.cpp
     src/security/DeviceProof.h
+    src/security/TlsPinPolicy.cpp
+    src/security/TlsPinPolicy.h
     src/auth/AuthManager.cpp
     src/auth/AuthManager.h
     src/auth/AuthState.h
@@ -202,6 +265,8 @@ qt_add_executable(NativeLiveFlowTest
     src/api/ApiClient.h
     src/security/DeviceProof.cpp
     src/security/DeviceProof.h
+    src/security/TlsPinPolicy.cpp
+    src/security/TlsPinPolicy.h
     src/auth/AuthManager.cpp
     src/auth/AuthManager.h
     src/auth/AuthState.h
@@ -262,10 +327,11 @@ elseif(WIN32)
         VERBATIM)
 endif()
 
-target_link_libraries(ApiClientTest PRIVATE DeviceIdentityShared Qt6::Core Qt6::Network Qt6::Test)
+target_link_libraries(ApiClientTest PRIVATE DeviceIdentityShared Qt6::Core Qt6::Network Qt6::Test OpenSSL::Crypto)
 target_link_libraries(AuthManagerTest PRIVATE DeviceIdentityShared Qt6::Core Qt6::Network Qt6::Concurrent Qt6::Test OpenSSL::Crypto)
 target_link_libraries(SessionTokenVerifierTest PRIVATE Qt6::Core Qt6::Test OpenSSL::Crypto)
 target_link_libraries(DeviceProofTest PRIVATE DeviceIdentityShared Qt6::Core Qt6::Network Qt6::Test)
+target_link_libraries(TlsPinPolicyTest PRIVATE Qt6::Core Qt6::Network Qt6::Test OpenSSL::Crypto)
 target_link_libraries(HwidDialogTest PRIVATE DeviceIdentityShared Qt6::Widgets Qt6::Concurrent Qt6::Test)
 target_link_libraries(LoginWindowUiTest PRIVATE DeviceIdentityShared Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Test OpenSSL::Crypto)
 target_link_libraries(WindowTitleBarTest PRIVATE Qt6::Widgets Qt6::Test)
@@ -276,6 +342,7 @@ target_include_directories(ApiClientTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src
 target_include_directories(AuthManagerTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_CURRENT_BINARY_DIR}/generated ${CMAKE_SOURCE_DIR}/shared)
 target_include_directories(SessionTokenVerifierTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_include_directories(DeviceProofTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_CURRENT_BINARY_DIR}/generated)
+target_include_directories(TlsPinPolicyTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_include_directories(HwidDialogTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_include_directories(LoginWindowUiTest PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
@@ -295,12 +362,13 @@ add_test(NAME ApiClientTest COMMAND ApiClientTest)
 add_test(NAME AuthManagerTest COMMAND AuthManagerTest)
 add_test(NAME SessionTokenVerifierTest COMMAND SessionTokenVerifierTest)
 add_test(NAME DeviceProofTest COMMAND DeviceProofTest)
+add_test(NAME TlsPinPolicyTest COMMAND TlsPinPolicyTest)
 add_test(NAME HwidDialogTest COMMAND HwidDialogTest)
 add_test(NAME LoginWindowUiTest COMMAND LoginWindowUiTest)
 add_test(NAME WindowTitleBarTest COMMAND WindowTitleBarTest)
 add_test(NAME UserDashboardTest COMMAND UserDashboardTest)
 add_test(NAME NativeLiveFlowTest COMMAND NativeLiveFlowTest)
-foreach(test_name IN ITEMS ApiClientTest AuthManagerTest SessionTokenVerifierTest DeviceProofTest HwidDialogTest LoginWindowUiTest WindowTitleBarTest UserDashboardTest NativeLiveFlowTest)
+foreach(test_name IN ITEMS ApiClientTest AuthManagerTest SessionTokenVerifierTest DeviceProofTest TlsPinPolicyTest HwidDialogTest LoginWindowUiTest WindowTitleBarTest UserDashboardTest NativeLiveFlowTest)
     set_tests_properties(${test_name} PROPERTIES
         ENVIRONMENT "PATH=$<TARGET_FILE_DIR:Qt6::Core>\\;${OPENSSL_CRYPTO_RUNTIME_DIR}\\;$ENV{PATH}")
     if(WIN32)

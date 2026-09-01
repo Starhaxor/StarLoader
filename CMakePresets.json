@@ -15,6 +15,8 @@
         "STARLOADER_APPLICATION_ID": "01a023f4-df13-717a-b54c-49378290b74c",
         "STARLOADER_PRODUCT_ID": "starloader",
         "STARLOADER_PUBLISHABLE_KEY": "ks_pk_live_ZP16TSKKQG_g2WUklNoPRyPyCMP3wYPdz7iZQ2Jgr9Fi0ra1LX0jyc"
+        ,"STARLOADER_TLS_PINNED_HOST": "keystarbackend-8080-domgge2y7n.outplane.app"
+        ,"STARLOADER_TLS_SPKI_PINS": ""
       }
     },
     {
@@ -28,6 +30,8 @@
         "STARLOADER_ED25519_KEY_RING": "local-test=e/40nbaaIxXaqAopnL6j/M0w7WeF70Nk8uIij1nr5SQ=",
         "STARLOADER_PRODUCT_ID": "starloader",
         "STARLOADER_PUBLISHABLE_KEY": "ks_pk_test_3MQ61B26VW_l7Xh56LE9PuaGEAZz1YD0hsJoe_myOKLPWnPtS9dxbQ"
+        ,"STARLOADER_TLS_PINNED_HOST": "127.0.0.1"
+        ,"STARLOADER_TLS_SPKI_PINS": ""
       }
     },
     {

@@ -38,6 +38,8 @@ if(STARLOADER_LOCAL_DEVELOPMENT)
     set(STARLOADER_PUBLISHABLE_KEY "ks_pk_test_3MQ61B26VW_l7Xh56LE9PuaGEAZz1YD0hsJoe_myOKLPWnPtS9dxbQ" CACHE STRING "KeyStar publishable API key used by the StarLoader client" FORCE)
     set(STARLOADER_ED25519_KEY_RING "local-test=e/40nbaaIxXaqAopnL6j/M0w7WeF70Nk8uIij1nr5SQ=" CACHE STRING "Configured Ed25519 session-token key ring" FORCE)
     set(STARLOADER_PRODUCT_ID "starloader" CACHE STRING "KeyStar product identifier bound into StarLoader access tokens" FORCE)
+    set(STARLOADER_TLS_PINNED_HOST "127.0.0.1" CACHE STRING "Exact local KeyStar host" FORCE)
+    set(STARLOADER_TLS_SPKI_PINS "" CACHE STRING "Production SPKI pins are intentionally absent in local development" FORCE)
 endif()
 
 find_package(Qt6 REQUIRED COMPONENTS Core Widgets Network Concurrent Test)
