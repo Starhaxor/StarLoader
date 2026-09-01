@@ -1,9 +1,89 @@
 #include "api/ApiClient.h"
+#include "security/DeviceProof.h"
 
+#include <QCryptographicHash>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QTcpServer>
 #include <QTcpSocket>
 #include <QRegularExpression>
+#include <QTimeZone>
 #include <QtTest>
+
+namespace {
+constexpr qint64 FixedNow = 1'788'192'000;
+
+QByteArray base64Url(const QByteArray &value)
+{
+    return value.toBase64(QByteArray::Base64UrlEncoding | QByteArray::OmitTrailingEquals);
+}
+
+QByteArray testPublicBlob()
+{
+    QByteArray blob(72, '\0');
+    blob[0] = 'E'; blob[1] = 'C'; blob[2] = 'S'; blob[3] = '1';
+    blob[4] = 32;
+    blob.replace(8, 32, QByteArray(32, '\x11'));
+    blob.replace(40, 32, QByteArray(32, '\x22'));
+    return blob;
+}
+
+QString testThumbprint()
+{
+    const QByteArray canonical = QByteArrayLiteral("{\"crv\":\"P-256\",\"kty\":\"EC\",\"x\":\"")
+        + base64Url(QByteArray(32, '\x11')) + QByteArrayLiteral("\",\"y\":\"")
+        + base64Url(QByteArray(32, '\x22')) + QByteArrayLiteral("\"}");
+    return QString::fromLatin1(base64Url(QCryptographicHash::hash(canonical, QCryptographicHash::Sha256)));
+}
+
+QString testToken()
+{
+    return QStringLiteral("e30.e30.") + QString(86, QLatin1Char('A'));
+}
+
+ProtectedSession validSession()
+{
+    return {testToken(), testThumbprint(), QDateTime::fromSecsSinceEpoch(FixedNow + 60, QTimeZone::UTC)};
+}
+
+class TestProofSigner final : public IDeviceProofSigner
+{
+public:
+    bool fail = false;
+
+    bool publicKeyBlob(QByteArray *publicBlob, QString *) override
+    {
+        if (fail) return false;
+        *publicBlob = testPublicBlob();
+        return true;
+    }
+
+    bool sign(QByteArrayView, QByteArray *signature, QByteArray *publicBlob, QString *) override
+    {
+        if (fail) return false;
+        *signature = QByteArray(64, '\x33');
+        *publicBlob = testPublicBlob();
+        return true;
+    }
+};
+
+DeviceProofBuilder makeProofBuilder(TestProofSigner &signer)
+{
+    return DeviceProofBuilder(signer, [] { return FixedNow; }, [] { return QByteArray(16, '\x44'); });
+}
+
+QList<QByteArray> headerValues(const QByteArray &request, const QByteArray &name)
+{
+    QList<QByteArray> values;
+    for (const QByteArray &line : request.left(request.indexOf("\r\n\r\n")).split('\n')) {
+        const QByteArray trimmed = line.trimmed();
+        const qsizetype colon = trimmed.indexOf(':');
+        if (colon > 0 && trimmed.left(colon).compare(name, Qt::CaseInsensitive) == 0)
+            values.append(trimmed.mid(colon + 1).trimmed());
+    }
+    return values;
+}
+} // namespace
 
 class ApiClientTest final : public QObject
 {
@@ -15,6 +95,10 @@ private slots:
     void rejectsMalformedSuccessJson();
     void sendsExactDeviceVerificationContract();
     void sendsExactProfileContractAndParsesReply();
+    void doesNotSendProtectedRequestWhenProofFails();
+    void doesNotSendProtectedRequestWhenSessionExpired();
+    void doesNotSendProtectedRequestForUnsafeUrl();
+    void doesNotSendProtectedRequestWhenThumbprintMismatches();
     void rejectsMalformedProfileResponses();
     void profileFailuresNeverExposeBearerToken();
     void cancelledProfileDoesNotBlockNextRequest();
@@ -50,6 +134,8 @@ void ApiClientTest::sendsExactLoginContractAndParsesReply()
     QVERIFY(request.toLower().contains("x-keystar-app: 01a04caa-baa0-72ec-9b69-b4ba548bb3e5"));
     const QRegularExpression publishableKeyPattern(QStringLiteral("(?im)^Authorization: Bearer ks_pk_(?:live|test)_[A-Za-z0-9_-]+\\r?$"));
     QVERIFY(publishableKeyPattern.match(QString::fromLatin1(request)).hasMatch());
+    QCOMPARE(headerValues(request, QByteArrayLiteral("Authorization")).size(), 1);
+    QVERIFY(headerValues(request, QByteArrayLiteral("DPoP")).isEmpty());
     const QRegularExpression requestIdPattern(QStringLiteral("(?im)^x-request-id: [0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\\r?$"));
     QVERIFY(requestIdPattern.match(QString::fromLatin1(request)).hasMatch());
     QVERIFY(request.contains("\"email\":\"person@example.com\""));
@@ -127,6 +213,8 @@ void ApiClientTest::sendsExactDeviceVerificationContract()
     QVERIFY(request.startsWith("POST /v1/device/verify HTTP/1.1\r\n"));
     const QRegularExpression publishableKeyPattern(QStringLiteral("(?im)^Authorization: Bearer ks_pk_(?:live|test)_[A-Za-z0-9_-]+\\r?$"));
     QVERIFY(publishableKeyPattern.match(QString::fromLatin1(request)).hasMatch());
+    QCOMPARE(headerValues(request, QByteArrayLiteral("Authorization")).size(), 1);
+    QVERIFY(headerValues(request, QByteArrayLiteral("DPoP")).isEmpty());
     QVERIFY(request.contains("\"session_id\":\"0198940d-7cec-7000-8000-000000000001\""));
     QVERIFY(request.contains("\"challenge\":\"Y2hhbGxlbmdl\""));
     QVERIFY(request.contains("\"challenge_signature\":\"c2lnbmF0dXJl\""));
@@ -150,21 +238,31 @@ void ApiClientTest::sendsExactProfileContractAndParsesReply()
             socket->disconnectFromHost();
         });
     });
-    const QString token = QStringLiteral("header.payload.signature");
-    ApiClient client(QUrl(QStringLiteral("http://127.0.0.1:%1").arg(server.serverPort())));
+    TestProofSigner signer;
+    DeviceProofBuilder proofBuilder = makeProofBuilder(signer);
+    ApiClient client(QUrl(QStringLiteral("http://127.0.0.1:%1").arg(server.serverPort())),
+                     proofBuilder, [] { return FixedNow; });
     QSignalSpy complete(&client, &ApiClient::profileLoaded);
-    client.loadProfile(token, 42);
+    client.loadProfile(validSession(), 42);
     if (complete.isEmpty()) QVERIFY(complete.wait(3000));
 
     const qsizetype headerEnd = request.indexOf("\r\n\r\n");
     QVERIFY(headerEnd >= 0);
     QCOMPARE(request.left(request.indexOf("\r\n")), QByteArray("GET /v1/me HTTP/1.1"));
     QCOMPARE(request.mid(headerEnd + 4), QByteArray());
-    const QRegularExpression authorizationPattern(QStringLiteral("(?im)^Authorization: Bearer header\\.payload\\.signature\\r?$"));
-    const QRegularExpressionMatchIterator authorizationHeaders = authorizationPattern.globalMatch(QString::fromLatin1(request));
-    int authorizationCount = 0;
-    for (auto headers = authorizationHeaders; headers.hasNext(); headers.next()) ++authorizationCount;
-    QCOMPARE(authorizationCount, 1);
+    const QList<QByteArray> authorization = headerValues(request, QByteArrayLiteral("Authorization"));
+    QCOMPARE(authorization, QList<QByteArray>{QByteArrayLiteral("DPoP ") + testToken().toLatin1()});
+    const QList<QByteArray> proofs = headerValues(request, QByteArrayLiteral("DPoP"));
+    QCOMPARE(proofs.size(), 1);
+    const QList<QByteArray> proofParts = proofs.constFirst().split('.');
+    QCOMPARE(proofParts.size(), 3);
+    const QJsonObject proofPayload = QJsonDocument::fromJson(
+        QByteArray::fromBase64(proofParts.at(1), QByteArray::Base64UrlEncoding)).object();
+    QCOMPARE(proofPayload.value(QStringLiteral("htm")).toString(), QStringLiteral("GET"));
+    QCOMPARE(proofPayload.value(QStringLiteral("htu")).toString(),
+             QStringLiteral("http://127.0.0.1:%1/v1/me").arg(server.serverPort()));
+    QCOMPARE(proofPayload.value(QStringLiteral("ath")).toString(),
+             QString::fromLatin1(base64Url(QCryptographicHash::hash(testToken().toLatin1(), QCryptographicHash::Sha256))));
 
     const UserProfileResponse profile = complete.at(0).at(0).value<UserProfileResponse>();
     QCOMPARE(profile.email, QStringLiteral("test2@test.com"));
@@ -178,6 +276,74 @@ void ApiClientTest::sendsExactProfileContractAndParsesReply()
     QCOMPARE(profile.sessionExpiresAt, QDateTime::fromString(QStringLiteral("2026-08-13T18:50:15Z"), Qt::ISODate));
     QCOMPARE(profile.requestId, QStringLiteral("profile-request"));
     QCOMPARE(complete.at(0).at(1).toULongLong(), quint64(42));
+}
+
+void ApiClientTest::doesNotSendProtectedRequestWhenProofFails()
+{
+    QTcpServer server; QVERIFY(server.listen(QHostAddress::LocalHost));
+    QSignalSpy connections(&server, &QTcpServer::newConnection);
+    TestProofSigner signer; signer.fail = true;
+    DeviceProofBuilder proofBuilder = makeProofBuilder(signer);
+    ApiClient client(QUrl(QStringLiteral("http://127.0.0.1:%1").arg(server.serverPort())),
+                     proofBuilder, [] { return FixedNow; });
+    QSignalSpy failed(&client, &ApiClient::profileFailed);
+    client.loadProfile(validSession());
+    QCOMPARE(failed.size(), 1);
+    QTest::qWait(50);
+    QCOMPARE(connections.size(), 0);
+    QCOMPARE(failed.at(0).at(0).value<ApiError>().code, QStringLiteral("DEVICE_PROOF_FAILED"));
+}
+
+void ApiClientTest::doesNotSendProtectedRequestWhenSessionExpired()
+{
+    QTcpServer server; QVERIFY(server.listen(QHostAddress::LocalHost));
+    QSignalSpy connections(&server, &QTcpServer::newConnection);
+    TestProofSigner signer;
+    DeviceProofBuilder proofBuilder = makeProofBuilder(signer);
+    ApiClient client(QUrl(QStringLiteral("http://127.0.0.1:%1").arg(server.serverPort())),
+                     proofBuilder, [] { return FixedNow; });
+    ProtectedSession session = validSession();
+    session.expiresAt = QDateTime::fromSecsSinceEpoch(FixedNow, QTimeZone::UTC);
+    QSignalSpy failed(&client, &ApiClient::profileFailed);
+    client.loadProfile(session);
+    QCOMPARE(failed.size(), 1);
+    QTest::qWait(50);
+    QCOMPARE(connections.size(), 0);
+    QCOMPARE(failed.at(0).at(0).value<ApiError>().code, QStringLiteral("SESSION_EXPIRED"));
+}
+
+void ApiClientTest::doesNotSendProtectedRequestForUnsafeUrl()
+{
+    QTcpServer server; QVERIFY(server.listen(QHostAddress::LocalHost));
+    QSignalSpy connections(&server, &QTcpServer::newConnection);
+    TestProofSigner signer;
+    DeviceProofBuilder proofBuilder = makeProofBuilder(signer);
+    ApiClient client(QUrl(QStringLiteral("http://user@127.0.0.1:%1").arg(server.serverPort())),
+                     proofBuilder, [] { return FixedNow; });
+    QSignalSpy failed(&client, &ApiClient::profileFailed);
+    client.loadProfile(validSession());
+    QCOMPARE(failed.size(), 1);
+    QTest::qWait(50);
+    QCOMPARE(connections.size(), 0);
+    QCOMPARE(failed.at(0).at(0).value<ApiError>().code, QStringLiteral("DEVICE_PROOF_FAILED"));
+}
+
+void ApiClientTest::doesNotSendProtectedRequestWhenThumbprintMismatches()
+{
+    QTcpServer server; QVERIFY(server.listen(QHostAddress::LocalHost));
+    QSignalSpy connections(&server, &QTcpServer::newConnection);
+    TestProofSigner signer;
+    DeviceProofBuilder proofBuilder = makeProofBuilder(signer);
+    ApiClient client(QUrl(QStringLiteral("http://127.0.0.1:%1").arg(server.serverPort())),
+                     proofBuilder, [] { return FixedNow; });
+    ProtectedSession session = validSession();
+    session.deviceKeyThumbprint = QString(43, QLatin1Char('A'));
+    QSignalSpy failed(&client, &ApiClient::profileFailed);
+    client.loadProfile(session);
+    QCOMPARE(failed.size(), 1);
+    QTest::qWait(50);
+    QCOMPARE(connections.size(), 0);
+    QCOMPARE(failed.at(0).at(0).value<ApiError>().code, QStringLiteral("DEVICE_PROOF_FAILED"));
 }
 
 void ApiClientTest::rejectsMalformedProfileResponses()
@@ -221,9 +387,12 @@ void ApiClientTest::rejectsMalformedProfileResponses()
                 socket->disconnectFromHost();
             });
         });
-        ApiClient client(QUrl(QStringLiteral("http://127.0.0.1:%1").arg(server.serverPort())));
+        TestProofSigner signer;
+        DeviceProofBuilder proofBuilder = makeProofBuilder(signer);
+        ApiClient client(QUrl(QStringLiteral("http://127.0.0.1:%1").arg(server.serverPort())),
+                         proofBuilder, [] { return FixedNow; });
         QSignalSpy failed(&client, &ApiClient::profileFailed);
-        client.loadProfile(QStringLiteral("valid-token"));
+        client.loadProfile(validSession());
         if (failed.isEmpty()) QVERIFY(failed.wait(3000));
         QCOMPARE(failed.at(0).at(0).value<ApiError>().code, QStringLiteral("MALFORMED_RESPONSE"));
     }
@@ -233,29 +402,42 @@ void ApiClientTest::profileFailuresNeverExposeBearerToken()
 {
     qputenv("STARLOADER_ALLOW_HTTP_LOCAL", "1");
     QTcpServer server; QVERIFY(server.listen(QHostAddress::LocalHost));
-    const QString token = QStringLiteral("sensitive-bearer-token");
+    const QString token = testToken();
+    QString proof;
     connect(&server, &QTcpServer::newConnection, this, [&] {
         QTcpSocket *socket = server.nextPendingConnection();
-        connect(socket, &QTcpSocket::readyRead, socket, [socket, token] {
-            socket->readAll();
+        connect(socket, &QTcpSocket::readyRead, socket, [&, socket, token] {
+            const QByteArray request = socket->readAll();
+            const QList<QByteArray> proofs = headerValues(request, QByteArrayLiteral("DPoP"));
+            if (proofs.isEmpty()) return;
+            proof = QString::fromLatin1(proofs.constFirst());
             const QByteArray response = QJsonDocument(QJsonObject{
                 {QStringLiteral("ok"), false},
                 {QStringLiteral("code"), token},
-                {QStringLiteral("message"), QStringLiteral("rejected %1").arg(token)},
-                {QStringLiteral("request_id"), token},
+                {QStringLiteral("message"), QStringLiteral("rejected %1 %2").arg(token, proof)},
+                {QStringLiteral("request_id"), proof},
             }).toJson(QJsonDocument::Compact);
             socket->write("HTTP/1.1 401 Unauthorized\r\nContent-Type: application/json\r\nContent-Length: " + QByteArray::number(response.size()) + "\r\n\r\n" + response);
             socket->disconnectFromHost();
         });
     });
-    ApiClient client(QUrl(QStringLiteral("http://127.0.0.1:%1").arg(server.serverPort())));
+    TestProofSigner signer;
+    DeviceProofBuilder proofBuilder = makeProofBuilder(signer);
+    ApiClient client(QUrl(QStringLiteral("http://127.0.0.1:%1").arg(server.serverPort())),
+                     proofBuilder, [] { return FixedNow; });
     QSignalSpy failed(&client, &ApiClient::profileFailed);
-    client.loadProfile(token, 73);
+    ProtectedSession session = validSession();
+    session.accessToken = token;
+    client.loadProfile(session, 73);
     if (failed.isEmpty()) QVERIFY(failed.wait(3000));
     const ApiError error = failed.at(0).at(0).value<ApiError>();
     QVERIFY(!error.code.contains(token));
     QVERIFY(!error.message.contains(token));
     QVERIFY(!error.requestId.contains(token));
+    QVERIFY(!proof.isEmpty());
+    QVERIFY(!error.code.contains(proof));
+    QVERIFY(!error.message.contains(proof));
+    QVERIFY(!error.requestId.contains(proof));
     QCOMPARE(failed.at(0).at(1).toULongLong(), quint64(73));
 }
 
@@ -281,8 +463,11 @@ void ApiClientTest::cancelledProfileDoesNotBlockNextRequest()
         }
     });
 
-    ApiClient client(QUrl(QStringLiteral("http://127.0.0.1:%1").arg(server.serverPort())));
-    client.loadProfile(QStringLiteral("old-token"), 1);
+    TestProofSigner signer;
+    DeviceProofBuilder proofBuilder = makeProofBuilder(signer);
+    ApiClient client(QUrl(QStringLiteral("http://127.0.0.1:%1").arg(server.serverPort())),
+                     proofBuilder, [] { return FixedNow; });
+    client.loadProfile(validSession(), 1);
     QTRY_VERIFY(profileRequest.startsWith("GET /v1/me HTTP/1.1\r\n"));
     client.cancelProfile();
 

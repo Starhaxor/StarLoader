@@ -59,7 +59,21 @@ ApiError withoutSecret(ApiError error, const QString &secret)
 } // namespace
 
 ApiClient::ApiClient(QUrl baseUrl, int timeoutMs, QObject *parent)
-    : IApiClient(parent), baseUrl_(std::move(baseUrl)), timeoutMs_(qBound(1, timeoutMs, RequestTimeoutMs))
+    : IApiClient(parent), baseUrl_(std::move(baseUrl)), timeoutMs_(qBound(1, timeoutMs, RequestTimeoutMs)),
+      defaultProofBuilder_(defaultProofSigner_), proofBuilder_(&defaultProofBuilder_),
+      clock_([] { return QDateTime::currentSecsSinceEpoch(); })
+{
+    qRegisterMetaType<LoginResponse>();
+    qRegisterMetaType<DeviceVerifyResponse>();
+    qRegisterMetaType<UserProfileResponse>();
+    qRegisterMetaType<ApiError>();
+}
+
+ApiClient::ApiClient(QUrl baseUrl, DeviceProofBuilder &proofBuilder, Clock clock,
+                     int timeoutMs, QObject *parent)
+    : IApiClient(parent), baseUrl_(std::move(baseUrl)), timeoutMs_(qBound(1, timeoutMs, RequestTimeoutMs)),
+      defaultProofBuilder_(defaultProofSigner_), proofBuilder_(&proofBuilder),
+      clock_(clock ? std::move(clock) : Clock([] { return QDateTime::currentSecsSinceEpoch(); }))
 {
     qRegisterMetaType<LoginResponse>();
     qRegisterMetaType<DeviceVerifyResponse>();
@@ -99,26 +113,62 @@ void ApiClient::verifyDevice(const DeviceVerifyRequest &request, quint64 generat
     }, true, generation);
 }
 
-void ApiClient::loadProfile(const QString &token, quint64 generation)
+bool ApiClient::buildProtectedRequest(const QString &path, const QString &method,
+                                      const ProtectedSession &session, const QString &requestId,
+                                      QNetworkRequest *request, ApiError *error)
+{
+    const auto reject = [requestId, error](const QString &code, const QString &message) {
+        if (error) *error = {code, message, requestId};
+        return false;
+    };
+    if (!request || !proofBuilder_ || session.accessToken.isEmpty()
+        || session.deviceKeyThumbprint.isEmpty() || !session.expiresAt.isValid()) {
+        return reject(QStringLiteral("INVALID_SESSION"), QStringLiteral("A valid session is required."));
+    }
+    if (session.expiresAt.toSecsSinceEpoch() <= clock_()) {
+        return reject(QStringLiteral("SESSION_EXPIRED"), QStringLiteral("The session has expired. Sign in again."));
+    }
+
+    const QUrl requestUrl = baseUrl_.resolved(QUrl(path));
+    const ProofResult proof = proofBuilder_->build(method, requestUrl, session.accessToken,
+                                                    session.deviceKeyThumbprint);
+    if (!proof.valid || proof.compactJws.isEmpty()
+        || proof.jwkThumbprint != session.deviceKeyThumbprint) {
+        return reject(QStringLiteral("DEVICE_PROOF_FAILED"), QStringLiteral("Device proof could not be created."));
+    }
+
+    *request = QNetworkRequest(requestUrl);
+    request->setRawHeader("Authorization", QByteArrayLiteral("DPoP ") + session.accessToken.toLatin1());
+    request->setRawHeader("DPoP", proof.compactJws.toLatin1());
+    request->setRawHeader("X-Request-ID", requestId.toUtf8());
+    return true;
+}
+
+void ApiClient::loadProfile(const ProtectedSession &session, quint64 generation)
 {
     const QString requestId = newRequestId();
     const auto fail = [this, generation](const ApiError &error) { emit profileFailed(error, generation); };
     if (!isAllowedTransport()) { fail({QStringLiteral("INSECURE_TRANSPORT"), QStringLiteral("Secure transport is required."), requestId}); return; }
     if (requestActive_) { fail({QStringLiteral("REQUEST_IN_PROGRESS"), QStringLiteral("A request is already in progress."), requestId}); return; }
-    if (token.isEmpty()) { fail({QStringLiteral("INVALID_SESSION_TOKEN"), QStringLiteral("A valid session is required."), requestId}); return; }
+    QNetworkRequest networkRequest;
+    ApiError preparationError;
+    if (!buildProtectedRequest(QStringLiteral("/v1/me"), QStringLiteral("GET"), session,
+                               requestId, &networkRequest, &preparationError)) {
+        fail(preparationError);
+        return;
+    }
 
     requestActive_ = true;
-    QNetworkRequest networkRequest(baseUrl_.resolved(QUrl(QStringLiteral("/v1/me"))));
-    networkRequest.setRawHeader("Authorization", QByteArrayLiteral("Bearer ") + token.toUtf8());
-    networkRequest.setRawHeader("X-Request-ID", requestId.toUtf8());
     QNetworkReply *reply = network_.get(networkRequest);
+    const QString compactProof = QString::fromLatin1(networkRequest.rawHeader("DPoP"));
     profileReply_ = reply;
     reply->setReadBufferSize(MaxResponseBytes);
     auto *timer = new QTimer(reply);
     timer->setSingleShot(true);
     connect(timer, &QTimer::timeout, reply, [reply] { reply->setProperty("starloader.timeout", true); reply->abort(); });
     timer->start(timeoutMs_);
-    connect(reply, &QNetworkReply::finished, this, [this, reply, requestId, token, generation] {
+    connect(reply, &QNetworkReply::finished, this, [this, reply, requestId, token = session.accessToken,
+                                                    compactProof, generation] {
         if (reply->property("starloader.cancelled").toBool()) {
             reply->deleteLater();
             return;
@@ -132,7 +182,7 @@ void ApiClient::loadProfile(const QString &token, quint64 generation)
                 ? ApiError{QStringLiteral("TIMEOUT"), QStringLiteral("Network request timed out."), requestId}
                 : errorForReply(reply, body, requestId);
             if (body.size() > MaxResponseBytes) error = {QStringLiteral("RESPONSE_TOO_LARGE"), QStringLiteral("Server response is too large."), requestId};
-            emit profileFailed(withoutSecret(error, token), generation);
+            emit profileFailed(withoutSecret(withoutSecret(error, token), compactProof), generation);
             reply->deleteLater();
             return;
         }

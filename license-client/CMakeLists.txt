@@ -104,12 +104,16 @@ qt_add_executable(LicenseClient WIN32
 qt_add_executable(ApiClientTest
     src/api/ApiClient.cpp
     src/api/ApiClient.h
+    src/security/DeviceProof.cpp
+    src/security/DeviceProof.h
     tests/ApiClientTest.cpp
 )
 
 qt_add_executable(AuthManagerTest
     src/api/ApiClient.cpp
     src/api/ApiClient.h
+    src/security/DeviceProof.cpp
+    src/security/DeviceProof.h
     src/auth/AuthManager.cpp
     src/auth/AuthManager.h
     src/auth/AuthState.h
@@ -142,6 +146,8 @@ qt_add_executable(HwidDialogTest
 qt_add_executable(LoginWindowUiTest
     src/api/ApiClient.cpp
     src/api/ApiClient.h
+    src/security/DeviceProof.cpp
+    src/security/DeviceProof.h
     src/auth/AuthManager.cpp
     src/auth/AuthManager.h
     src/auth/AuthState.h
@@ -170,6 +176,8 @@ qt_add_executable(WindowTitleBarTest
 qt_add_executable(UserDashboardTest
     src/api/ApiClient.cpp
     src/api/ApiClient.h
+    src/security/DeviceProof.cpp
+    src/security/DeviceProof.h
     src/auth/AuthManager.cpp
     src/auth/AuthManager.h
     src/auth/AuthState.h
@@ -192,6 +200,8 @@ qt_add_executable(UserDashboardTest
 qt_add_executable(NativeLiveFlowTest
     src/api/ApiClient.cpp
     src/api/ApiClient.h
+    src/security/DeviceProof.cpp
+    src/security/DeviceProof.h
     src/auth/AuthManager.cpp
     src/auth/AuthManager.h
     src/auth/AuthState.h
@@ -252,7 +262,7 @@ elseif(WIN32)
         VERBATIM)
 endif()
 
-target_link_libraries(ApiClientTest PRIVATE Qt6::Core Qt6::Network Qt6::Test)
+target_link_libraries(ApiClientTest PRIVATE DeviceIdentityShared Qt6::Core Qt6::Network Qt6::Test)
 target_link_libraries(AuthManagerTest PRIVATE DeviceIdentityShared Qt6::Core Qt6::Network Qt6::Concurrent Qt6::Test OpenSSL::Crypto)
 target_link_libraries(SessionTokenVerifierTest PRIVATE Qt6::Core Qt6::Test OpenSSL::Crypto)
 target_link_libraries(DeviceProofTest PRIVATE DeviceIdentityShared Qt6::Core Qt6::Network Qt6::Test)
