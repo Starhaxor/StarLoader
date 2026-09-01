@@ -265,7 +265,7 @@ target_link_libraries(NativeLiveFlowTest PRIVATE DeviceIdentityShared Qt6::Widge
 target_include_directories(ApiClientTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_CURRENT_BINARY_DIR}/generated)
 target_include_directories(AuthManagerTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_CURRENT_BINARY_DIR}/generated ${CMAKE_SOURCE_DIR}/shared)
 target_include_directories(SessionTokenVerifierTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-target_include_directories(DeviceProofTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_include_directories(DeviceProofTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_CURRENT_BINARY_DIR}/generated)
 target_include_directories(HwidDialogTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_include_directories(LoginWindowUiTest PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src

@@ -1,5 +1,6 @@
 #include "DeviceProof.h"
 
+#include "ClientSecurityConfig.h"
 #include "security/TpmIdentity.h"
 
 #include <QCryptographicHash>
@@ -17,6 +18,7 @@ constexpr quint32 kEcdsaP256PublicMagic = 0x31534345;
 constexpr qsizetype kCoordinateSize = 32;
 constexpr qsizetype kPublicBlobSize = 8 + (2 * kCoordinateSize);
 constexpr qsizetype kRawSignatureSize = 64;
+constexpr qsizetype kMaximumTokenBytes = 16 * 1024;
 const QString kProofFailure = QStringLiteral("Device proof could not be created.");
 
 ProofResult rejected()
@@ -40,6 +42,84 @@ QByteArray base64Url(QByteArrayView input)
         QByteArray::Base64UrlEncoding | QByteArray::OmitTrailingEquals);
 }
 
+void secureClear(QByteArray *value)
+{
+    if (!value)
+        return;
+    volatile char *bytes = value->data();
+    for (qsizetype index = 0; index < value->size(); ++index)
+        bytes[index] = 0;
+    value->clear();
+    value->squeeze();
+}
+
+void clearText(QString *value)
+{
+    if (!value)
+        return;
+    value->fill(QChar(u'\0'));
+    value->clear();
+    value->squeeze();
+}
+
+int base64UrlValue(unsigned char character)
+{
+    if (character >= 'A' && character <= 'Z')
+        return character - 'A';
+    if (character >= 'a' && character <= 'z')
+        return 26 + character - 'a';
+    if (character >= '0' && character <= '9')
+        return 52 + character - '0';
+    if (character == '-')
+        return 62;
+    if (character == '_')
+        return 63;
+    return -1;
+}
+
+bool canonicalBase64UrlSegment(QByteArrayView segment)
+{
+    if (segment.isEmpty() || segment.size() % 4 == 1)
+        return false;
+    for (const char character : segment) {
+        if (base64UrlValue(static_cast<unsigned char>(character)) < 0)
+            return false;
+    }
+    const int finalValue = base64UrlValue(static_cast<unsigned char>(segment.back()));
+    if (segment.size() % 4 == 2 && (finalValue & 0x0f) != 0)
+        return false;
+    if (segment.size() % 4 == 3 && (finalValue & 0x03) != 0)
+        return false;
+    return true;
+}
+
+bool validCompactAccessToken(QByteArrayView token)
+{
+    if (token.isEmpty() || token.size() > kMaximumTokenBytes)
+        return false;
+    qsizetype firstDot = -1;
+    qsizetype secondDot = -1;
+    for (qsizetype index = 0; index < token.size(); ++index) {
+        if (token.at(index) != '.')
+            continue;
+        if (firstDot < 0)
+            firstDot = index;
+        else if (secondDot < 0)
+            secondDot = index;
+        else
+            return false;
+    }
+    if (firstDot <= 0 || secondDot <= firstDot + 1 || secondDot >= token.size() - 1)
+        return false;
+    const QByteArrayView header(token.data(), firstDot);
+    const QByteArrayView payload(token.data() + firstDot + 1, secondDot - firstDot - 1);
+    const QByteArrayView signature(token.data() + secondDot + 1, token.size() - secondDot - 1);
+    return signature.size() == 86
+        && canonicalBase64UrlSegment(header)
+        && canonicalBase64UrlSegment(payload)
+        && canonicalBase64UrlSegment(signature);
+}
+
 bool parsePublicBlob(QByteArrayView blob, QByteArray *x, QByteArray *y)
 {
     if (blob.size() != kPublicBlobSize
@@ -59,7 +139,7 @@ QString thumbprintFor(const QByteArray &xEncoded, const QByteArray &yEncoded)
     return QString::fromLatin1(base64Url(QCryptographicHash::hash(canonical, QCryptographicHash::Sha256)));
 }
 
-bool canonicalHtu(const QUrl &input, bool localDevelopment, QString *htu)
+bool canonicalHtu(const QUrl &input, QString *htu)
 {
     if (!input.isValid() || input.isRelative() || input.host().isEmpty()
         || !input.userName().isEmpty() || !input.password().isEmpty()) {
@@ -68,11 +148,15 @@ bool canonicalHtu(const QUrl &input, bool localDevelopment, QString *htu)
 
     const QString scheme = input.scheme().toLower();
     if (scheme != QStringLiteral("https")) {
+#if STARLOADER_LOCAL_DEVELOPMENT
         QHostAddress address;
-        if (!localDevelopment || scheme != QStringLiteral("http")
+        if (scheme != QStringLiteral("http")
             || !address.setAddress(input.host()) || !address.isLoopback()) {
             return false;
         }
+#else
+        return false;
+#endif
     }
 
     QUrl canonical = input.adjusted(QUrl::NormalizePathSegments
@@ -134,11 +218,10 @@ bool TpmProofSigner::sign(QByteArrayView input, QByteArray *signature,
 }
 
 DeviceProofBuilder::DeviceProofBuilder(IDeviceProofSigner &signer, Clock clock,
-                                       RandomSource randomSource, bool localDevelopment)
+                                       RandomSource randomSource)
     : signer_(signer),
       clock_(clock ? std::move(clock) : Clock([] { return QDateTime::currentSecsSinceEpoch(); })),
-      randomSource_(randomSource ? std::move(randomSource) : RandomSource(secureRandomJti)),
-      localDevelopment_(localDevelopment)
+      randomSource_(randomSource ? std::move(randomSource) : RandomSource(secureRandomJti))
 {
 }
 
@@ -146,17 +229,28 @@ ProofResult DeviceProofBuilder::build(const QString &method, const QUrl &url,
                                       const QString &accessToken,
                                       const QString &expectedThumbprint) const
 {
-    const QByteArray tokenBytes = accessToken.toLatin1();
+    QByteArray tokenBytes = accessToken.toLatin1();
+    if (!validCompactAccessToken(tokenBytes)) {
+        secureClear(&tokenBytes);
+        return rejected();
+    }
+    QByteArray accessTokenHash = QCryptographicHash::hash(tokenBytes, QCryptographicHash::Sha256);
+    secureClear(&tokenBytes);
+    const QString ath = QString::fromLatin1(base64Url(accessTokenHash));
+    secureClear(&accessTokenHash);
+
     QString htu;
-    if (accessToken.isEmpty() || QString::fromLatin1(tokenBytes) != accessToken
-        || !validMethod(method) || !canonicalHtu(url, localDevelopment_, &htu)) {
+    if (!validMethod(method) || !canonicalHtu(url, &htu)) {
         return rejected();
     }
 
     QByteArray publicBlob;
     QString signerError;
-    if (!signer_.publicKeyBlob(&publicBlob, &signerError))
+    if (!signer_.publicKeyBlob(&publicBlob, &signerError)) {
+        clearText(&signerError);
         return rejected();
+    }
+    clearText(&signerError);
 
     QByteArray x;
     QByteArray y;
@@ -168,9 +262,13 @@ ProofResult DeviceProofBuilder::build(const QString &method, const QUrl &url,
     if (expectedThumbprint != thumbprint)
         return rejected();
 
-    const QByteArray random = randomSource_();
-    if (random.size() != 16)
+    QByteArray random = randomSource_();
+    if (random.size() != 16) {
+        secureClear(&random);
         return rejected();
+    }
+    const QString jti = QString::fromLatin1(base64Url(random));
+    secureClear(&random);
 
     const QJsonObject jwk{
         {QStringLiteral("crv"), QStringLiteral("P-256")},
@@ -184,11 +282,11 @@ ProofResult DeviceProofBuilder::build(const QString &method, const QUrl &url,
         {QStringLiteral("typ"), QStringLiteral("dpop+jwt")},
     };
     const QJsonObject payload{
-        {QStringLiteral("ath"), QString::fromLatin1(base64Url(QCryptographicHash::hash(tokenBytes, QCryptographicHash::Sha256)))},
+        {QStringLiteral("ath"), ath},
         {QStringLiteral("htm"), method.toUpper()},
         {QStringLiteral("htu"), htu},
         {QStringLiteral("iat"), clock_()},
-        {QStringLiteral("jti"), QString::fromLatin1(base64Url(random))},
+        {QStringLiteral("jti"), jti},
     };
 
     const QByteArray encodedHeader = base64Url(QJsonDocument(header).toJson(QJsonDocument::Compact));
@@ -199,6 +297,8 @@ ProofResult DeviceProofBuilder::build(const QString &method, const QUrl &url,
     const bool signedSuccessfully = signer_.sign(signingInput, &signature, &signedPublicBlob, &signerError);
     std::fill(signingInput.begin(), signingInput.end(), '\0');
     signingInput.clear();
+    signingInput.squeeze();
+    clearText(&signerError);
     if (!signedSuccessfully || signature.size() != kRawSignatureSize
         || signedPublicBlob != publicBlob) {
         return rejected();

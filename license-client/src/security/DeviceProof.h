@@ -40,8 +40,7 @@ public:
 
     explicit DeviceProofBuilder(IDeviceProofSigner &signer,
                                 Clock clock = {},
-                                RandomSource randomSource = {},
-                                bool localDevelopment = false);
+                                RandomSource randomSource = {});
 
     ProofResult build(const QString &method, const QUrl &url,
                       const QString &accessToken,
@@ -51,5 +50,4 @@ private:
     IDeviceProofSigner &signer_;
     Clock clock_;
     RandomSource randomSource_;
-    bool localDevelopment_ = false;
 };
