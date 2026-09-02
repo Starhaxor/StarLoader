@@ -124,7 +124,7 @@ bool TpmDeviceSigner::sign(QByteArrayView input, QByteArray *signature, QByteArr
 
 AuthManager::AuthManager(IApiClient &apiClient, IHardwareCollector &hardwareCollector, IDeviceSigner &deviceSigner, SessionTokenVerifier verifier, QObject *parent)
     : AuthManager(apiClient, hardwareCollector, deviceSigner, std::move(verifier),
-                  [] { return QDateTime::currentSecsSinceEpoch(); },
+                  [] { return QDateTime::currentMSecsSinceEpoch(); },
                   std::make_unique<QtSessionExpiryTimer>(), parent)
 {}
 
@@ -132,7 +132,7 @@ AuthManager::AuthManager(IApiClient &apiClient, IHardwareCollector &hardwareColl
                          SessionTokenVerifier verifier, Clock clock,
                          std::unique_ptr<ISessionExpiryTimer> expiryTimer, QObject *parent)
     : QObject(parent), apiClient_(apiClient), hardwareCollector_(hardwareCollector), deviceSigner_(deviceSigner),
-      verifier_(std::move(verifier)), clock_(clock ? std::move(clock) : Clock([] { return QDateTime::currentSecsSinceEpoch(); })),
+      verifier_(std::move(verifier)), clock_(clock ? std::move(clock) : Clock([] { return QDateTime::currentMSecsSinceEpoch(); })),
       expiryTimer_(expiryTimer ? std::move(expiryTimer) : std::make_unique<QtSessionExpiryTimer>())
 {
     qRegisterMetaType<AuthState>();
@@ -306,7 +306,7 @@ void AuthManager::handleDeviceVerified(const DeviceVerifyResponse &response, qui
     if (!verified.valid) { fail({QStringLiteral("INVALID_SESSION_TOKEN"), QStringLiteral("Server session token is invalid."), response.requestId}); return; }
     sessionToken_ = response.token;
     expiresAt_ = verified.expiresAt;
-    if (expiresAt_.toSecsSinceEpoch() <= clock_()) {
+    if (expiresAt_.toMSecsSinceEpoch() <= clock_()) {
         requireReauthentication(generation);
         return;
     }
@@ -322,7 +322,7 @@ void AuthManager::handleDeviceVerificationFailed(const ApiError &error, quint64 
 void AuthManager::handleProfileLoaded(const UserProfileResponse &response, quint64 generation)
 {
     if (generation != attempt_ || state_ != AuthState::Authenticating || !profileLoading_ || sessionToken_.isEmpty()) return;
-    if (!expiresAt_.isValid() || expiresAt_.toSecsSinceEpoch() <= clock_()) {
+    if (!expiresAt_.isValid() || expiresAt_.toMSecsSinceEpoch() <= clock_()) {
         requireReauthentication(generation);
         return;
     }
@@ -337,7 +337,7 @@ void AuthManager::handleProfileLoaded(const UserProfileResponse &response, quint
 
 void AuthManager::scheduleExpiry(const QDateTime &expiresAt, quint64 generation)
 {
-    const qint64 delayMs = qMax<qint64>(0, (expiresAt.toSecsSinceEpoch() - clock_()) * 1000);
+    const qint64 delayMs = qMax<qint64>(0, expiresAt.toMSecsSinceEpoch() - clock_());
     expiryTimer_->schedule(delayMs, [this, generation] { requireReauthentication(generation); });
 }
 

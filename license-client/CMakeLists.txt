@@ -15,6 +15,9 @@ set(STARLOADER_VMPROTECT_SDK_INCLUDE_DIR "" CACHE PATH "Directory containing VMP
 set(STARLOADER_VMPROTECT_SDK_LIBRARY "" CACHE FILEPATH "VMProtect SDK library for protected releases")
 set(STARLOADER_VMPROTECT_PROJECT_FILE "" CACHE FILEPATH "VMProtect project file used by the release pipeline")
 if(STARLOADER_PROTECTED_RELEASE)
+    if(STARLOADER_LOCAL_DEVELOPMENT)
+        message(FATAL_ERROR "STARLOADER_PROTECTED_RELEASE=ON is incompatible with STARLOADER_LOCAL_DEVELOPMENT=ON")
+    endif()
     get_property(STARLOADER_VMPROTECT_MULTI_CONFIG GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
     if(STARLOADER_VMPROTECT_MULTI_CONFIG)
         set(CMAKE_CONFIGURATION_TYPES "Release" CACHE STRING "Configurations permitted for a protected release" FORCE)
@@ -434,6 +437,25 @@ add_test(NAME ProtectedReleaseConfigurationTest
         "-DSTARLOADER_QT6_DIR=${Qt6_DIR}"
         "-DSTARLOADER_OPENSSL_ROOT_DIR=${OPENSSL_ROOT_DIR}"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/VerifyProtectedReleaseConfiguration.cmake")
+add_test(NAME SecurityConfigurationTest
+    COMMAND "${CMAKE_COMMAND}"
+        "-DSTARLOADER_CMAKE_COMMAND=${CMAKE_COMMAND}"
+        "-DSTARLOADER_SOURCE_DIR=${CMAKE_SOURCE_DIR}"
+        "-DSTARLOADER_TEST_BINARY_DIR=${CMAKE_CURRENT_BINARY_DIR}/security-config"
+        "-DSTARLOADER_CMAKE_GENERATOR=${CMAKE_GENERATOR}"
+        "-DSTARLOADER_CMAKE_MAKE_PROGRAM=${CMAKE_MAKE_PROGRAM}"
+        "-DSTARLOADER_CMAKE_C_COMPILER=${CMAKE_C_COMPILER}"
+        "-DSTARLOADER_CMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}"
+        "-DSTARLOADER_CMAKE_AR=${CMAKE_AR}"
+        "-DSTARLOADER_CMAKE_RANLIB=${CMAKE_RANLIB}"
+        "-DSTARLOADER_CMAKE_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE}"
+        "-DSTARLOADER_CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}"
+        "-DSTARLOADER_OPENSSL_ROOT_DIR=${OPENSSL_ROOT_DIR}"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/VerifySecurityConfiguration.cmake")
+add_test(NAME ReleasePackagingScriptTest
+    COMMAND "${CMAKE_COMMAND}"
+        "-DSTARLOADER_PACKAGE_SCRIPT=${CMAKE_SOURCE_DIR}/scripts/package-release.ps1"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/VerifyReleasePackagingScript.cmake")
 add_test(NAME HwidDialogTest COMMAND HwidDialogTest)
 add_test(NAME LoginWindowUiTest COMMAND LoginWindowUiTest)
 add_test(NAME WindowTitleBarTest COMMAND WindowTitleBarTest)

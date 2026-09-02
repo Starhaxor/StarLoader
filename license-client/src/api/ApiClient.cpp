@@ -97,7 +97,7 @@ ApiClient::ApiClient(QUrl baseUrl, int timeoutMs, QObject *parent)
                     STARLOADER_LOCAL_DEVELOPMENT == 1),
       timeoutMs_(qBound(1, timeoutMs, RequestTimeoutMs)),
       proofBuilder_(std::make_shared<DeviceProofBuilder>(defaultProofSigner_)),
-      clock_([] { return QDateTime::currentSecsSinceEpoch(); })
+      clock_([] { return QDateTime::currentMSecsSinceEpoch(); })
 {
     initializeNetworkSecurity();
     qRegisterMetaType<LoginResponse>();
@@ -113,7 +113,7 @@ ApiClient::ApiClient(QUrl baseUrl, std::shared_ptr<IDeviceProofBuilder> proofBui
                     STARLOADER_LOCAL_DEVELOPMENT == 1),
       timeoutMs_(qBound(1, timeoutMs, RequestTimeoutMs)),
       proofBuilder_(std::move(proofBuilder)),
-      clock_(clock ? std::move(clock) : Clock([] { return QDateTime::currentSecsSinceEpoch(); }))
+      clock_(clock ? std::move(clock) : Clock([] { return QDateTime::currentMSecsSinceEpoch(); }))
 {
     initializeNetworkSecurity();
     qRegisterMetaType<LoginResponse>();
@@ -191,7 +191,7 @@ bool ApiClient::buildProtectedRequest(const QString &path, const QString &method
         || session.deviceKeyThumbprint.isEmpty() || !session.expiresAt.isValid()) {
         return reject(QStringLiteral("INVALID_SESSION"), QStringLiteral("A valid session is required."));
     }
-    if (session.expiresAt.toSecsSinceEpoch() <= clock_()) {
+    if (session.expiresAt.toMSecsSinceEpoch() <= clock_()) {
         return reject(QStringLiteral("SESSION_EXPIRED"), QStringLiteral("The session has expired. Sign in again."));
     }
 
@@ -202,7 +202,7 @@ bool ApiClient::buildProtectedRequest(const QString &path, const QString &method
         || proof.jwkThumbprint != session.deviceKeyThumbprint) {
         return reject(QStringLiteral("DEVICE_PROOF_FAILED"), QStringLiteral("Device proof could not be created."));
     }
-    if (session.expiresAt.toSecsSinceEpoch() <= clock_()) {
+    if (session.expiresAt.toMSecsSinceEpoch() <= clock_()) {
         return reject(QStringLiteral("SESSION_EXPIRED"), QStringLiteral("The session has expired. Sign in again."));
     }
 
@@ -233,7 +233,7 @@ void ApiClient::loadProfile(const ProtectedSession &session, quint64 generation)
         fail(preparationError);
         return;
     }
-    if (session.expiresAt.toSecsSinceEpoch() <= clock_()) {
+    if (session.expiresAt.toMSecsSinceEpoch() <= clock_()) {
         fail({QStringLiteral("SESSION_EXPIRED"), QStringLiteral("The session has expired. Sign in again."), requestId});
         return;
     }

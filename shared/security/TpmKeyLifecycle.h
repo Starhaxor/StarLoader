@@ -2,6 +2,16 @@
 
 namespace TpmIdentityDetail {
 
+struct PersistedKeyPolicy
+{
+    bool exportPolicyPresent = false;
+    unsigned long exportPolicy = 0;
+    bool keyUsagePresent = false;
+    unsigned long keyUsage = 0;
+};
+
+bool isSigningOnlyNonExportablePolicy(const PersistedKeyPolicy &policy);
+
 enum class KeyOperationResult
 {
     Success,

@@ -125,7 +125,23 @@ bool isP256PublicBlob(QByteArrayView blob)
 
 bool validateP256Key(NCRYPT_KEY_HANDLE key)
 {
-    return isP256PublicBlob(exportPublicKey(key));
+    DWORD exportPolicy = 0;
+    DWORD exportPolicySize = sizeof(exportPolicy);
+    const bool exportPolicyPresent = NCryptGetProperty(
+        key, NCRYPT_EXPORT_POLICY_PROPERTY, reinterpret_cast<PBYTE>(&exportPolicy),
+        sizeof(exportPolicy), &exportPolicySize, 0) == ERROR_SUCCESS
+        && exportPolicySize == sizeof(exportPolicy);
+
+    DWORD keyUsage = 0;
+    DWORD keyUsageSize = sizeof(keyUsage);
+    const bool keyUsagePresent = NCryptGetProperty(
+        key, NCRYPT_KEY_USAGE_PROPERTY, reinterpret_cast<PBYTE>(&keyUsage),
+        sizeof(keyUsage), &keyUsageSize, 0) == ERROR_SUCCESS
+        && keyUsageSize == sizeof(keyUsage);
+
+    return isP256PublicBlob(exportPublicKey(key))
+        && TpmIdentityDetail::isSigningOnlyNonExportablePolicy(
+            {exportPolicyPresent, exportPolicy, keyUsagePresent, keyUsage});
 }
 
 class CngKeyLifecycle final : public TpmIdentityDetail::KeyLifecycle
@@ -246,7 +262,7 @@ bool TpmIdentity::ensureKey(QString *error)
     if (result == TpmIdentityDetail::EnsureKeyResult::Success)
         return true;
     if (result == TpmIdentityDetail::EnsureKeyResult::ValidationFailed) {
-        setError(error, QStringLiteral("The new TPM identity key is not ECDSA P-256."));
+        setError(error, QStringLiteral("The TPM identity key does not satisfy the required security policy."));
         return false;
     }
     setError(error, cngFailure(lifecycle.operation(), lifecycle.status()));
@@ -268,8 +284,9 @@ QByteArray TpmIdentity::publicKeyBlob()
     if (openPersistedKey(provider.get(), key) != ERROR_SUCCESS)
         return {};
 
-    const QByteArray blob = exportPublicKey(key.get());
-    return isP256PublicBlob(blob) ? blob : QByteArray();
+    if (!validateP256Key(key.get()))
+        return {};
+    return exportPublicKey(key.get());
 #else
     return {};
 #endif
@@ -308,7 +325,7 @@ QByteArray TpmIdentity::signChallenge(QByteArrayView challenge, QString *error)
         return {};
     }
     if (!validateP256Key(key.get())) {
-        setError(error, QStringLiteral("The persisted TPM identity key is not ECDSA P-256."));
+        setError(error, QStringLiteral("The TPM identity key does not satisfy the required security policy."));
         return {};
     }
 

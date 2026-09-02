@@ -163,6 +163,7 @@ private slots:
     void expiryRequiresFullReauthenticationExactlyOnce();
     void alreadyExpiredTokenNeverStartsProtectedRequest();
     void staleExpiryCallbackCannotEndANewerAttempt();
+    void expiryUsesExactMillisecondBoundary();
     void passwordStateIsClearedBeforeLoginCanComplete();
 };
 
@@ -212,7 +213,7 @@ void AuthManagerTest::expiryRequiresFullReauthenticationExactlyOnce()
     FakeApiClient api; FakeHardwareCollector collector; FakeDeviceSigner signer;
     auto timer = std::make_unique<FakeExpiryTimer>();
     FakeExpiryTimer *timerView = timer.get();
-    AuthManager manager(api, collector, signer, verifier(), [=] { return now; }, std::move(timer));
+    AuthManager manager(api, collector, signer, verifier(), [=] { return now * 1000; }, std::move(timer));
     QSignalSpy reauth(&manager, &AuthManager::reauthenticationRequired);
 
     manager.login(QStringLiteral("person@example.com"), QStringLiteral("password"));
@@ -246,7 +247,7 @@ void AuthManagerTest::expiryRequiresFullReauthenticationExactlyOnce()
 
 void AuthManagerTest::alreadyExpiredTokenNeverStartsProtectedRequest()
 {
-    const qint64 managerNow = QDateTime::currentSecsSinceEpoch() + 601;
+    const qint64 managerNow = (QDateTime::currentSecsSinceEpoch() + 601) * 1000;
     FakeApiClient api; FakeHardwareCollector collector; FakeDeviceSigner signer;
     auto timer = std::make_unique<FakeExpiryTimer>();
     AuthManager manager(api, collector, signer, verifier(), [=] { return managerNow; }, std::move(timer));
@@ -268,7 +269,7 @@ void AuthManagerTest::staleExpiryCallbackCannotEndANewerAttempt()
     FakeApiClient api; FakeHardwareCollector collector; FakeDeviceSigner signer;
     auto timer = std::make_unique<FakeExpiryTimer>();
     FakeExpiryTimer *timerView = timer.get();
-    AuthManager manager(api, collector, signer, verifier(), [=] { return now; }, std::move(timer));
+    AuthManager manager(api, collector, signer, verifier(), [=] { return now * 1000; }, std::move(timer));
     QSignalSpy reauth(&manager, &AuthManager::reauthenticationRequired);
     manager.login(QStringLiteral("first@example.com"), QStringLiteral("password"));
     QTRY_COMPARE(api.loginCount, 1);
@@ -282,6 +283,34 @@ void AuthManagerTest::staleExpiryCallbackCannotEndANewerAttempt()
     staleCallback();
     QCOMPARE(reauth.count(), 0);
     QCOMPARE(manager.state(), AuthState::Authenticating);
+}
+
+void AuthManagerTest::expiryUsesExactMillisecondBoundary()
+{
+    const qint64 iat = QDateTime::currentSecsSinceEpoch();
+    qint64 nowMs = iat * 1000 + 321;
+    FakeApiClient api; FakeHardwareCollector collector; FakeDeviceSigner signer;
+    auto timer = std::make_unique<FakeExpiryTimer>();
+    FakeExpiryTimer *timerView = timer.get();
+    AuthManager manager(api, collector, signer, verifier(), [&] { return nowMs; }, std::move(timer));
+
+    manager.login(QStringLiteral("person@example.com"), QStringLiteral("password"));
+    QTRY_COMPARE(api.loginCount, 1);
+    api.completeLogin(challengeResponse());
+    QTRY_COMPARE(api.verifyCount, 1);
+    QJsonObject claims = validClaims();
+    claims.insert(QStringLiteral("iat"), iat);
+    claims.insert(QStringLiteral("nbf"), iat);
+    claims.insert(QStringLiteral("exp"), iat + 600);
+    api.completeVerify(verifiedResponse(tokenFor(claims)));
+    QCOMPARE(timerView->lastDelayMs, qint64(599'679));
+    QCOMPARE(api.profileCount, 1);
+
+    const auto stale = timerView->callback;
+    manager.signOut();
+    nowMs = (iat + 600) * 1000;
+    stale();
+    QCOMPARE(manager.state(), AuthState::LoggedOut);
 }
 
 void AuthManagerTest::passwordStateIsClearedBeforeLoginCanComplete()

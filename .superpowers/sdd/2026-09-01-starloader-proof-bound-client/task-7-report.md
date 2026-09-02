@@ -125,3 +125,53 @@ Final correction verification on 2026-09-02:
 - `git diff --check` completed without whitespace errors.
 
 Final correction commit subject: `fix(verification): align proof-bound client scripts`
+
+## Whole-branch final security fix wave
+
+The one permitted final fix wave closed all three Important findings:
+
+- protected releases now reject local-development/loopback configuration at
+  configure time, with committed negative coverage for that combination and
+  for missing, single, duplicate, third, malformed TLS pins and API/pinned-host
+  mismatch;
+- existing and concurrently-created TPM keys are accepted only when the CNG
+  export-policy property is present and zero and the key-usage property is
+  present and exactly signing-only, in addition to the existing Platform
+  Crypto Provider and P-256 public-blob checks; and
+- AuthManager and ApiClient now compare the JWT's integer `exp` boundary as
+  `exp * 1000` through `QDateTime::toMSecsSinceEpoch()` against injected epoch
+  milliseconds. Tests cover one millisecond before, exactly at, and one
+  millisecond after expiry, zero network at/after the boundary, exact timer
+  delay, and stale-generation isolation.
+
+The deferred token-verifier matrix now locks missing/wrong `alg`, `typ`, and
+`kid`, future `iat` at +60 seconds accepted, and +61 seconds rejected.
+
+The release packaging helper was replaced with a staging-only, fail-closed
+tool. It never configures or builds, rejects ordinary `build` paths, requires
+an explicit protected-output root and fresh destination, requires PowerShell
+and SignTool Authenticode/timestamp validation, runs an explicit Windows
+Defender file scan, verifies the copied SHA-256 hash, and explicitly refuses
+to describe the result as ready to distribute. No signed/VMProtect-processed
+release artifact was available, so the real signing/scanning invocation was
+not claimed; parser and committed policy checks passed.
+
+Final verification evidence on 2026-09-02:
+
+- local configure and full build succeeded;
+- CTest passed 21/21, including protected-release, production security
+  configuration, release-packaging policy, TPM, token, API, auth, UI, and
+  native-live skip-path tests;
+- every PowerShell script parsed successfully;
+- the authored-tree literal-secret scan found no prohibited literals; and
+- `git diff --check` reported no whitespace errors.
+
+Remaining explicit activation minors: no real-timer-to-UI end-to-end expiry
+test, no HTTPS ApiClient fixture for the `encrypted`/`sslErrors` wiring, and no
+wipeable heap context for token/proof copies retained by Qt's asynchronous
+request machinery. The last item was not changed in this fix wave because
+Qt/QNetworkReply owns header data after submission; clearing only an
+additional application-side capture would not prove removal of all copies and
+would create misleading assurance. The proof-enabled KeyStar live fixture and
+Docker-backed live environment were unavailable; no live production flow is
+claimed.

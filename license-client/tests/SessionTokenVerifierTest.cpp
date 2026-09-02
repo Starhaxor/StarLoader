@@ -95,6 +95,7 @@ class SessionTokenVerifierTest final : public QObject
     Q_OBJECT
 private slots:
     void acceptsExact600SecondApplicationBoundToken();
+    void acceptsFutureIssuedAtAtSkewBoundary();
     void rejectsInvalidBindings_data();
     void rejectsInvalidBindings();
     void rejectsDuplicateJsonMembers();
@@ -114,10 +115,21 @@ void SessionTokenVerifierTest::acceptsExact600SecondApplicationBoundToken()
     QCOMPARE(result.deviceKeyThumbprint, kJkt);
 }
 
+void SessionTokenVerifierTest::acceptsFutureIssuedAtAtSkewBoundary()
+{
+    const VerifiedSession result = verifier().verify(signedToken(validClaims(600, 60)), kDevice, kLicense);
+    QVERIFY(result.valid);
+}
+
 void SessionTokenVerifierTest::rejectsInvalidBindings_data()
 {
     QTest::addColumn<QString>("mutation");
     QTest::newRow("unknown-kid") << QStringLiteral("unknown-kid");
+    QTest::newRow("missing-alg") << QStringLiteral("missing-alg");
+    QTest::newRow("wrong-alg") << QStringLiteral("wrong-alg");
+    QTest::newRow("missing-typ") << QStringLiteral("missing-typ");
+    QTest::newRow("wrong-typ") << QStringLiteral("wrong-typ");
+    QTest::newRow("missing-kid") << QStringLiteral("missing-kid");
     QTest::newRow("extra-jose-member") << QStringLiteral("extra-jose-member");
     QTest::newRow("missing-issuer") << QStringLiteral("missing-issuer");
     QTest::newRow("missing-audience") << QStringLiteral("missing-audience");
@@ -142,6 +154,7 @@ void SessionTokenVerifierTest::rejectsInvalidBindings_data()
     QTest::newRow("wrong-license") << QStringLiteral("wrong-license");
     QTest::newRow("malformed-jkt") << QStringLiteral("malformed-jkt");
     QTest::newRow("nbf-outside-skew") << QStringLiteral("nbf-outside-skew");
+    QTest::newRow("iat-outside-skew") << QStringLiteral("iat-outside-skew");
     QTest::newRow("lifetime-599") << QStringLiteral("lifetime-599");
     QTest::newRow("lifetime-601") << QStringLiteral("lifetime-601");
     QTest::newRow("lifetime-3600") << QStringLiteral("lifetime-3600");
@@ -155,6 +168,11 @@ void SessionTokenVerifierTest::rejectsInvalidBindings()
     QString expectedDevice = kDevice;
     QString expectedLicense = kLicense;
     if (mutation == QStringLiteral("unknown-kid")) header = validHeader(QStringLiteral("unknown"));
+    else if (mutation == QStringLiteral("missing-alg")) header.remove(QStringLiteral("alg"));
+    else if (mutation == QStringLiteral("wrong-alg")) header.insert(QStringLiteral("alg"), QStringLiteral("ES256"));
+    else if (mutation == QStringLiteral("missing-typ")) header.remove(QStringLiteral("typ"));
+    else if (mutation == QStringLiteral("wrong-typ")) header.insert(QStringLiteral("typ"), QStringLiteral("dpop+jwt"));
+    else if (mutation == QStringLiteral("missing-kid")) header.remove(QStringLiteral("kid"));
     else if (mutation == QStringLiteral("extra-jose-member")) header.insert(QStringLiteral("crit"), QJsonArray{QStringLiteral("exp")});
     else if (mutation == QStringLiteral("missing-issuer")) claims.remove(QStringLiteral("iss"));
     else if (mutation == QStringLiteral("missing-audience")) claims.remove(QStringLiteral("aud"));
@@ -179,6 +197,7 @@ void SessionTokenVerifierTest::rejectsInvalidBindings()
     else if (mutation == QStringLiteral("wrong-license")) expectedLicense = QStringLiteral("other-license");
     else if (mutation == QStringLiteral("malformed-jkt")) claims.insert(QStringLiteral("cnf"), QJsonObject{{QStringLiteral("jkt"), QStringLiteral("not-a-thumbprint")}});
     else if (mutation == QStringLiteral("nbf-outside-skew")) claims.insert(QStringLiteral("nbf"), QDateTime::currentSecsSinceEpoch() + 61);
+    else if (mutation == QStringLiteral("iat-outside-skew")) claims = validClaims(600, 61);
     else if (mutation == QStringLiteral("lifetime-599")) claims = validClaims(599);
     else if (mutation == QStringLiteral("lifetime-601")) claims = validClaims(601);
     else if (mutation == QStringLiteral("lifetime-3600")) claims = validClaims(3600);

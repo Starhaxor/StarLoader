@@ -95,6 +95,27 @@ repository and provide them through the protected build environment.
 10. Package only those verified signed artifacts; packaging is the final
     release operation.
 
+The repository packaging helper does not build and will never reuse the
+ordinary shared `build` directory. It accepts only an absolute executable path
+inside an explicit protected-output root, rejects any path containing a
+`build` directory, verifies a valid Authenticode signature and timestamp with
+both PowerShell and an explicitly supplied SignTool, runs an explicitly
+supplied Windows Defender command, and copies the unchanged file to a fresh
+staging directory:
+
+```powershell
+.\scripts\package-release.ps1 `
+  -ProtectedExecutable 'D:\release\protected-output\LicenseClient.exe' `
+  -ProtectedOutputRoot 'D:\release\protected-output' `
+  -DestinationRoot 'D:\release\staging\2026.09.02' `
+  -SignToolPath 'C:\Program Files (x86)\Windows Kits\10\bin\<sdk>\x64\signtool.exe' `
+  -WindowsDefenderCommand 'C:\ProgramData\Microsoft\Windows Defender\Platform\<version>\MpCmdRun.exe'
+```
+
+The resulting directory is staging only, not a ready-to-distribute package.
+Runtime dependencies, protected smoke tests, dependency scanning, and final
+archive verification remain separate release gates.
+
 ## VMProtect scope and limits
 
 VMProtect markers are limited to deterministic coordination decisions:

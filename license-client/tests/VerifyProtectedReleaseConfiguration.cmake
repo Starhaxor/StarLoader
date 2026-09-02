@@ -44,10 +44,10 @@ function(configure_protected_with_qt6_dir_only binary_dir expected_message)
             -B "${binary_dir}"
             ${configure_arguments}
             -DCMAKE_BUILD_TYPE=Release
-            -DSTARLOADER_LOCAL_DEVELOPMENT=ON
-            -DSTARLOADER_API_URL=http://127.0.0.1:8080
-            -DSTARLOADER_TLS_PINNED_HOST=127.0.0.1
-            -DSTARLOADER_TLS_SPKI_PINS=
+            -DSTARLOADER_LOCAL_DEVELOPMENT=OFF
+            -DSTARLOADER_API_URL=https://api.example.test
+            -DSTARLOADER_TLS_PINNED_HOST=api.example.test
+            -DSTARLOADER_TLS_SPKI_PINS=sha256/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=,sha256/AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=
             -DSTARLOADER_ED25519_KEY_RING=local-test=e/40nbaaIxXaqAopnL6j/M0w7WeF70Nk8uIij1nr5SQ=
             -DSTARLOADER_APPLICATION_ID=01a04caa-baa0-72ec-9b69-b4ba548bb3e5
             -DSTARLOADER_PRODUCT_ID=starloader
@@ -69,10 +69,10 @@ function(configure_protected binary_dir expected_message)
             -B "${binary_dir}"
             ${configure_arguments}
             -DCMAKE_BUILD_TYPE=Release
-            -DSTARLOADER_LOCAL_DEVELOPMENT=ON
-            -DSTARLOADER_API_URL=http://127.0.0.1:8080
-            -DSTARLOADER_TLS_PINNED_HOST=127.0.0.1
-            -DSTARLOADER_TLS_SPKI_PINS=
+            -DSTARLOADER_LOCAL_DEVELOPMENT=OFF
+            -DSTARLOADER_API_URL=https://api.example.test
+            -DSTARLOADER_TLS_PINNED_HOST=api.example.test
+            -DSTARLOADER_TLS_SPKI_PINS=sha256/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=,sha256/AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=
             -DSTARLOADER_ED25519_KEY_RING=local-test=e/40nbaaIxXaqAopnL6j/M0w7WeF70Nk8uIij1nr5SQ=
             -DSTARLOADER_APPLICATION_ID=01a04caa-baa0-72ec-9b69-b4ba548bb3e5
             -DSTARLOADER_PRODUCT_ID=starloader
@@ -98,10 +98,10 @@ function(configure_protected_debug binary_dir expected_message)
             -B "${binary_dir}"
             ${configure_arguments}
             -DCMAKE_BUILD_TYPE=Debug
-            -DSTARLOADER_LOCAL_DEVELOPMENT=ON
-            -DSTARLOADER_API_URL=http://127.0.0.1:8080
-            -DSTARLOADER_TLS_PINNED_HOST=127.0.0.1
-            -DSTARLOADER_TLS_SPKI_PINS=
+            -DSTARLOADER_LOCAL_DEVELOPMENT=OFF
+            -DSTARLOADER_API_URL=https://api.example.test
+            -DSTARLOADER_TLS_PINNED_HOST=api.example.test
+            -DSTARLOADER_TLS_SPKI_PINS=sha256/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=,sha256/AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=
             -DSTARLOADER_ED25519_KEY_RING=local-test=e/40nbaaIxXaqAopnL6j/M0w7WeF70Nk8uIij1nr5SQ=
             -DSTARLOADER_APPLICATION_ID=01a04caa-baa0-72ec-9b69-b4ba548bb3e5
             -DSTARLOADER_PRODUCT_ID=starloader
@@ -115,7 +115,29 @@ function(configure_protected_debug binary_dir expected_message)
     endif()
 endfunction()
 
+function(configure_protected_local binary_dir)
+    parent_configure_arguments(configure_arguments)
+    execute_process(
+        COMMAND "${STARLOADER_CMAKE_COMMAND}" -S "${STARLOADER_SOURCE_DIR}" -B "${binary_dir}"
+            ${configure_arguments}
+            -DCMAKE_BUILD_TYPE=Release
+            -DSTARLOADER_LOCAL_DEVELOPMENT=ON
+            -DSTARLOADER_API_URL=http://127.0.0.1:8080
+            -DSTARLOADER_TLS_PINNED_HOST=127.0.0.1
+            -DSTARLOADER_TLS_SPKI_PINS=
+            -DSTARLOADER_ED25519_KEY_RING=local-test=e/40nbaaIxXaqAopnL6j/M0w7WeF70Nk8uIij1nr5SQ=
+            -DSTARLOADER_APPLICATION_ID=01a04caa-baa0-72ec-9b69-b4ba548bb3e5
+            -DSTARLOADER_PRODUCT_ID=starloader
+            -DSTARLOADER_PUBLISHABLE_KEY=ks_pk_test_3MQ61B26VW_l7Xh56LE9PuaGEAZz1YD0hsJoe_myOKLPWnPtS9dxbQ
+            -DSTARLOADER_PROTECTED_RELEASE=ON
+        RESULT_VARIABLE configure_result OUTPUT_VARIABLE configure_stdout ERROR_VARIABLE configure_stderr)
+    if(configure_result EQUAL 0 OR NOT "${configure_stdout}${configure_stderr}" MATCHES "incompatible with[\r\n ]+STARLOADER_LOCAL_DEVELOPMENT")
+        message(FATAL_ERROR "Protected release did not reject local-development mode.\n${configure_stdout}\n${configure_stderr}")
+    endif()
+endfunction()
+
 file(REMOVE_RECURSE "${STARLOADER_TEST_BINARY_DIR}")
+configure_protected_local("${STARLOADER_TEST_BINARY_DIR}/protected-local")
 configure_protected_debug(
     "${STARLOADER_TEST_BINARY_DIR}/debug"
     "CMAKE_BUILD_TYPE=Release")
@@ -204,10 +226,10 @@ execute_process(
         -B "${STARLOADER_TEST_BINARY_DIR}/positive"
         ${positive_configure_arguments}
         -DCMAKE_BUILD_TYPE=Release
-        -DSTARLOADER_LOCAL_DEVELOPMENT=ON
-        -DSTARLOADER_API_URL=http://127.0.0.1:8080
-        -DSTARLOADER_TLS_PINNED_HOST=127.0.0.1
-        -DSTARLOADER_TLS_SPKI_PINS=
+        -DSTARLOADER_LOCAL_DEVELOPMENT=OFF
+        -DSTARLOADER_API_URL=https://api.example.test
+        -DSTARLOADER_TLS_PINNED_HOST=api.example.test
+        -DSTARLOADER_TLS_SPKI_PINS=sha256/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=,sha256/AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=
         -DSTARLOADER_ED25519_KEY_RING=local-test=e/40nbaaIxXaqAopnL6j/M0w7WeF70Nk8uIij1nr5SQ=
         -DSTARLOADER_APPLICATION_ID=01a04caa-baa0-72ec-9b69-b4ba548bb3e5
         -DSTARLOADER_PRODUCT_ID=starloader

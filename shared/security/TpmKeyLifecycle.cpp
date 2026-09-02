@@ -2,6 +2,13 @@
 
 namespace TpmIdentityDetail {
 
+bool isSigningOnlyNonExportablePolicy(const PersistedKeyPolicy &policy)
+{
+    constexpr unsigned long SigningOnly = 0x00000002UL;
+    return policy.exportPolicyPresent && policy.exportPolicy == 0
+        && policy.keyUsagePresent && policy.keyUsage == SigningOnly;
+}
+
 namespace {
 
 class DeleteCreatedKeyOnFailure final

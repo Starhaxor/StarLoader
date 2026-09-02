@@ -1,84 +1,74 @@
-# Hizli dagitim: Release EXE + windeployqt ile tek klasor paket (StarLoader)
-# Kullanim: powershell -ExecutionPolicy Bypass -File scripts\package-release.ps1
-# Cikti:  release-package/  (zip'leyip dagitabilirsin)
+[CmdletBinding()]
+param(
+    [Parameter(Mandatory = $true)] [string] $ProtectedExecutable,
+    [Parameter(Mandatory = $true)] [string] $ProtectedOutputRoot,
+    [Parameter(Mandatory = $true)] [string] $DestinationRoot,
+    [Parameter(Mandatory = $true)] [string] $SignToolPath,
+    [Parameter(Mandatory = $true)] [string] $WindowsDefenderCommand
+)
 
-$ErrorActionPreference = "Stop"
-$ProjectRoot = (Resolve-Path "$PSScriptRoot\..").Path
-$QtBin = "C:\Qt\6.11.1\mingw_64\bin"
-$BuildDir = "$ProjectRoot\build"
-$PackageDir = "$ProjectRoot\release-package"
+$ErrorActionPreference = 'Stop'
+Set-StrictMode -Version Latest
 
-Write-Host "=== StarLoader Release Paketleme ===" -ForegroundColor Cyan
-Write-Host "Qt: $QtBin"
-Write-Host "Build: $BuildDir"
-Write-Host "Paket: $PackageDir"
-
-# PATH'e MinGW ekle (Ninja/MinGW icin sart)
-$env:PATH = "C:\Qt\Tools\mingw1310_64\bin;C:\Qt\Tools\CMake_64\bin;$env:PATH"
-
-# 1. Release build (CMakePresets kullan)
-Set-Location $ProjectRoot
-# Preset varsa onu kullan, yoksa manuel configure
-if (Test-Path "$ProjectRoot\build\build.ninja") {
-    Write-Host "Mevcut build bulundu, sadece build calisiyor..." -ForegroundColor Yellow
-    & "C:\Qt\Tools\CMake_64\bin\cmake.exe" --build $BuildDir --config Release 2>&1 | Write-Host
-} else {
-    Write-Host "Configure + build..." -ForegroundColor Yellow
-    & "C:\Qt\Tools\CMake_64\bin\cmake.exe" --preset qt-mingw 2>&1 | Write-Host
-    if ($LASTEXITCODE -ne 0) { throw "cmake configure failed" }
-    & "C:\Qt\Tools\CMake_64\bin\cmake.exe" --build $BuildDir --config Release 2>&1 | Write-Host
-}
-if ($LASTEXITCODE -ne 0) { throw "build failed" }
-
-# 2. Paket klasorunu hazirla - build icinde zaten windeployqt calisti, dosyalari topla
-if (Test-Path $PackageDir) { Remove-Item $PackageDir -Recurse -Force }
-New-Item -ItemType Directory -Path $PackageDir -Force | Out-Null
-
-# LicenseClient ve HwidObtainer EXE'lerini bul
-$licenseExe = Get-ChildItem $BuildDir -Recurse -Filter "LicenseClient.exe" | Select-Object -First 1
-$hwidExe = Get-ChildItem $BuildDir -Recurse -Filter "HwidObtainer.exe" | Select-Object -First 1
-
-if (-not $licenseExe) { throw "LicenseClient.exe bulunamadi: $BuildDir" }
-Write-Host "LicenseClient: $($licenseExe.FullName)" -ForegroundColor Green
-
-# Paket: LicenseClient klasoru
-$licensePackage = Join-Path $PackageDir "LicenseClient"
-New-Item -ItemType Directory -Path $licensePackage -Force | Out-Null
-Copy-Item $licenseExe.FullName $licensePackage -Force
-$licenseDir = Split-Path $licenseExe.FullName -Parent
-# windeployqt zaten build'de calisti, ama paket icin tekrar calistir (temiz)
-$windeployqt = Join-Path $QtBin "windeployqt.exe"
-if (Test-Path $windeployqt) {
-    Write-Host "windeployqt LicenseClient icin calisiyor..." -ForegroundColor Yellow
-    & $windeployqt --no-translations --compiler-runtime --openssl-root "C:/Qt/Tools/mingw1310_64/opt" "$licensePackage\LicenseClient.exe" 2>&1 | Write-Host
-    # OpenSSL DLL'ini de kopyala (license-client CMakeLists zaten yapiyor ama pakete de)
-    $cryptoDll = Get-ChildItem $licenseDir -Filter "libcrypto*.dll" | Select-Object -First 1
-    if ($cryptoDll) { Copy-Item $cryptoDll.FullName $licensePackage -Force }
+function Resolve-ExistingAbsolutePath([string] $Path, [string] $Name) {
+    if (-not [System.IO.Path]::IsPathFullyQualified($Path)) { throw "$Name must be an absolute path." }
+    if (-not (Test-Path -LiteralPath $Path)) { throw "$Name does not exist." }
+    return (Resolve-Path -LiteralPath $Path).Path
 }
 
-if ($hwidExe) {
-    Write-Host "HwidObtainer: $($hwidExe.FullName)" -ForegroundColor Green
-    $hwidPackage = Join-Path $PackageDir "HwidObtainer"
-    New-Item -ItemType Directory -Path $hwidPackage -Force | Out-Null
-    Copy-Item $hwidExe.FullName $hwidPackage -Force
-    if (Test-Path $windeployqt) {
-        & $windeployqt --no-translations --compiler-runtime "$hwidPackage\HwidObtainer.exe" 2>&1 | Write-Host
-    }
+function Test-IsWithin([string] $Candidate, [string] $Root) {
+    $separator = [System.IO.Path]::DirectorySeparatorChar
+    $normalizedRoot = $Root.TrimEnd($separator) + $separator
+    return $Candidate.StartsWith($normalizedRoot, [System.StringComparison]::OrdinalIgnoreCase)
 }
 
-Write-Host "`n=== Paket icerigi ===" -ForegroundColor Cyan
-Get-ChildItem $PackageDir -Recurse | Format-Table FullName, Length -AutoSize -Wrap | Out-String | Write-Host
+$projectRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).Path
+$executablePath = Resolve-ExistingAbsolutePath $ProtectedExecutable 'ProtectedExecutable'
+$protectedRootPath = Resolve-ExistingAbsolutePath $ProtectedOutputRoot 'ProtectedOutputRoot'
+$signTool = Resolve-ExistingAbsolutePath $SignToolPath 'SignToolPath'
+$defender = Resolve-ExistingAbsolutePath $WindowsDefenderCommand 'WindowsDefenderCommand'
 
-Write-Host "`n=== DLL bagimlilik kontrol (LicenseClient) ===" -ForegroundColor Cyan
-& "C:\Qt\Tools\mingw1310_64\bin\objdump.exe" -p "$licensePackage\LicenseClient.exe" | Select-String "DLL Name" | Out-String | Write-Host
+if ([System.IO.Path]::GetExtension($executablePath) -ine '.exe') { throw 'ProtectedExecutable must be an executable file.' }
+if (-not (Test-IsWithin $executablePath $protectedRootPath)) { throw 'ProtectedExecutable must be inside ProtectedOutputRoot.' }
 
-Write-Host @"
-`n✓ Paket hazir: $PackageDir
-  Klasorleri zip'le ve dagit.
+$ordinaryBuild = [System.IO.Path]::GetFullPath((Join-Path $projectRoot 'build'))
+$separator = [System.IO.Path]::DirectorySeparatorChar
+$nestedBuildMarker = "${separator}build${separator}"
+if ((Test-IsWithin $executablePath $ordinaryBuild) -or
+    $executablePath.Contains($nestedBuildMarker, [System.StringComparison]::OrdinalIgnoreCase)) {
+    throw 'Ordinary shared build output cannot be packaged as a protected release.'
+}
 
-  NOT: Bu hala "tek klasor" dagitimdir. Gercek "tek EXE" icin:
-    1) powershell -ExecutionPolicy Bypass -File C:\Qt\build-qt-static.ps1
-       veya .\scripts\build-qt-static.ps1  (bir kez, 2-4 saat)
-    2) Qt Creator'da "Qt6 Static MinGW" kitiyle Release al
-       Kit CMake ayari: -DCMAKE_PREFIX_PATH=C:/Qt/6-static -DSTARLOADER_STATIC=ON
-"@ -ForegroundColor Green
+if (-not [System.IO.Path]::IsPathFullyQualified($DestinationRoot)) { throw 'DestinationRoot must be an absolute path.' }
+$destinationPath = [System.IO.Path]::GetFullPath($DestinationRoot)
+if (Test-Path -LiteralPath $destinationPath) { throw 'DestinationRoot must be a fresh path that does not already exist.' }
+if ((Test-IsWithin $destinationPath $ordinaryBuild) -or (Test-IsWithin $destinationPath $protectedRootPath)) {
+    throw 'DestinationRoot must be separate from build and protected-output roots.'
+}
+
+$signature = Get-AuthenticodeSignature -LiteralPath $executablePath
+if ($signature.Status -ne [System.Management.Automation.SignatureStatus]::Valid -or
+    $null -eq $signature.SignerCertificate -or $null -eq $signature.TimeStamperCertificate) {
+    throw 'Authenticode signature or RFC 3161 timestamp is not valid.'
+}
+
+$verificationOutput = & $signTool verify /pa /all /v $executablePath 2>&1
+if ($LASTEXITCODE -ne 0 -or
+    -not (($verificationOutput -join "`n") -match '(?i)successfully verified') -or
+    -not (($verificationOutput -join "`n") -match '(?i)(sha-?256)') -or
+    -not (($verificationOutput -join "`n") -match '(?i)timestamp')) {
+    throw 'SignTool could not verify the SHA-256 Authenticode signature and timestamp.'
+}
+
+& $defender -Scan -ScanType 3 -File $executablePath -DisableRemediation | Out-Null
+if ($LASTEXITCODE -ne 0) { throw 'Windows Defender did not complete a clean scan of the protected executable.' }
+
+New-Item -ItemType Directory -Path $destinationPath | Out-Null
+$stagedExecutable = Join-Path $destinationPath ([System.IO.Path]::GetFileName($executablePath))
+Copy-Item -LiteralPath $executablePath -Destination $stagedExecutable
+$sourceHash = (Get-FileHash -LiteralPath $executablePath -Algorithm SHA256).Hash
+$stagedHash = (Get-FileHash -LiteralPath $stagedExecutable -Algorithm SHA256).Hash
+if ($sourceHash -cne $stagedHash) { throw 'Staged executable hash does not match the verified protected executable.' }
+
+Write-Host "Protected executable copied to fresh staging: $stagedExecutable"
+Write-Host 'This is not a ready-to-distribute package. Runtime dependencies, protected smoke tests, dependency scanning, and final archive verification remain required.'

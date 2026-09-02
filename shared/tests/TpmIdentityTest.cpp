@@ -195,8 +195,22 @@ private slots:
     void lifecycleReopensKeyAfterConcurrentCreation();
     void lifecycleDeletesNewKeyAfterSetupFailure();
     void lifecycleNeverDeletesPreExistingKey();
+    void persistedKeyPolicyRejectsExportableAndNonSigningKeys();
     void signatureBindsChallenge();
 };
+
+void TpmIdentityTest::persistedKeyPolicyRejectsExportableAndNonSigningKeys()
+{
+    using TpmIdentityDetail::PersistedKeyPolicy;
+    QVERIFY(TpmIdentityDetail::isSigningOnlyNonExportablePolicy({true, 0, true, 0x00000002UL}));
+    QVERIFY(!TpmIdentityDetail::isSigningOnlyNonExportablePolicy({false, 0, true, 0x00000002UL}));
+    QVERIFY(!TpmIdentityDetail::isSigningOnlyNonExportablePolicy({true, 1, true, 0x00000002UL}));
+    QVERIFY(!TpmIdentityDetail::isSigningOnlyNonExportablePolicy({true, 0, false, 0x00000002UL}));
+    QVERIFY(!TpmIdentityDetail::isSigningOnlyNonExportablePolicy({true, 0, true, 0}));
+    QVERIFY(!TpmIdentityDetail::isSigningOnlyNonExportablePolicy({true, 0, true, 0x00000001UL}));
+    QVERIFY(!TpmIdentityDetail::isSigningOnlyNonExportablePolicy({true, 0, true, 0x00000003UL}));
+    QVERIFY(!TpmIdentityDetail::isSigningOnlyNonExportablePolicy({true, 0, true, 0x00ffffffUL}));
+}
 
 void TpmIdentityTest::verifierAcceptsValidCngP256Signature()
 {
