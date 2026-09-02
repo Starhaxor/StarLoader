@@ -46,29 +46,42 @@ if ((Test-IsWithin $destinationPath $ordinaryBuild) -or (Test-IsWithin $destinat
     throw 'DestinationRoot must be separate from build and protected-output roots.'
 }
 
-$signature = Get-AuthenticodeSignature -LiteralPath $executablePath
-if ($signature.Status -ne [System.Management.Automation.SignatureStatus]::Valid -or
-    $null -eq $signature.SignerCertificate -or $null -eq $signature.TimeStamperCertificate) {
-    throw 'Authenticode signature or RFC 3161 timestamp is not valid.'
-}
-
-$verificationOutput = & $signTool verify /pa /all /v $executablePath 2>&1
-if ($LASTEXITCODE -ne 0 -or
-    -not (($verificationOutput -join "`n") -match '(?i)successfully verified') -or
-    -not (($verificationOutput -join "`n") -match '(?i)(sha-?256)') -or
-    -not (($verificationOutput -join "`n") -match '(?i)timestamp')) {
-    throw 'SignTool could not verify the SHA-256 Authenticode signature and timestamp.'
-}
-
-& $defender -Scan -ScanType 3 -File $executablePath -DisableRemediation | Out-Null
-if ($LASTEXITCODE -ne 0) { throw 'Windows Defender did not complete a clean scan of the protected executable.' }
-
+$sourceHash = (Get-FileHash -LiteralPath $executablePath -Algorithm SHA256).Hash
 New-Item -ItemType Directory -Path $destinationPath | Out-Null
 $stagedExecutable = Join-Path $destinationPath ([System.IO.Path]::GetFileName($executablePath))
-Copy-Item -LiteralPath $executablePath -Destination $stagedExecutable
-$sourceHash = (Get-FileHash -LiteralPath $executablePath -Algorithm SHA256).Hash
-$stagedHash = (Get-FileHash -LiteralPath $stagedExecutable -Algorithm SHA256).Hash
-if ($sourceHash -cne $stagedHash) { throw 'Staged executable hash does not match the verified protected executable.' }
 
-Write-Host "Protected executable copied to fresh staging: $stagedExecutable"
+try {
+    Copy-Item -LiteralPath $executablePath -Destination $stagedExecutable
+    $stagedHash = (Get-FileHash -LiteralPath $stagedExecutable -Algorithm SHA256).Hash
+    if ($sourceHash -cne $stagedHash) { throw 'Staged executable hash does not match the selected protected executable.' }
+
+    $signature = Get-AuthenticodeSignature -LiteralPath $stagedExecutable
+    if ($signature.Status -ne [System.Management.Automation.SignatureStatus]::Valid -or
+        $null -eq $signature.SignerCertificate -or $null -eq $signature.TimeStamperCertificate) {
+        throw 'Authenticode signature or RFC 3161 timestamp is not valid.'
+    }
+
+    $verificationOutput = & $signTool verify /pa /all /v $stagedExecutable 2>&1
+    if ($LASTEXITCODE -ne 0 -or
+        -not (($verificationOutput -join "`n") -match '(?i)successfully verified') -or
+        -not (($verificationOutput -join "`n") -match '(?i)(sha-?256)') -or
+        -not (($verificationOutput -join "`n") -match '(?i)timestamp')) {
+        throw 'SignTool could not verify the SHA-256 Authenticode signature and timestamp.'
+    }
+
+    & $defender -Scan -ScanType 3 -File $stagedExecutable -DisableRemediation | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'Windows Defender did not complete a clean scan of the staged executable.' }
+} catch {
+    $failure = $_
+    try {
+        Set-Content -LiteralPath (Join-Path $destinationPath 'NON_DISTRIBUTABLE.txt') `
+            -Value 'A required release gate failed. Do not distribute any file from this directory.' `
+            -Encoding UTF8
+    } catch {
+        # Preserve the original fail-closed gate error even if marking fails.
+    }
+    throw $failure
+}
+
+Write-Host "Staged protected executable passed the configured final gates: $stagedExecutable"
 Write-Host 'This is not a ready-to-distribute package. Runtime dependencies, protected smoke tests, dependency scanning, and final archive verification remain required.'

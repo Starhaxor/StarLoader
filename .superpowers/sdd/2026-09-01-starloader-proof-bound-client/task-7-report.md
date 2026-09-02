@@ -149,10 +149,11 @@ The deferred token-verifier matrix now locks missing/wrong `alg`, `typ`, and
 
 The release packaging helper was replaced with a staging-only, fail-closed
 tool. It never configures or builds, rejects ordinary `build` paths, requires
-an explicit protected-output root and fresh destination, requires PowerShell
-and SignTool Authenticode/timestamp validation, runs an explicit Windows
-Defender file scan, verifies the copied SHA-256 hash, and explicitly refuses
-to describe the result as ready to distribute. No signed/VMProtect-processed
+an explicit protected-output root and fresh destination, hashes and copies the
+selected source first, then runs PowerShell/SignTool Authenticode, SHA-256 and
+timestamp validation plus Windows Defender scanning against that staged file.
+Failed gates leave a `NON_DISTRIBUTABLE.txt` marker, and the tool explicitly
+refuses to describe the result as ready to distribute. No signed/VMProtect-processed
 release artifact was available, so the real signing/scanning invocation was
 not claimed; parser and committed policy checks passed.
 

@@ -97,11 +97,13 @@ repository and provide them through the protected build environment.
 
 The repository packaging helper does not build and will never reuse the
 ordinary shared `build` directory. It accepts only an absolute executable path
-inside an explicit protected-output root, rejects any path containing a
-`build` directory, verifies a valid Authenticode signature and timestamp with
-both PowerShell and an explicitly supplied SignTool, runs an explicitly
-supplied Windows Defender command, and copies the unchanged file to a fresh
-staging directory:
+inside an explicit protected-output root and rejects any path containing a
+`build` directory. It hashes and copies the selected source to a fresh staging
+directory first, then verifies the staged executable's Authenticode signature,
+SHA-256 digest, and timestamp with PowerShell and an explicitly supplied
+SignTool and scans that same staged file with an explicitly supplied Windows
+Defender command. A failed gate leaves `NON_DISTRIBUTABLE.txt` in the staging
+directory:
 
 ```powershell
 .\scripts\package-release.ps1 `
