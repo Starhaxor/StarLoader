@@ -49,7 +49,9 @@ function Invoke-LiteralSecretScan {
     $patternFile = [System.IO.Path]::GetTempFileName()
     try {
         [System.IO.File]::WriteAllLines($patternFile, $SearchPatterns, [System.Text.UTF8Encoding]::new($false))
-        $arguments = @('--hidden', '--no-ignore', '--files-with-matches', '--pcre2', '-i', "--file=$patternFile")
+        # Respect repository ignore rules so machine-local .env files and other
+        # explicitly untracked secrets are not confused with distributable source.
+        $arguments = @('--hidden', '--files-with-matches', '--pcre2', '-i', "--file=$patternFile")
         foreach ($glob in $Globs) {
             $arguments += "--glob=$glob"
         }
@@ -142,8 +144,15 @@ if ($SelfTest) {
 
 $scan = Invoke-LiteralSecretScan -Path $repoRoot -SearchPatterns $patterns -Globs $excludedGlobs
 if ($scan.Found) {
+    $normalizedRoot = [System.IO.Path]::GetFullPath($repoRoot).TrimEnd('\', '/') + [System.IO.Path]::DirectorySeparatorChar
     $relativePaths = @($scan.Paths | ForEach-Object {
-        [System.IO.Path]::GetRelativePath($repoRoot, [string]$_)
+        $matchedPath = [System.IO.Path]::GetFullPath([string]$_)
+        if ($matchedPath.StartsWith($normalizedRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+            $matchedPath.Substring($normalizedRoot.Length)
+        }
+        else {
+            $matchedPath
+        }
     } | Sort-Object -Unique)
     Write-Error ('Literal-secret scan found prohibited content in: ' + ($relativePaths -join ', '))
     throw 'Literal-secret scan found prohibited content; matched values were suppressed.'
