@@ -42,18 +42,25 @@ function Invoke-LiteralSecretScan {
         [string[]]$Globs = @()
     )
 
-    $arguments = @('--hidden', '--no-ignore', '--files-with-matches', '--pcre2', '-i')
-    foreach ($glob in $Globs) {
-        $arguments += "--glob=$glob"
-    }
-    foreach ($pattern in $SearchPatterns) {
-        $arguments += '-e'
-        $arguments += $pattern
-    }
-    $arguments += $Path
+    # Windows PowerShell 5 rewrites quotes in native-process arguments. Several
+    # PCRE patterns intentionally contain quote characters, so passing them via
+    # repeated -e arguments can make the following path look like a regex.
+    # A pattern file preserves every character exactly across PowerShell hosts.
+    $patternFile = [System.IO.Path]::GetTempFileName()
+    try {
+        [System.IO.File]::WriteAllLines($patternFile, $SearchPatterns, [System.Text.UTF8Encoding]::new($false))
+        $arguments = @('--hidden', '--no-ignore', '--files-with-matches', '--pcre2', '-i', "--file=$patternFile")
+        foreach ($glob in $Globs) {
+            $arguments += "--glob=$glob"
+        }
+        $arguments += $Path
 
-    $matchedPaths = @(& rg @arguments 2>$null)
-    $exitCode = $LASTEXITCODE
+        $matchedPaths = @(& rg @arguments 2>$null)
+        $exitCode = $LASTEXITCODE
+    }
+    finally {
+        Remove-Item -LiteralPath $patternFile -Force -ErrorAction SilentlyContinue
+    }
     if ($exitCode -gt 1) {
         throw "Literal-secret scan failed with exit code $exitCode."
     }
