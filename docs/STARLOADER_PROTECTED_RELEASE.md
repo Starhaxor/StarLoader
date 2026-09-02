@@ -127,32 +127,16 @@ ctest --preset qt-mingw-local --output-on-failure
 
 ### Reproducible literal-secret scan
 
-Run this command from the repository root after the build/test step. It scans
-the authored source, CMake configuration (including `CMakePresets.json`),
-scripts, and documentation. It excludes only generated/build outputs, Git
-metadata, nested worktrees, vendored code, and intentional test fixtures; it
-does not broadly omit source or configuration files. A zero exit status means
-no literal matched; any match or scan error is a release blocker for review.
+Run the checked-in scanner from the repository root after the build/test step.
+It scans authored source and tests, CMake configuration (including
+`CMakePresets.json`), scripts, and documentation. It excludes only
+generated/build outputs, Git metadata, nested worktrees, and vendored code. It
+reports matching paths without echoing matched secret values. A scan error or
+match is a release blocker for review.
 
 ```powershell
-$secretPatterns = @(
-  '-----BEGIN (?:RSA|EC|OPENSSH|PRIVATE) KEY-----',
-  '\beyJ[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}\b',
-  'Authorization:\s*(?:Bearer|DPoP)\s+[A-Za-z0-9._~-]{20,}',
-  '"(?:password|access_token|refresh_token|dpop)"\s*:\s*"[^"<][^"]{15,}"'
-)
-$secretGlobs = @(
-  '!build/**', '!build-*/**', '!.git', '!.git/**', '!.worktrees/**',
-  '!**/generated/**', '!**/vendor/**', '!**/tests/**', '!**/*Test*.cpp',
-  '!**/*_test.go'
-)
-& rg --hidden -n -i @($secretGlobs | ForEach-Object { "--glob=$($_)" }) `
-  @($secretPatterns | ForEach-Object { "-e=$($_)" }) .
-if ($LASTEXITCODE -eq 1) {
-  Write-Output 'Literal-secret scan found no matches in authored source/config/docs.'
-  exit 0
-}
-exit $LASTEXITCODE
+.\scripts\scan-literal-secrets.ps1 -SelfTest
+.\scripts\scan-literal-secrets.ps1
 ```
 
 The live native-flow test is intentionally skipped unless its configured

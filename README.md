@@ -307,16 +307,20 @@ Run the complete test entry point from PowerShell:
 The script creates an isolated PostgreSQL 17 container, then runs:
 
 - all Go unit and real-PostgreSQL integration tests with the race detector;
-- black-box health, login, P-256 challenge, device verification, exact safe profile fields, and replay checks, plus the client-side strict-token, DPoP, TLS-pin, and protected-request tests in CTest;
 - `go vet`;
-- migration, admin user, admin license, and key-generation command checks;
-- complete Qt configure/build and CTest;
+- the complete local Qt configure/build and proof-bound CTest suite;
+- deterministic literal-secret scanner self-tests and the authored-tree scan;
 - whitespace validation.
+
+The script temporarily unsets any `STARLOADER_NATIVE_LIVE_*` credentials while
+CTest runs and restores their exact previous values afterward. Consequently it
+does not run or claim the external proof-enabled KeyStar live flow; run that
+test separately only against a matching fixture.
 
 The temporary database container is removed in a `finally` block. Override its host port if necessary:
 
 ```powershell
-.\scripts\test-all.ps1 -PostgresPort 55435 -ApiPort 58081
+.\scripts\test-all.ps1 -PostgresPort 55435
 ```
 
 ## API contract

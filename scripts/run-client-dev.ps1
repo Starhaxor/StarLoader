@@ -1,7 +1,36 @@
-# Development launcher for the StarLoader desktop client against the local
-# API container. The client refuses plain HTTP unless the host is a loopback
-# IP and STARLOADER_ALLOW_HTTP_LOCAL=1 (localhost name is rejected by design).
+# Development launcher for the StarLoader desktop client against the local API
+# container. The loopback exception is selected at CMake configuration time by
+# qt-mingw-local; this script has no runtime URL or HTTP override.
+$ErrorActionPreference = 'Stop'
+Set-StrictMode -Version Latest
+
 $repoRoot = Split-Path -Parent $PSScriptRoot
-$env:STARLOADER_API_URL = 'http://127.0.0.1:8080'
-$env:STARLOADER_ALLOW_HTTP_LOCAL = '1'
-& (Join-Path $repoRoot 'build\license-client\LicenseClient.exe')
+$clientExecutable = Join-Path $repoRoot 'build\license-client\LicenseClient.exe'
+
+function Invoke-Checked {
+    param(
+        [Parameter(Mandatory)]
+        [string]$Program,
+        [Parameter(ValueFromRemainingArguments)]
+        [string[]]$ProgramArguments
+    )
+
+    & $Program @ProgramArguments
+    if ($LASTEXITCODE -ne 0) {
+        throw "$Program failed with exit code $LASTEXITCODE."
+    }
+}
+
+Push-Location $repoRoot
+try {
+    Invoke-Checked cmake --preset qt-mingw-local
+    Invoke-Checked cmake --build --preset qt-mingw-local-build --target LicenseClient
+}
+finally {
+    Pop-Location
+}
+
+if (-not (Test-Path -LiteralPath $clientExecutable -PathType Leaf)) {
+    throw 'LicenseClient executable was not produced by the local build.'
+}
+& $clientExecutable

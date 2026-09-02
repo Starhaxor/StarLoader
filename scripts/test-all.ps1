@@ -1,7 +1,6 @@
 [CmdletBinding()]
 param(
-    [int]$PostgresPort = 55434,
-    [int]$ApiPort = 58080
+    [int]$PostgresPort = 55434
 )
 
 $ErrorActionPreference = 'Stop'
@@ -9,14 +8,17 @@ Set-StrictMode -Version Latest
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $databaseContainer = 'starloader-verification-db'
-$apiContainer = 'starloader-verification-api'
-$databasePassword = 'starloader-verification-password'
+$databasePassword = [guid]::NewGuid().ToString('N')
 $databaseURL = "postgres://starloader:$databasePassword@host.docker.internal:$PostgresPort/starloader_test?sslmode=disable"
-$qtRoot = 'C:\Qt\6.11.1\mingw_64'
 $cmake = 'C:\Qt\Tools\CMake_64\bin\cmake.exe'
 $ctest = 'C:\Qt\Tools\CMake_64\bin\ctest.exe'
-$opensslRoot = 'C:\Qt\Tools\mingw1310_64\opt'
-$buildDirectory = Join-Path $repoRoot 'build-verification'
+$literalSecretScanner = Join-Path $PSScriptRoot 'scan-literal-secrets.ps1'
+$nativeLiveVariables = @(
+    'STARLOADER_NATIVE_LIVE_EMAIL',
+    'STARLOADER_NATIVE_LIVE_PASSWORD',
+    'STARLOADER_NATIVE_LIVE_MAX_DEVICES'
+)
+$savedNativeLiveVariables = @{}
 
 function Invoke-Checked {
     if ($args.Count -eq 0) {
@@ -44,10 +46,19 @@ function Remove-VerificationContainer {
 if (-not (Test-Path -LiteralPath $cmake) -or -not (Test-Path -LiteralPath $ctest)) {
     throw 'Qt CMake/CTest was not found under C:\Qt.'
 }
+if (-not (Test-Path -LiteralPath $literalSecretScanner)) {
+    throw 'Literal-secret scanner is missing.'
+}
 
 Push-Location $repoRoot
 try {
-    Remove-VerificationContainer -Name $apiContainer
+    foreach ($name in $nativeLiveVariables) {
+        $existing = [Environment]::GetEnvironmentVariable($name)
+        if ($null -ne $existing) {
+            $savedNativeLiveVariables[$name] = $existing
+            Remove-Item "Env:$name" -ErrorAction SilentlyContinue
+        }
+    }
     Remove-VerificationContainer -Name $databaseContainer
     Invoke-Checked docker run -d --name $databaseContainer `
         -e POSTGRES_DB=starloader_test `
@@ -77,104 +88,23 @@ try {
     Invoke-Checked docker run --rm -v "${repoRoot}:/workspace" -w /workspace/backend `
         golang:1.24 go vet ./...
 
-    $generatedKeys = & docker run --rm -v "${repoRoot}:/workspace" -w /workspace/backend `
-        golang:1.24 go run ./cmd/server keygen
-    if ($LASTEXITCODE -ne 0) {
-        throw 'Signing-key generation failed.'
-    }
-    $publicKeyLine = $generatedKeys | Where-Object { $_ -like 'STARLOADER_ED25519_PUBLIC_KEY=*' } | Select-Object -First 1
-    $privateKeyLine = $generatedKeys | Where-Object { $_ -like 'ED25519_PRIVATE_KEY=*' } | Select-Object -First 1
-    if (-not $publicKeyLine -or -not $privateKeyLine) {
-        throw 'Generated signing keys were not returned.'
-    }
-    $publicKey = $publicKeyLine.Substring('STARLOADER_ED25519_PUBLIC_KEY='.Length)
-    $privateKey = $privateKeyLine.Substring('ED25519_PRIVATE_KEY='.Length)
+    Invoke-Checked $cmake --preset qt-mingw-local
+    Invoke-Checked $cmake --build --preset qt-mingw-local-build
+    Invoke-Checked $ctest --preset qt-mingw-local --output-on-failure
 
-    Invoke-Checked docker run --rm --add-host host.docker.internal:host-gateway `
-        -e "DATABASE_URL=$databaseURL" `
-        -v "${repoRoot}:/workspace" -w /workspace/backend `
-        golang:1.24 go run ./cmd/server migrate down
-    Invoke-Checked docker run --rm --add-host host.docker.internal:host-gateway `
-        -e "DATABASE_URL=$databaseURL" `
-        -v "${repoRoot}:/workspace" -w /workspace/backend `
-        golang:1.24 go run ./cmd/server migrate up
-
-    "verification-password`nverification-password" | & docker run --rm -i --add-host host.docker.internal:host-gateway `
-        -e "DATABASE_URL=$databaseURL" `
-        -v "${repoRoot}:/workspace" -w /workspace/backend `
-        golang:1.24 go run ./cmd/server admin create-user --email verification@example.com --password-stdin
-    if ($LASTEXITCODE -ne 0) {
-        throw 'Administrative user creation failed.'
-    }
-    $licenseOutput = & docker run --rm --add-host host.docker.internal:host-gateway `
-        -e "DATABASE_URL=$databaseURL" -e LICENSE_HMAC_KEY=verification-license-hmac-key `
-        -v "${repoRoot}:/workspace" -w /workspace/backend `
-        golang:1.24 go run ./cmd/server admin create-license --user verification@example.com --product StarLoader --days 1 --max-devices 2
-    if ($LASTEXITCODE -ne 0 -or $licenseOutput -notmatch '^[0-9A-F]{8}(?:-[0-9A-F]{8}){3}$') {
-        throw 'Administrative license creation failed.'
-    }
-    $licenseKey = ([string]$licenseOutput).Trim()
-
-    Invoke-Checked docker run -d --name $apiContainer --add-host host.docker.internal:host-gateway `
-        -e "DATABASE_URL=$databaseURL" `
-        -e LICENSE_HMAC_KEY=verification-license-hmac-key `
-        -e HARDWARE_HMAC_KEY=verification-hardware-hmac-key `
-        -e "ED25519_PRIVATE_KEY=$privateKey" `
-        -e LICENSE_ISSUER=starloader -e LICENSE_AUDIENCE=starloader-client `
-        -e PRODUCT=StarLoader -e SERVER_ADDR=:8080 `
-        -p "127.0.0.1:${ApiPort}:8080" `
-        -v "${repoRoot}:/workspace" -w /workspace/backend `
-        golang:1.24 go run ./cmd/server serve
-
-    $apiReady = $false
-    for ($attempt = 0; $attempt -lt 120; $attempt++) {
-        try {
-            $health = Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:${ApiPort}/healthz" -TimeoutSec 1
-            if ($health.StatusCode -eq 200) {
-                $apiReady = $true
-                break
-            }
-        }
-        catch {
-            Start-Sleep -Milliseconds 500
-        }
-    }
-    if (-not $apiReady) {
-        & docker logs $apiContainer
-        throw 'Production server verification container did not become ready.'
-    }
-
-    Invoke-Checked docker run --rm --add-host host.docker.internal:host-gateway `
-        -e "STARLOADER_SMOKE_BASE_URL=http://host.docker.internal:${ApiPort}" `
-        -e STARLOADER_SMOKE_EMAIL=verification@example.com `
-        -e STARLOADER_SMOKE_PASSWORD=verification-password `
-        -e STARLOADER_SMOKE_MAX_DEVICES=2 `
-        -e "STARLOADER_SMOKE_LICENSE=$licenseKey" `
-        -e "STARLOADER_SMOKE_ED25519_PUBLIC_KEY=$publicKey" `
-        -e "STARLOADER_SMOKE_ED25519_PRIVATE_KEY=$privateKey" `
-        -v "${repoRoot}:/workspace" -w /workspace/backend `
-        golang:1.24 go test ./tests/blackbox -run TestProductionServerLoginDeviceAndReplay -count=1 -v
-
-    $env:Path = "C:\Qt\Tools\mingw1310_64\bin;C:\Qt\6.11.1\mingw_64\bin;C:\Qt\Tools\Ninja;C:\Qt\Tools\mingw1310_64\opt\bin;$env:Path"
-    Invoke-Checked $cmake -S $repoRoot -B $buildDirectory -G Ninja `
-        "-DCMAKE_PREFIX_PATH=$qtRoot" `
-        "-DOPENSSL_ROOT_DIR=$opensslRoot" `
-        "-DSTARLOADER_ED25519_PUBLIC_KEY=$publicKey" `
-        "-DSTARLOADER_API_URL=https://api.starloader.example"
-    Invoke-Checked $cmake --build $buildDirectory
-    $env:STARLOADER_API_URL = "http://127.0.0.1:${ApiPort}"
-    $env:STARLOADER_ALLOW_HTTP_LOCAL = '1'
-    $env:STARLOADER_NATIVE_LIVE_EMAIL = 'verification@example.com'
-    $env:STARLOADER_NATIVE_LIVE_PASSWORD = 'verification-password'
-    $env:STARLOADER_NATIVE_LIVE_MAX_DEVICES = '2'
-    Invoke-Checked $ctest --test-dir $buildDirectory --output-on-failure
-
+    & $literalSecretScanner -SelfTest
+    & $literalSecretScanner
     Invoke-Checked git diff --check
-    Write-Host 'All StarLoader verification checks passed.'
+    Write-Host 'Backend regression tests and the local proof-bound client suite passed.'
+    Write-Host 'The live proof-enabled KeyStar flow was intentionally not run by this script.'
 }
 finally {
-    Remove-Item Env:STARLOADER_API_URL,Env:STARLOADER_ALLOW_HTTP_LOCAL,Env:STARLOADER_NATIVE_LIVE_EMAIL,Env:STARLOADER_NATIVE_LIVE_PASSWORD,Env:STARLOADER_NATIVE_LIVE_MAX_DEVICES -ErrorAction SilentlyContinue
+    foreach ($name in $nativeLiveVariables) {
+        Remove-Item "Env:$name" -ErrorAction SilentlyContinue
+        if ($savedNativeLiveVariables.ContainsKey($name)) {
+            Set-Item "Env:$name" $savedNativeLiveVariables[$name]
+        }
+    }
     Pop-Location
-    Remove-VerificationContainer -Name $apiContainer
     Remove-VerificationContainer -Name $databaseContainer
 }
