@@ -1,7 +1,13 @@
 if(STARLOADER_STATIC)
     set(OPENSSL_USE_STATIC_LIBS TRUE)
 endif()
-find_package(OpenSSL REQUIRED COMPONENTS Crypto)
+if(MINGW)
+    # FindOpenSSL caches import libraries separately from OPENSSL_ROOT_DIR.
+    # Rediscover them so a changed root cannot mix old binaries with new headers.
+    unset(LIB_EAY CACHE)
+    unset(SSL_EAY CACHE)
+endif()
+find_package(OpenSSL 3.5.8 REQUIRED COMPONENTS Crypto)
 if(STARLOADER_STATIC AND MINGW)
     target_link_libraries(OpenSSL::Crypto INTERFACE z)
 endif()
@@ -137,7 +143,7 @@ if(NOT STARLOADER_APPLICATION_ID_LENGTH EQUAL 36 OR NOT STARLOADER_APPLICATION_I
 endif()
 set(STARLOADER_PRODUCT_ID "" CACHE STRING "KeyStar product identifier bound into StarLoader access tokens")
 if(STARLOADER_PRODUCT_ID STREQUAL "" OR NOT STARLOADER_PRODUCT_ID MATCHES "^[A-Za-z0-9._-]+$")
-    message(FATAL_ERROR "STARLOADER_PRODUCT_ID must be a non-empty product identifier")
+    message(FATAL_ERROR "STARLOADER_PRODUCT_ID must be supplied explicitly; use the licensed product UUID for KeyStar")
 endif()
 set(STARLOADER_PUBLISHABLE_KEY "" CACHE STRING "KeyStar publishable API key used by the StarLoader client")
 if(NOT STARLOADER_PUBLISHABLE_KEY MATCHES "^ks_pk_(live|test)_[A-Za-z0-9_-]+$")
@@ -151,7 +157,7 @@ configure_file(
 if(WIN32)
     unset(OPENSSL_CRYPTO_RUNTIME CACHE)
     find_file(OPENSSL_CRYPTO_RUNTIME
-        NAMES libcrypto-3-x64.dll libcrypto-1_1-x64.dll libcrypto-1_1.dll
+        NAMES libcrypto-3-x64.dll
         HINTS "${OPENSSL_ROOT_DIR}/bin"
         NO_DEFAULT_PATH)
     if(NOT OPENSSL_CRYPTO_RUNTIME)
@@ -372,6 +378,9 @@ elseif(WIN32)
         COMMAND "${CMAKE_COMMAND}" -E copy_if_different
             "${OPENSSL_CRYPTO_RUNTIME}"
             "$<TARGET_FILE_DIR:LicenseClient>"
+        COMMAND "${CMAKE_COMMAND}" -E rm -f
+            "$<TARGET_FILE_DIR:LicenseClient>/libcrypto-1_1-x64.dll"
+            "$<TARGET_FILE_DIR:LicenseClient>/libssl-1_1-x64.dll"
         COMMENT "Deploying the Qt, MinGW, and OpenSSL runtime beside LicenseClient"
         VERBATIM)
 endif()

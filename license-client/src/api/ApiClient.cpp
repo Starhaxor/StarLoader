@@ -145,12 +145,9 @@ void ApiClient::initializeNetworkSecurity()
 void ApiClient::configureReplySecurity(QNetworkReply *reply)
 {
     if (!reply) return;
-    connect(reply, &QNetworkReply::redirected, reply, [this, reply](const QUrl &redirectUrl) {
-        const QUrl target = reply->url().resolved(redirectUrl);
-        if (tlsPinPolicy_.permitsRequestUrl(target)) {
-            reply->redirectAllowed();
-            return;
-        }
+    connect(reply, &QNetworkReply::redirected, reply, [reply](const QUrl &) {
+        // Credentials and DPoP proofs are bound to the exact API endpoint.
+        // Even a same-host redirect may target another service or path.
         reply->setProperty("starloader.transportSecurityError", QStringLiteral("TLS_REDIRECT_REJECTED"));
         reply->abort();
     });
@@ -171,8 +168,17 @@ void ApiClient::login(const LoginRequest &request, quint64 generation)
 
 void ApiClient::verifyDevice(const DeviceVerifyRequest &request, quint64 generation)
 {
+    const auto decoded = QByteArray::fromBase64Encoding(request.tpmPublicKey.toLatin1(),
+                                                       QByteArray::AbortOnBase64DecodingErrors);
+    const QJsonObject deviceJwk = decoded ? DeviceProofBuilder::publicJwk(decoded.decoded) : QJsonObject{};
+    if (deviceJwk.isEmpty() || decoded.decoded.toBase64() != request.tpmPublicKey.toLatin1()) {
+        emit deviceVerificationFailed({QStringLiteral("DEVICE_PROOF_FAILED"),
+            QStringLiteral("Device public key is invalid."), newRequestId()}, generation);
+        return;
+    }
     const HardwareSignals &hardware = request.hardware;
     postJson(QStringLiteral("/v1/device/verify"), {
+        {QStringLiteral("device_jwk"), deviceJwk},
         {QStringLiteral("session_id"), request.sessionId}, {QStringLiteral("challenge"), request.challenge},
         {QStringLiteral("challenge_signature"), request.challengeSignature}, {QStringLiteral("tpm_public_key"), request.tpmPublicKey},
         {QStringLiteral("hardware"), QJsonObject{{QStringLiteral("smbios_uuid"), hardware.smbiosUuid}, {QStringLiteral("motherboard_serial"), hardware.motherboardSerial}, {QStringLiteral("bios_serial"), hardware.biosSerial}, {QStringLiteral("system_disk_serial"), hardware.systemDiskSerial}, {QStringLiteral("machine_guid"), hardware.machineGuid}, {QStringLiteral("fingerprint"), hardware.fingerprint}}},

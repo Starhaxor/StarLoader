@@ -53,7 +53,7 @@ func TestDeviceVerifyFirstActivationHashesHardwareAndIssuesBoundToken(t *testing
 	}
 	if claims.Subject != "user-1" || claims.LicenseID != "license-1" || claims.DeviceID != device.ID ||
 		claims.Product != "StarLoader" || claims.Issuer != "starloader" || claims.Audience != "starloader-client" ||
-		!claims.ExpiresAt.Equal(now.Add(time.Hour)) {
+		!claims.ExpiresAt.Equal(now.Add(600*time.Second)) {
 		t.Fatalf("token claims = %#v", claims)
 	}
 }
@@ -331,15 +331,16 @@ func newTestDeviceService(t *testing.T, repository DeviceRepository, now time.Ti
 	if err != nil {
 		t.Fatal(err)
 	}
-	issuer, err := security.NewTokenIssuer(privateKey, "starloader", "starloader-client", "StarLoader")
+	issuer, err := security.NewTokenIssuer(privateKey, "starloader", "starloader-client", "StarLoader", security.TokenPolicy{KeyID: "test-kid", ApplicationID: "app-1", ProductID: "product-1"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	verifier, err := security.NewTokenVerifier(publicKey, "starloader", "starloader-client", "StarLoader")
+	verifier, err := security.NewTokenVerifier(publicKey, "starloader", "starloader-client", "StarLoader", security.TokenPolicy{KeyID: "test-kid", ApplicationID: "app-1", ProductID: "product-1"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	service := NewDeviceService(repository, DeviceServiceConfig{
+		ApplicationID: "app-1", ProductID: "product-1",
 		HardwareHMACKey: []byte("hardware-secret"), TokenIssuer: issuer,
 		Issuer: "starloader", Audience: "starloader-client", Product: "StarLoader", Now: func() time.Time { return now },
 	})

@@ -74,14 +74,15 @@ Başarılı yanıt (`200`):
 }
 ```
 
-Token Ed25519 ile imzalı, kompakt JWS biçimindedir. Başlık tam olarak `alg=EdDSA` ve `typ=JWT` taşır. Zorunlu claim'ler: `sub`, `license_id`, `device_id`, `product`, `features`, `iss`, `aud`, `iat`, `exp`. `exp - iat` tam 3600 saniyedir. İstemci imzayı ve tüm claim'leri kullanmadan önce doğrular.
+Token Ed25519 ile imzalı, kompakt JWS biçimindedir. Başlık tam olarak `alg=EdDSA`, `typ=JWT` ve yapılandırılmış `kid` taşır. Zorunlu claim'ler: `sub`, `app`, `product_id`, `license_id`, `device_id`, `product`, `features`, `iss`, `aud`, `iat`, `nbf`, `exp`, `sid`, `jti`, `cnf.jkt`. `exp - iat` tam 600 saniyedir. İstemci imzayı ve tüm claim'leri kullanmadan önce doğrular.
 
 ## `GET /v1/me`
 
-İstek tam olarak bir kimlik doğrulama başlığı taşır:
+İstek tam olarak bir Authorization ve bir DPoP başlığı taşır:
 
 ```http
-Authorization: Bearer <session-token>
+Authorization: DPoP <session-token>
+DPoP: <ES256-device-proof>
 ```
 
 Kimlik yalnızca imzası doğrulanmış token'ın `sub`, `license_id` ve `device_id` claim'lerinden seçilir. Sorgu parametreleri veya istek gövdesindeki kimlik değerleri kullanılmaz. Başarılı yanıt (`200`):
@@ -119,3 +120,16 @@ Yanıt hiçbir zaman oturum token'ı, parola veya parola hash'i, lisans anahtar�
 Tanımlı kodlar: `INVALID_REQUEST`, `INVALID_CREDENTIALS`, `INVALID_SESSION_TOKEN`, `LICENSE_NOT_FOUND`, `LICENSE_EXPIRED`, `LICENSE_REVOKED`, `CHALLENGE_EXPIRED`, `CHALLENGE_CONSUMED`, `INVALID_DEVICE_SIGNATURE`, `DEVICE_LIMIT_REACHED`, `DEVICE_REVOKED`, `RATE_LIMITED`, `SERVER_ERROR`.
 
 Yanıt gövdeleri parola, lisans anahtarı, ham donanım verisi veya iç hata ayrıntısı içermez. Destek kayıtlarında yalnızca `request_id` kullanılmalıdır.
+
+## Güvenlik yapılandırması (2026-09-07)
+
+Yerel Go sunucu da cihaz kanıtını zorunlu tutar. `LICENSE_KEY_ID`, `APPLICATION_ID`,
+`PRODUCT_ID` istemci ayarlarıyla eşleşmelidir. `PUBLIC_BASE_URL` dışarıdan görülen
+HTTPS origin değeridir; yerel testte yalnızca sayısal loopback HTTP kabul edilir.
+Host ve forwarding başlıkları bu değeri değiştiremez. Önce migration 000003 uygulanır.
+DPoP kanıtı ES256 imzası, TPM anahtarının JWK thumbprint'i, HTTP yöntemi, query/fragment
+hariç tam URI, access-token SHA-256 özeti ve ±60 saniyelik zaman aralığıyla doğrulanır.
+Kanıt kimliği PostgreSQL'de atomik tüketilir; sunucu yeniden başlaması veya birden
+fazla instance tekrar kullanım izni vermez. Bearer geri dönüşü yoktur.
+Cihaz doğrulama sınırı kaynak IP başına dakikada 10 istektir; geçersiz oturum
+kimliklerini değiştirerek başka kullanıcıların kotası doldurulamaz.

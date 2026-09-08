@@ -191,3 +191,15 @@ func deviceVerifyRequest(body string) *http.Request {
 	request.Header.Set("Content-Type", "application/json")
 	return request
 }
+
+func TestBogusSessionIDsCannotExhaustAdmissionForOtherClients(t *testing.T) {
+ router:=NewRouter(RouterConfig{RateLimitMaxKeys: 2, DeviceVerification: &fakeDeviceVerificationService{err:domain.ErrChallengeNotFound}})
+ for _,id:=range []string{"22222222-2222-4222-8222-222222222222","33333333-3333-4333-8333-333333333333"} {
+ req:=deviceVerifyRequest(strings.Replace(validDeviceVerifyJSON,"11111111-1111-4111-8111-111111111111",id,1)); req.RemoteAddr="192.0.2.1:1234"
+ rec:=httptest.NewRecorder(); router.ServeHTTP(rec,req)
+ }
+ router.deviceVerification=&fakeDeviceVerificationService{}
+ req:=deviceVerifyRequest(validDeviceVerifyJSON);req.RemoteAddr="192.0.2.2:1234"
+ rec:=httptest.NewRecorder();router.ServeHTTP(rec,req)
+ if rec.Code!=http.StatusOK {t.Fatalf("bogus IDs denied legitimate client: %d", rec.Code)}
+}

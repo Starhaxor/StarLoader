@@ -149,7 +149,12 @@ func runServer() error {
 	if err != nil {
 		return fmt.Errorf("configuration error: %w", err)
 	}
-	tokenIssuer, err := security.NewTokenIssuer(privateKey, configuration.LicenseIssuer, configuration.LicenseAudience, configuration.Product)
+	policy := security.TokenPolicy{KeyID: os.Getenv("LICENSE_KEY_ID"), ApplicationID: os.Getenv("APPLICATION_ID"), ProductID: os.Getenv("PRODUCT_ID")}
+	publicBaseURL := os.Getenv("PUBLIC_BASE_URL")
+	if !httpapi.ValidPublicBaseURL(publicBaseURL) {
+		return errors.New("PUBLIC_BASE_URL must be an HTTPS origin or numeric loopback HTTP origin")
+	}
+	tokenIssuer, err := security.NewTokenIssuer(privateKey, configuration.LicenseIssuer, configuration.LicenseAudience, configuration.Product, policy)
 	if err != nil {
 		return errors.New("configuration error: invalid token issuer configuration")
 	}
@@ -157,11 +162,12 @@ func runServer() error {
 	if !ok {
 		return errors.New("configuration error: invalid token verifier key")
 	}
-	tokenVerifier, err := security.NewTokenVerifier(publicKey, configuration.LicenseIssuer, configuration.LicenseAudience, configuration.Product)
+	tokenVerifier, err := security.NewTokenVerifier(publicKey, configuration.LicenseIssuer, configuration.LicenseAudience, configuration.Product, policy)
 	if err != nil {
 		return errors.New("configuration error: invalid token verifier configuration")
 	}
 	deviceService := service.NewDeviceService(service.NewStoreDeviceRepository(repository), service.DeviceServiceConfig{
+		ApplicationID: policy.ApplicationID, ProductID: policy.ProductID,
 		HardwareHMACKey: []byte(configuration.HardwareHMACKey),
 		TokenIssuer:     tokenIssuer,
 		Issuer:          configuration.LicenseIssuer,
@@ -169,14 +175,15 @@ func runServer() error {
 		Product:         configuration.Product,
 	})
 	router := httpapi.NewRouter(httpapi.RouterConfig{
+		SessionAuth:        httpapi.SessionAuthConfig{PublicBaseURL: publicBaseURL, Replays: repository},
 		Login:              loginService,
 		DeviceVerification: deviceService,
 		SessionVerifier:    tokenVerifier,
 		Profile:            repository,
 		LoginTimeout:       configuration.LoginTimeout,
-		TrustedProxies: trustedProxies,
-		Logger:         log.Default(),
-		HealthCheck:    pool.Ping,
+		TrustedProxies:     trustedProxies,
+		Logger:             log.Default(),
+		HealthCheck:        pool.Ping,
 	})
 	address := strings.TrimSpace(os.Getenv("SERVER_ADDR"))
 	if address == "" {

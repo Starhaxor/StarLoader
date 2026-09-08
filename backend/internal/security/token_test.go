@@ -17,17 +17,18 @@ func TestEd25519SessionTokenRoundTripPreservesRequiredClaims(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := time.Unix(1_786_350_600, 0).UTC()
-	issuer, err := NewTokenIssuer(privateKey, "starloader", "starloader-client", "StarLoader")
+	issuer, err := NewTokenIssuer(privateKey, "starloader", "starloader-client", "StarLoader", TokenPolicy{KeyID: "test-kid", ApplicationID: "app-1", ProductID: "product-1"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	issuer.now = func() time.Time { return now }
-	verifier, err := NewTokenVerifier(publicKey, "starloader", "starloader-client", "StarLoader")
+	verifier, err := NewTokenVerifier(publicKey, "starloader", "starloader-client", "StarLoader", TokenPolicy{KeyID: "test-kid", ApplicationID: "app-1", ProductID: "product-1"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	verifier.now = func() time.Time { return now }
 	want := SessionClaims{
+		ApplicationID: "app-1", ProductID: "product-1", ProofBound: &ProofBoundClaims{SessionID: "session-1", TokenID: "AAAAAAAAAAAAAAAAAAAAAA", DeviceKeyThumbprint: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", NotBefore: now},
 		Subject:   "user-1",
 		LicenseID: "license-1",
 		DeviceID:  "device-1",
@@ -36,7 +37,7 @@ func TestEd25519SessionTokenRoundTripPreservesRequiredClaims(t *testing.T) {
 		Issuer:    "starloader",
 		Audience:  "starloader-client",
 		IssuedAt:  now,
-		ExpiresAt: now.Add(time.Hour),
+		ExpiresAt: now.Add(10 * time.Minute),
 	}
 
 	token, err := issuer.Issue(want)
@@ -62,11 +63,12 @@ func TestTokenVerifierEnforcesIdentityAndExpiration(t *testing.T) {
 	}
 	now := time.Unix(1_786_350_600, 0).UTC()
 	claims := SessionClaims{
+		ApplicationID: "app-1", ProductID: "product-1", ProofBound: &ProofBoundClaims{SessionID: "session-1", TokenID: "AAAAAAAAAAAAAAAAAAAAAA", DeviceKeyThumbprint: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", NotBefore: now},
 		Subject: "user-1", LicenseID: "license-1", DeviceID: "device-1",
 		Product: "StarLoader", Issuer: "starloader", Audience: "starloader-client",
-		IssuedAt: now, ExpiresAt: now.Add(time.Hour),
+		IssuedAt: now, ExpiresAt: now.Add(10 * time.Minute),
 	}
-	issuer, err := NewTokenIssuer(privateKey, claims.Issuer, claims.Audience, claims.Product)
+	issuer, err := NewTokenIssuer(privateKey, claims.Issuer, claims.Audience, claims.Product, TokenPolicy{KeyID: "test-kid", ApplicationID: "app-1", ProductID: "product-1"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,7 +92,7 @@ func TestTokenVerifierEnforcesIdentityAndExpiration(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			verifier, err := NewTokenVerifier(publicKey, test.issuer, test.audience, test.product)
+			verifier, err := NewTokenVerifier(publicKey, test.issuer, test.audience, test.product, TokenPolicy{KeyID: "test-kid", ApplicationID: "app-1", ProductID: "product-1"})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -108,14 +110,15 @@ func TestTokenIssuerRejectsMissingLicenseOrDevice(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := time.Unix(1_786_350_600, 0).UTC()
-	issuer, err := NewTokenIssuer(privateKey, "starloader", "client", "StarLoader")
+	issuer, err := NewTokenIssuer(privateKey, "starloader", "client", "StarLoader", TokenPolicy{KeyID: "test-kid", ApplicationID: "app-1", ProductID: "product-1"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	issuer.now = func() time.Time { return now }
 	valid := SessionClaims{
+		ApplicationID: "app-1", ProductID: "product-1", ProofBound: &ProofBoundClaims{SessionID: "session-1", TokenID: "AAAAAAAAAAAAAAAAAAAAAA", DeviceKeyThumbprint: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", NotBefore: now},
 		Subject: "user", LicenseID: "license", DeviceID: "device", Product: "StarLoader",
-		Issuer: "starloader", Audience: "client", IssuedAt: now, ExpiresAt: now.Add(time.Hour),
+		Issuer: "starloader", Audience: "client", IssuedAt: now, ExpiresAt: now.Add(10 * time.Minute),
 	}
 	for _, mutate := range []func(*SessionClaims){
 		func(claims *SessionClaims) { claims.LicenseID = "" },
@@ -135,13 +138,14 @@ func TestTokenVerifierRejectsChangedSignature(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := time.Unix(1_786_350_600, 0).UTC()
-	issuer, _ := NewTokenIssuer(privateKey, "starloader", "client", "StarLoader")
+	issuer, _ := NewTokenIssuer(privateKey, "starloader", "client", "StarLoader", TokenPolicy{KeyID: "test-kid", ApplicationID: "app-1", ProductID: "product-1"})
 	issuer.now = func() time.Time { return now }
-	verifier, _ := NewTokenVerifier(publicKey, "starloader", "client", "StarLoader")
+	verifier, _ := NewTokenVerifier(publicKey, "starloader", "client", "StarLoader", TokenPolicy{KeyID: "test-kid", ApplicationID: "app-1", ProductID: "product-1"})
 	verifier.now = func() time.Time { return now }
 	token, err := issuer.Issue(SessionClaims{
+		ApplicationID: "app-1", ProductID: "product-1", ProofBound: &ProofBoundClaims{SessionID: "session-1", TokenID: "AAAAAAAAAAAAAAAAAAAAAA", DeviceKeyThumbprint: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", NotBefore: now},
 		Subject: "user", LicenseID: "license", DeviceID: "device", Product: "StarLoader",
-		Issuer: "starloader", Audience: "client", IssuedAt: now, ExpiresAt: now.Add(time.Hour),
+		Issuer: "starloader", Audience: "client", IssuedAt: now, ExpiresAt: now.Add(10 * time.Minute),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -160,8 +164,8 @@ func TestEd25519ConfigurationRejectsInconsistentExpandedPrivateKey(t *testing.T)
 	}
 	malformed := append(ed25519.PrivateKey(nil), privateKey...)
 	malformed[len(malformed)-1] ^= 0x80
-	if _, err := NewTokenIssuer(malformed, "starloader", "client", "StarLoader"); err == nil {
-		t.Fatal("NewTokenIssuer() accepted an inconsistent expanded private key")
+	if _, err := NewTokenIssuer(malformed, "starloader", "client", "StarLoader", TokenPolicy{KeyID: "test-kid", ApplicationID: "app-1", ProductID: "product-1"}); err == nil {
+		t.Fatal("NewTokenIssuer() accepted an inconsistent expanded private key", TokenPolicy{KeyID: "test-kid", ApplicationID: "app-1", ProductID: "product-1"})
 	}
 	encoded := base64.StdEncoding.EncodeToString(malformed)
 	if _, err := ParseEd25519PrivateKey(encoded); err == nil {
@@ -169,13 +173,13 @@ func TestEd25519ConfigurationRejectsInconsistentExpandedPrivateKey(t *testing.T)
 	}
 }
 
-func TestTokenIssuerRequiresExactOneHourLifetime(t *testing.T) {
+func TestTokenIssuerRequiresExactTenMinuteLifetime(t *testing.T) {
 	_, privateKey, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
 	now := time.Unix(1_786_350_600, 0).UTC()
-	issuer, err := NewTokenIssuer(privateKey, "starloader", "client", "StarLoader")
+	issuer, err := NewTokenIssuer(privateKey, "starloader", "client", "StarLoader", TokenPolicy{KeyID: "test-kid", ApplicationID: "app-1", ProductID: "product-1"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -186,7 +190,7 @@ func TestTokenIssuerRequiresExactOneHourLifetime(t *testing.T) {
 		wantOK   bool
 	}{
 		{name: "59 minutes", lifetime: 59 * time.Minute},
-		{name: "exact hour", lifetime: time.Hour, wantOK: true},
+		{name: "exact ten minutes", lifetime: 10 * time.Minute, wantOK: true},
 		{name: "61 minutes", lifetime: 61 * time.Minute},
 		{name: "one day", lifetime: 24 * time.Hour},
 	} {
@@ -202,13 +206,13 @@ func TestTokenIssuerRequiresExactOneHourLifetime(t *testing.T) {
 	}
 }
 
-func TestTokenVerifierRequiresExactOneHourLifetime(t *testing.T) {
+func TestTokenVerifierRequiresExactTenMinuteLifetime(t *testing.T) {
 	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
 	now := time.Unix(1_786_350_600, 0).UTC()
-	verifier, err := NewTokenVerifier(publicKey, "starloader", "client", "StarLoader")
+	verifier, err := NewTokenVerifier(publicKey, "starloader", "client", "StarLoader", TokenPolicy{KeyID: "test-kid", ApplicationID: "app-1", ProductID: "product-1"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -219,7 +223,7 @@ func TestTokenVerifierRequiresExactOneHourLifetime(t *testing.T) {
 		wantOK   bool
 	}{
 		{name: "59 minutes", lifetime: 59 * time.Minute},
-		{name: "exact hour", lifetime: time.Hour, wantOK: true},
+		{name: "exact ten minutes", lifetime: 10 * time.Minute, wantOK: true},
 		{name: "61 minutes", lifetime: 61 * time.Minute},
 		{name: "one day", lifetime: 24 * time.Hour},
 	} {
@@ -238,6 +242,7 @@ func TestTokenVerifierRequiresExactOneHourLifetime(t *testing.T) {
 
 func requiredTokenClaims(issuedAt time.Time, lifetime time.Duration) SessionClaims {
 	return SessionClaims{
+		ApplicationID: "app-1", ProductID: "product-1", ProofBound: &ProofBoundClaims{SessionID: "session-1", TokenID: "AAAAAAAAAAAAAAAAAAAAAA", DeviceKeyThumbprint: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", NotBefore: issuedAt},
 		Subject: "user", LicenseID: "license", DeviceID: "device", Product: "StarLoader",
 		Features: []string{}, Issuer: "starloader", Audience: "client",
 		IssuedAt: issuedAt, ExpiresAt: issuedAt.Add(lifetime),
@@ -246,7 +251,7 @@ func requiredTokenClaims(issuedAt time.Time, lifetime time.Duration) SessionClai
 
 func signSessionClaimsForTest(t *testing.T, privateKey ed25519.PrivateKey, claims SessionClaims) string {
 	t.Helper()
-	headerJSON, err := json.Marshal(tokenHeader{Algorithm: "EdDSA", Type: "JWT"})
+	headerJSON, err := json.Marshal(tokenHeader{Algorithm: "EdDSA", Type: "JWT", KeyID: "test-kid"})
 	if err != nil {
 		t.Fatal(err)
 	}

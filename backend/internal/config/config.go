@@ -8,9 +8,7 @@ import (
 )
 
 const (
-	defaultLoginTimeout        = 10 * time.Second
-	defaultAdminSessionTTL     = 12 * time.Hour
-	defaultAdminAllowedOrigins = "http://localhost:3000,http://127.0.0.1:3000,https://starloadernd8h-8080-domgge2y7n.outplane.app"
+	defaultLoginTimeout = 10 * time.Second
 )
 
 var requiredEnvironmentVariables = [...]string{
@@ -26,14 +24,14 @@ var requiredEnvironmentVariables = [...]string{
 // Config contains the values required to operate the license service. Secrets
 // are read only from the environment and must never be logged.
 type Config struct {
-	DatabaseURL         string
-	LicenseHMACKey      string
-	HardwareHMACKey     string
-	Ed25519PrivateKey   string
-	LicenseIssuer       string
-	LicenseAudience     string
-	Product             string
-	LoginTimeout time.Duration
+	DatabaseURL       string
+	LicenseHMACKey    string
+	HardwareHMACKey   string
+	Ed25519PrivateKey string
+	LicenseIssuer     string
+	LicenseAudience   string
+	Product           string
+	LoginTimeout      time.Duration
 }
 
 // Load reads the complete configuration, refusing to start when any required
@@ -59,29 +57,14 @@ func Load() (Config, error) {
 		loginTimeout = parsedTimeout
 	}
 
-	configuredOrigins := strings.TrimSpace(os.Getenv("ADMIN_ALLOWED_ORIGIN"))
-	if configuredOrigins == "" {
-		configuredOrigins = defaultAdminAllowedOrigins
-	}
-	adminAllowedOrigins := make([]string, 0, len(strings.Split(configuredOrigins, ",")))
-	for _, candidate := range strings.Split(configuredOrigins, ",") {
-		candidate = strings.TrimRight(strings.TrimSpace(candidate), "/")
-		if candidate != "" {
-			adminAllowedOrigins = append(adminAllowedOrigins, candidate)
-		}
-	}
-	if len(adminAllowedOrigins) == 0 {
-		return Config{}, fmt.Errorf("ADMIN_ALLOWED_ORIGIN must contain at least one origin")
-	}
-
 	return Config{
-		DatabaseURL:         values["DATABASE_URL"],
-		LicenseHMACKey:      values["LICENSE_HMAC_KEY"],
-		HardwareHMACKey:     values["HARDWARE_HMAC_KEY"],
-		Ed25519PrivateKey:   values["ED25519_PRIVATE_KEY"],
-		LicenseIssuer:       values["LICENSE_ISSUER"],
-		LicenseAudience:     values["LICENSE_AUDIENCE"],
-		Product:      values["PRODUCT"],
-		LoginTimeout: loginTimeout,
+		DatabaseURL:       values["DATABASE_URL"],
+		LicenseHMACKey:    values["LICENSE_HMAC_KEY"],
+		HardwareHMACKey:   values["HARDWARE_HMAC_KEY"],
+		Ed25519PrivateKey: values["ED25519_PRIVATE_KEY"],
+		LicenseIssuer:     values["LICENSE_ISSUER"],
+		LicenseAudience:   values["LICENSE_AUDIENCE"],
+		Product:           values["PRODUCT"],
+		LoginTimeout:      loginTimeout,
 	}, nil
 }

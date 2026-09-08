@@ -81,61 +81,6 @@ func TestLoadRejectsNonPositiveOrInvalidLoginTimeout(t *testing.T) {
 	}
 }
 
-func TestLoadDefaultsAdminConsoleSettings(t *testing.T) {
-	setRequiredEnvironment(t)
-
-	configuration, err := Load()
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := []string{"http://localhost:3000", "http://127.0.0.1:3000", "https://starloadernd8h-8080-domgge2y7n.outplane.app"}
-	if len(configuration.AdminAllowedOrigins) != len(want) {
-		t.Fatalf("AdminAllowedOrigins = %q, want %q", configuration.AdminAllowedOrigins, want)
-	}
-	for i := range want {
-		if configuration.AdminAllowedOrigins[i] != want[i] {
-			t.Fatalf("AdminAllowedOrigins = %q, want %q", configuration.AdminAllowedOrigins, want)
-		}
-	}
-	if configuration.AdminSessionTTL != 12*time.Hour {
-		t.Fatalf("AdminSessionTTL = %s, want 12h", configuration.AdminSessionTTL)
-	}
-	if configuration.AdminCookieSecure {
-		t.Fatal("AdminCookieSecure should default to false")
-	}
-}
-
-func TestLoadParsesAdminConsoleSettings(t *testing.T) {
-	setRequiredEnvironment(t)
-	t.Setenv("ADMIN_ALLOWED_ORIGIN", "https://admin.example.com/")
-	t.Setenv("ADMIN_SESSION_TTL", "2h")
-	t.Setenv("ADMIN_COOKIE_SECURE", "true")
-
-	configuration, err := Load()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(configuration.AdminAllowedOrigins) != 1 || configuration.AdminAllowedOrigins[0] != "https://admin.example.com" || configuration.AdminSessionTTL != 2*time.Hour || !configuration.AdminCookieSecure {
-		t.Fatalf("Load() = %#v", configuration)
-	}
-}
-
-func TestLoadRejectsInvalidAdminConsoleSettings(t *testing.T) {
-	for _, setting := range []struct{ name, value string }{
-		{"ADMIN_SESSION_TTL", "0s"},
-		{"ADMIN_SESSION_TTL", "weekly"},
-		{"ADMIN_COOKIE_SECURE", "maybe"},
-	} {
-		t.Run(setting.name+"="+setting.value, func(t *testing.T) {
-			setRequiredEnvironment(t)
-			t.Setenv(setting.name, setting.value)
-			if _, err := Load(); err == nil {
-				t.Fatalf("Load() accepted %s=%q", setting.name, setting.value)
-			}
-		})
-	}
-}
-
 func setRequiredEnvironment(t *testing.T) {
 	t.Helper()
 	t.Setenv("LOGIN_TIMEOUT", "")

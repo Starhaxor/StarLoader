@@ -114,6 +114,7 @@ private slots:
     void rejectsNonLoopbackHttpUnlessExplicitlyEnabled();
     void rejectsLocalhostNameEvenWhenLocalHttpIsEnabled();
     void rejectsRedirectThatEscapesConfiguredHost();
+    void rejectsRedirectToSameHostDifferentPort();
 };
 
 void ApiClientTest::sendsExactLoginContractAndParsesReply()
@@ -216,7 +217,7 @@ void ApiClientTest::sendsExactDeviceVerificationContract()
     });
     ApiClient client(QUrl(QStringLiteral("http://127.0.0.1:%1").arg(server.serverPort())));
     QSignalSpy complete(&client, &ApiClient::deviceVerified);
-    client.verifyDevice({QStringLiteral("0198940d-7cec-7000-8000-000000000001"), QStringLiteral("Y2hhbGxlbmdl"), QStringLiteral("c2lnbmF0dXJl"), QStringLiteral("cHVibGljLWtleQ=="), {QStringLiteral("smbios"), QStringLiteral("board"), QStringLiteral("bios"), QStringLiteral("disk"), QStringLiteral("guid"), QStringLiteral("fingerprint")}}, 23);
+    client.verifyDevice({QStringLiteral("0198940d-7cec-7000-8000-000000000001"), QStringLiteral("Y2hhbGxlbmdl"), QStringLiteral("c2lnbmF0dXJl"), QString::fromLatin1(testPublicBlob().toBase64()), {QStringLiteral("smbios"), QStringLiteral("board"), QStringLiteral("bios"), QStringLiteral("disk"), QStringLiteral("guid"), QStringLiteral("fingerprint")}}, 23);
     if (complete.isEmpty()) QVERIFY(complete.wait(3000));
     QVERIFY(request.startsWith("POST /v1/device/verify HTTP/1.1\r\n"));
     const QRegularExpression publishableKeyPattern(QStringLiteral("(?im)^Authorization: Bearer ks_pk_(?:live|test)_[A-Za-z0-9_-]+\\r?$"));
@@ -226,7 +227,14 @@ void ApiClientTest::sendsExactDeviceVerificationContract()
     QVERIFY(request.contains("\"session_id\":\"0198940d-7cec-7000-8000-000000000001\""));
     QVERIFY(request.contains("\"challenge\":\"Y2hhbGxlbmdl\""));
     QVERIFY(request.contains("\"challenge_signature\":\"c2lnbmF0dXJl\""));
-    QVERIFY(request.contains("\"tpm_public_key\":\"cHVibGljLWtleQ==\""));
+    const QJsonObject payload = QJsonDocument::fromJson(request.mid(request.indexOf("\r\n\r\n") + 4)).object();
+    QCOMPARE(payload.value(QStringLiteral("tpm_public_key")).toString(), QString::fromLatin1(testPublicBlob().toBase64()));
+    const QJsonObject jwk = payload.value(QStringLiteral("device_jwk")).toObject();
+    QCOMPARE(jwk.size(), 4);
+    QCOMPARE(jwk.value(QStringLiteral("kty")).toString(), QStringLiteral("EC"));
+    QCOMPARE(jwk.value(QStringLiteral("crv")).toString(), QStringLiteral("P-256"));
+    QCOMPARE(jwk.value(QStringLiteral("x")).toString(), QString::fromLatin1(base64Url(QByteArray(32, '\x11'))));
+    QCOMPARE(jwk.value(QStringLiteral("y")).toString(), QString::fromLatin1(base64Url(QByteArray(32, '\x22'))));
     QVERIFY(request.contains("\"hardware\":{\"bios_serial\":\"bios\",\"fingerprint\":\"fingerprint\",\"machine_guid\":\"guid\",\"motherboard_serial\":\"board\",\"smbios_uuid\":\"smbios\",\"system_disk_serial\":\"disk\"}"));
     QCOMPARE(complete.at(0).at(1).toULongLong(), quint64(23));
 }
@@ -655,6 +663,38 @@ void ApiClientTest::rejectsRedirectThatEscapesConfiguredHost()
     ApiClient client(QUrl(QStringLiteral("http://127.0.0.1:%1").arg(origin.serverPort())));
     QSignalSpy failed(&client, &ApiClient::loginFailed);
     client.login({QStringLiteral("a@b.c"), QStringLiteral("password"), QStringLiteral("fingerprint")});
+    if (failed.isEmpty()) QVERIFY(failed.wait(3000));
+    QCOMPARE(failed.size(), 1);
+    QCOMPARE(failed.at(0).at(0).value<ApiError>().code, QStringLiteral("TLS_REDIRECT_REJECTED"));
+    QTest::qWait(50);
+    QCOMPARE(escapedConnections.size(), 0);
+}
+
+void ApiClientTest::rejectsRedirectToSameHostDifferentPort()
+{
+    QTcpServer destination;
+    QVERIFY(destination.listen(QHostAddress::LocalHost));
+    QSignalSpy escapedConnections(&destination, &QTcpServer::newConnection);
+
+    QTcpServer origin;
+    QVERIFY(origin.listen(QHostAddress::LocalHost));
+    connect(&origin, &QTcpServer::newConnection, this, [&] {
+        QTcpSocket *socket = origin.nextPendingConnection();
+        connect(socket, &QTcpSocket::readyRead, socket, [&, socket] {
+            if (!socket->readAll().contains("\r\n\r\n")) return;
+            const QByteArray location = QByteArrayLiteral("http://127.0.0.1:")
+                + QByteArray::number(destination.serverPort()) + QByteArrayLiteral("/capture");
+            socket->write("HTTP/1.1 307 Temporary Redirect\r\nLocation: " + location
+                          + "\r\nContent-Length: 0\r\n\r\n");
+            socket->disconnectFromHost();
+        });
+    });
+
+    ApiClient client(QUrl(QStringLiteral("http://127.0.0.1:%1").arg(origin.serverPort())));
+    QSignalSpy failed(&client, &ApiClient::loginFailed);
+    client.login({QStringLiteral("a@b.c"), QStringLiteral("password"), QStringLiteral("fingerprint")});
+    QTest::qWait(100);
+    QCOMPARE(escapedConnections.size(), 0);
     if (failed.isEmpty()) QVERIFY(failed.wait(3000));
     QCOMPARE(failed.size(), 1);
     QCOMPARE(failed.at(0).at(0).value<ApiError>().code, QStringLiteral("TLS_REDIRECT_REJECTED"));

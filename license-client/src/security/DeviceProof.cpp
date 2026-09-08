@@ -226,6 +226,18 @@ DeviceProofBuilder::DeviceProofBuilder(IDeviceProofSigner &signer, Clock clock,
 {
 }
 
+QJsonObject DeviceProofBuilder::publicJwk(QByteArrayView publicBlob)
+{
+    QByteArray x, y;
+    if (!parsePublicBlob(publicBlob, &x, &y)) return {};
+    return {
+        {QStringLiteral("crv"), QStringLiteral("P-256")},
+        {QStringLiteral("kty"), QStringLiteral("EC")},
+        {QStringLiteral("x"), QString::fromLatin1(base64Url(x))},
+        {QStringLiteral("y"), QString::fromLatin1(base64Url(y))},
+    };
+}
+
 ProofResult DeviceProofBuilder::build(const QString &method, const QUrl &url,
                                       const QString &accessToken,
                                       const QString &expectedThumbprint) const

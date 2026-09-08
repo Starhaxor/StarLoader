@@ -46,7 +46,7 @@ func TestDeviceVerificationAcceptanceMatrix(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Verify(token) error = %v", err)
 		}
-		if claims.Subject != fixture.user.ID || claims.LicenseID != fixture.license.ID || claims.DeviceID != first.DeviceID || claims.Product != "StarLoader" || claims.Issuer != "starloader" || claims.Audience != "starloader-client" || !claims.ExpiresAt.Equal(fixture.now.Add(time.Hour)) {
+		if claims.Subject != fixture.user.ID || claims.LicenseID != fixture.license.ID || claims.DeviceID != first.DeviceID || claims.Product != "StarLoader" || claims.Issuer != "starloader" || claims.Audience != "starloader-client" || !claims.ExpiresAt.Equal(fixture.now.Add(600*time.Second)) {
 			t.Fatalf("token claims = %#v", claims)
 		}
 
@@ -1182,15 +1182,15 @@ func newPostgresVerificationFixture(t *testing.T, maxDevices int) *postgresVerif
 	if err != nil {
 		t.Fatal(err)
 	}
-	issuer, err := security.NewTokenIssuer(privateKey, "starloader", "starloader-client", "StarLoader")
+	issuer, err := security.NewTokenIssuer(privateKey, "starloader", "starloader-client", "StarLoader", security.TokenPolicy{KeyID: "test-kid", ApplicationID: "app-1", ProductID: "product-1"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	verifier, err := security.NewTokenVerifier(publicKey, "starloader", "starloader-client", "StarLoader")
+	verifier, err := security.NewTokenVerifier(publicKey, "starloader", "starloader-client", "StarLoader", security.TokenPolicy{KeyID: "test-kid", ApplicationID: "app-1", ProductID: "product-1"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	deviceService := service.NewDeviceService(service.NewStoreDeviceRepository(repository), service.DeviceServiceConfig{
+	deviceService := service.NewDeviceService(service.NewStoreDeviceRepository(repository), service.DeviceServiceConfig{ApplicationID: "app-1", ProductID: "product-1",
 		HardwareHMACKey: []byte("integration-hardware-secret"), TokenIssuer: issuer,
 		Issuer: "starloader", Audience: "starloader-client", Product: "StarLoader", Now: func() time.Time { return now },
 	})

@@ -83,10 +83,10 @@ try {
     Invoke-Checked docker run --rm --add-host host.docker.internal:host-gateway `
         -e "TEST_DATABASE_URL=$databaseURL" `
         -v "${repoRoot}:/workspace" -w /workspace/backend `
-        golang:1.24 go test -race ./... -count=1
+        golang:1.26.6 go test -race ./... -count=1
 
     Invoke-Checked docker run --rm -v "${repoRoot}:/workspace" -w /workspace/backend `
-        golang:1.24 go vet ./...
+        golang:1.26.6 go vet ./...
 
     Invoke-Checked $cmake --preset qt-mingw-local
     Invoke-Checked $cmake --build --preset qt-mingw-local-build

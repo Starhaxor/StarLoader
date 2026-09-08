@@ -2,6 +2,7 @@
 
 #include <QByteArray>
 #include <QByteArrayView>
+#include <QJsonObject>
 #include <QString>
 #include <QUrl>
 
@@ -50,6 +51,8 @@ public:
     explicit DeviceProofBuilder(IDeviceProofSigner &signer,
                                 Clock clock = {},
                                 RandomSource randomSource = {});
+
+    static QJsonObject publicJwk(QByteArrayView publicBlob);
 
     ProofResult build(const QString &method, const QUrl &url,
                       const QString &accessToken,

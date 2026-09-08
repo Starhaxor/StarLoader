@@ -18,6 +18,7 @@ import (
 const maxDeviceSessionIDBytes = 128
 
 type deviceVerifyRequestBody struct {
+	DeviceJWK          json.RawMessage          `json:"device_jwk"`
 	SessionID          string                   `json:"session_id"`
 	Challenge          string                   `json:"challenge"`
 	ChallengeSignature string                   `json:"challenge_signature"`
@@ -65,7 +66,7 @@ func (router *Router) handleDeviceVerify(writer http.ResponseWriter, request *ht
 		writeError(writer, request, http.StatusBadRequest, "INVALID_REQUEST", "invalid request")
 		return
 	}
-	if !router.sessionLimiter.allow(strings.TrimSpace(body.SessionID)) {
+	if !router.sessionLimiter.allow(clientIP(request, router.trustedProxies)) {
 		writeError(writer, request, http.StatusTooManyRequests, "RATE_LIMITED", "too many requests")
 		return
 	}

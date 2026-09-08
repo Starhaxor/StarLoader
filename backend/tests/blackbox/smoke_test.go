@@ -38,7 +38,7 @@ func TestProductionServerLoginDeviceAndReplay(t *testing.T) {
 	if err != nil || len(publicKey) != ed25519.PublicKeySize {
 		t.Fatal("smoke Ed25519 public key is invalid")
 	}
-	verifier, err := security.NewTokenVerifier(ed25519.PublicKey(publicKey), "starloader", "starloader-client", "StarLoader")
+	verifier, err := security.NewTokenVerifier(ed25519.PublicKey(publicKey), "starloader", "starloader-client", "StarLoader", security.TokenPolicy{KeyID: "test-kid", ApplicationID: "app-1", ProductID: "product-1"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,7 +72,7 @@ func TestProductionServerLoginDeviceAndReplay(t *testing.T) {
 	if err != nil || len(challenge) != 32 {
 		t.Fatal("server challenge is invalid")
 	}
-	publicBlob, signature := cngProof(t, challenge)
+	publicBlob, signature, deviceKey := cngProof(t, challenge)
 	verifyBody := map[string]any{
 		"session_id": pending.SessionID, "challenge": pending.Challenge,
 		"challenge_signature": base64.StdEncoding.EncodeToString(signature),
@@ -106,7 +106,7 @@ func TestProductionServerLoginDeviceAndReplay(t *testing.T) {
 		t.Fatalf("token binding does not match the response")
 	}
 
-	profileResponse := getWithBearer(t, baseURL+"/v1/me", verified.Token)
+	profileResponse := getWithDeviceProof(t, baseURL+"/v1/me", verified.Token, deviceKey)
 	if profileResponse.status != http.StatusOK {
 		t.Fatalf("profile status = %d body = %s", profileResponse.status, profileResponse.body)
 	}
@@ -202,6 +202,46 @@ func postJSON(t *testing.T, url string, value any) response {
 	return response{status: result.StatusCode, body: responseBody.Bytes(), requestID: result.Header.Get("X-Request-ID")}
 }
 
+func getWithDeviceProof(t *testing.T, url, token string, key *ecdsa.PrivateKey) response {
+	t.Helper()
+	encode := base64.RawURLEncoding.EncodeToString
+	x, y := make([]byte, 32), make([]byte, 32)
+	key.X.FillBytes(x)
+	key.Y.FillBytes(y)
+	header, _ := json.Marshal(map[string]any{"alg": "ES256", "typ": "dpop+jwt", "jwk": map[string]string{"kty": "EC", "crv": "P-256", "x": encode(x), "y": encode(y)}})
+	ath := sha256.Sum256([]byte(token))
+	jti := make([]byte, 16)
+	if _, err := rand.Read(jti); err != nil {
+		t.Fatal(err)
+	}
+	payload, _ := json.Marshal(map[string]any{"htm": "GET", "htu": url, "ath": encode(ath[:]), "iat": time.Now().Unix(), "jti": encode(jti)})
+	input := encode(header) + "." + encode(payload)
+	digest := sha256.Sum256([]byte(input))
+	r, s, err := ecdsa.Sign(rand.Reader, key, digest[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	signature := make([]byte, 64)
+	r.FillBytes(signature[:32])
+	s.FillBytes(signature[32:])
+	request, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Authorization", "DPoP "+token)
+	request.Header.Set("DPoP", input+"."+encode(signature))
+	result, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer result.Body.Close()
+	var body bytes.Buffer
+	if _, err := body.ReadFrom(result.Body); err != nil {
+		t.Fatal(err)
+	}
+	return response{status: result.StatusCode, body: body.Bytes(), requestID: result.Header.Get("X-Request-ID")}
+}
+
 func getWithBearer(t *testing.T, url, token string) response {
 	t.Helper()
 	request, err := http.NewRequest(http.MethodGet, url, nil)
@@ -286,7 +326,7 @@ func assertExactJSONKeys(t *testing.T, body []byte, want []string) {
 	}
 }
 
-func cngProof(t *testing.T, challenge []byte) ([]byte, []byte) {
+func cngProof(t *testing.T, challenge []byte) ([]byte, []byte, *ecdsa.PrivateKey) {
 	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -305,7 +345,7 @@ func cngProof(t *testing.T, challenge []byte) ([]byte, []byte) {
 	signature := make([]byte, 64)
 	r.FillBytes(signature[:32])
 	s.FillBytes(signature[32:])
-	return blob, signature
+	return blob, signature, key
 }
 
 func requiredEnvironment(t *testing.T, name string) string {

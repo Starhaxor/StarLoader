@@ -20,6 +20,7 @@ type DeviceVerificationService interface {
 }
 
 type RouterConfig struct {
+	SessionAuth         SessionAuthConfig
 	Login               LoginService
 	DeviceVerification  DeviceVerificationService
 	SessionVerifier     BearerVerifier
@@ -30,8 +31,8 @@ type RouterConfig struct {
 	DeviceVerifyTimeout time.Duration
 	TrustedProxies      []netip.Prefix
 	Logger              *log.Logger
-	RateLimitMaxKeys int
-	Now              func() time.Time
+	RateLimitMaxKeys    int
+	Now                 func() time.Time
 }
 
 type Router struct {
@@ -84,7 +85,7 @@ func NewRouter(config RouterConfig) *Router {
 		sessionLimiter:      newIPRateLimiter(10, time.Minute, config.RateLimitMaxKeys, config.Now),
 		now:                 now,
 	}
-	router.meHandler = RequireSession(config.SessionVerifier, http.HandlerFunc(router.handleMe))
+	router.meHandler = RequireSession(config.SessionVerifier, http.HandlerFunc(router.handleMe), config.SessionAuth)
 	router.handler = requestIDMiddleware(recoveryMiddleware(logger, http.HandlerFunc(router.route)))
 	return router
 }

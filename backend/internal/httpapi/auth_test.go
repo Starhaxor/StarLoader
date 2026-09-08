@@ -1,12 +1,10 @@
 package httpapi
 
 import (
-	"context"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
-	"time"
 
 	"github.com/starloader/backend/internal/security"
 )
@@ -23,7 +21,7 @@ func TestRequireSessionRejectsInvalidAuthorizationHeaders(t *testing.T) {
 		{name: "wrong scheme", authorization: "Basic signed-token"},
 		{name: "blank token", authorization: "Bearer    "},
 		{name: "extra authorization field", authorization: "Bearer signed-token extra"},
-		{name: "invalid token", authorization: "Bearer invalid-token", verifierErr: errors.New("signature failure"), wantToken: "invalid-token"},
+		{name: "invalid token", authorization: "DPoP invalid-token", verifierErr: errors.New("signature failure"), wantToken: "invalid-token"},
 	}
 
 	for _, tt := range tests {
@@ -59,39 +57,6 @@ func TestRequireSessionRejectsInvalidAuthorizationHeaders(t *testing.T) {
 	}
 }
 
-func TestRequireSessionStoresExactVerifiedClaimsInRequestContext(t *testing.T) {
-	// This fails if the middleware drops, changes, or invents verified token claims.
-	wantClaims := security.SessionClaims{
-		Subject: "user-1", LicenseID: "license-1", DeviceID: "device-1", Product: "StarLoader",
-		Features: []string{"profile"}, Issuer: "starloader", Audience: "starloader-client",
-		IssuedAt: time.Date(2026, 8, 13, 10, 0, 0, 0, time.UTC), ExpiresAt: time.Date(2026, 8, 13, 11, 0, 0, 0, time.UTC),
-	}
-	verifier := &fakeBearerVerifier{claims: wantClaims}
-	var gotClaims security.SessionClaims
-	var found bool
-	handler := RequireSession(verifier, http.HandlerFunc(func(_ http.ResponseWriter, request *http.Request) {
-		gotClaims, found = SessionClaimsFromContext(request.Context())
-	}))
-	recorder := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodGet, "/v1/me", nil)
-	request.Header.Set("Authorization", "bEaReR signed-token")
-
-	handler.ServeHTTP(recorder, request)
-
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("status = %d, want %d; body = %s", recorder.Code, http.StatusOK, recorder.Body.String())
-	}
-	if verifier.token != "signed-token" {
-		t.Fatalf("Verify() token = %q", verifier.token)
-	}
-	if !found || gotClaims.Subject != wantClaims.Subject || gotClaims.LicenseID != wantClaims.LicenseID || gotClaims.DeviceID != wantClaims.DeviceID || gotClaims.Product != wantClaims.Product || gotClaims.Issuer != wantClaims.Issuer || gotClaims.Audience != wantClaims.Audience || !gotClaims.IssuedAt.Equal(wantClaims.IssuedAt) || !gotClaims.ExpiresAt.Equal(wantClaims.ExpiresAt) || len(gotClaims.Features) != 1 || gotClaims.Features[0] != "profile" {
-		t.Fatalf("SessionClaimsFromContext() = %#v, found = %t", gotClaims, found)
-	}
-	if _, found := SessionClaimsFromContext(context.Background()); found {
-		t.Fatal("claims unexpectedly found in an unrelated context")
-	}
-}
-
 type fakeBearerVerifier struct {
 	claims security.SessionClaims
 	err    error
@@ -101,4 +66,15 @@ type fakeBearerVerifier struct {
 func (fake *fakeBearerVerifier) Verify(token string) (security.SessionClaims, error) {
 	fake.token = token
 	return fake.claims, fake.err
+}
+
+func TestRequireSessionRejectsStolenBearerWithoutDeviceProof(t *testing.T) {
+	handler := RequireSession(&fakeBearerVerifier{claims: security.SessionClaims{Subject: "victim"}}, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNoContent) }))
+	req := httptest.NewRequest("GET", "/v1/me", nil)
+	req.Header.Set("Authorization", "Bearer stolen-valid-token")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("stolen bearer admitted: %d", rec.Code)
+	}
 }

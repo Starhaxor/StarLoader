@@ -145,6 +145,8 @@ The current workspace was verified with Qt 6.11.1, MinGW 13.1, OpenSSL 1.1.1k, G
 
 ## Configuration
 
+Security update: the bundled Go server now requires DPoP and migration 000003. Set `LICENSE_KEY_ID`, `APPLICATION_ID`, `PRODUCT_ID`, and `PUBLIC_BASE_URL` to match the client. See [the current API contract](server-contract/API.md).
+
 Copy `.env.example` to `.env` and replace every `replace-with-...` placeholder. Use independent random values for `LICENSE_HMAC_KEY`, `HARDWARE_HMAC_KEY`, and the PostgreSQL password. The two HMAC keys must differ.
 
 Important variables:
@@ -180,7 +182,7 @@ If host port 5432 is occupied, set `POSTGRES_PORT=55432` in `.env` and use the s
 ### 2. Generate the signing key pair
 
 ```powershell
-docker run --rm -v "${PWD}:/workspace" -w /workspace/backend golang:1.24 go run ./cmd/server keygen
+docker run --rm -v "${PWD}:/workspace" -w /workspace/backend golang:1.26.6 go run ./cmd/server keygen
 ```
 
 The command prints two lines:
@@ -195,7 +197,7 @@ Never distribute the private key with the desktop applications. Key rotation add
 When Go runs inside Docker, `DATABASE_URL` must use `host.docker.internal` rather than `localhost`:
 
 ```powershell
-docker run --rm --add-host host.docker.internal:host-gateway --env-file .env -v "${PWD}:/workspace" -w /workspace/backend golang:1.24 go run ./cmd/server migrate up
+docker run --rm --add-host host.docker.internal:host-gateway --env-file .env -v "${PWD}:/workspace" -w /workspace/backend golang:1.26.6 go run ./cmd/server migrate up
 ```
 
 `migrate down` drops the StarLoader schema objects and destroys application data. Use it only for disposable development/test databases or after a verified backup.
@@ -207,19 +209,19 @@ Applied versions are recorded in `schema_migrations`. `migrate up` takes a Postg
 Interactive mode hides the password:
 
 ```powershell
-docker run --rm -it --add-host host.docker.internal:host-gateway --env-file .env -v "${PWD}:/workspace" -w /workspace/backend golang:1.24 go run ./cmd/server admin create-user --email user@example.com
+docker run --rm -it --add-host host.docker.internal:host-gateway --env-file .env -v "${PWD}:/workspace" -w /workspace/backend golang:1.26.6 go run ./cmd/server admin create-user --email user@example.com
 ```
 
 For automation, supply password and confirmation as two standard-input lines. Do not place the password in command-line arguments:
 
 ```powershell
-"password`npassword" | docker run --rm -i --add-host host.docker.internal:host-gateway --env-file .env -v "${PWD}:/workspace" -w /workspace/backend golang:1.24 go run ./cmd/server admin create-user --email user@example.com --password-stdin
+"password`npassword" | docker run --rm -i --add-host host.docker.internal:host-gateway --env-file .env -v "${PWD}:/workspace" -w /workspace/backend golang:1.26.6 go run ./cmd/server admin create-user --email user@example.com --password-stdin
 ```
 
 ### 5. Create a license
 
 ```powershell
-docker run --rm --add-host host.docker.internal:host-gateway --env-file .env -v "${PWD}:/workspace" -w /workspace/backend golang:1.24 go run ./cmd/server admin create-license --user user@example.com --product StarLoader --days 30 --max-devices 1
+docker run --rm --add-host host.docker.internal:host-gateway --env-file .env -v "${PWD}:/workspace" -w /workspace/backend golang:1.26.6 go run ./cmd/server admin create-license --user user@example.com --product StarLoader --days 30 --max-devices 1
 ```
 
 The plaintext license is printed once, only after persistence succeeds. Store or deliver it securely; the database cannot recover it later.
@@ -227,7 +229,7 @@ The plaintext license is printed once, only after persistence succeeds. Store or
 ### 6. Start the API
 
 ```powershell
-docker run --rm --name starloader-api --add-host host.docker.internal:host-gateway --env-file .env -e SERVER_ADDR=:8080 -p 127.0.0.1:8080:8080 -v "${PWD}:/workspace" -w /workspace/backend golang:1.24 go run ./cmd/server serve
+docker run --rm --name starloader-api --add-host host.docker.internal:host-gateway --env-file .env -e SERVER_ADDR=:8080 -p 127.0.0.1:8080:8080 -v "${PWD}:/workspace" -w /workspace/backend golang:1.26.6 go run ./cmd/server serve
 ```
 
 Check readiness:
@@ -415,6 +417,24 @@ Set `POSTGRES_PORT` to another loopback port and update `DATABASE_URL`. The veri
 ### A valid machine reaches the device limit
 
 Check whether its TPM key was cleared/recreated and whether an old device is still active. The score threshold tolerates limited hardware replacement, but a new TPM key is intentionally significant.
+
+## Native security dependencies and configuration
+
+The native client requires OpenSSL 3.5.8 or newer. The MinGW presets use
+`build-deps/openssl-install` inside this checkout; supply a different
+`OPENSSL_ROOT_DIR` when configuring if your matching MinGW build is elsewhere.
+Download sources from https://openssl-library.org/source/ and verify the published
+SHA256 before building. OpenSSL binaries and generated build files are not committed.
+
+Before configuring a preset, set `STARLOADER_PRODUCT_ID` to the actual licensed
+KeyStar product UUID. Local development preserves this value. Production also
+requires `STARLOADER_TLS_SPKI_PINS` containing the two distinct, verified current
+and backup SPKI pins. Missing settings intentionally prevent configuration.
+Never use a made-up backup pin. Application ID, publishable key, signing public
+key ring and API origin must belong to the same deployment.
+
+After changing OpenSSL installations, clear cached `OPENSSL_*` and `_OPENSSL_*`
+discovery values when reconfiguring, then rebuild and redeploy the runtime DLLs.
 
 ## License
 

@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
@@ -19,7 +20,7 @@ import (
 
 const (
 	deviceMatchThreshold  = 70
-	sessionTokenLifetime  = time.Hour
+	sessionTokenLifetime  = 600 * time.Second
 	maxSessionIDBytes     = 128
 	maxHardwareValueBytes = 4096
 )
@@ -75,6 +76,8 @@ type SessionTokenIssuer interface {
 }
 
 type DeviceServiceConfig struct {
+	ApplicationID   string
+	ProductID       string
 	HardwareHMACKey []byte
 	TokenIssuer     SessionTokenIssuer
 	Issuer          string
@@ -84,6 +87,8 @@ type DeviceServiceConfig struct {
 }
 
 type DeviceService struct {
+	applicationID   string
+	productID       string
 	repository      DeviceRepository
 	hardwareHMACKey []byte
 	tokenIssuer     SessionTokenIssuer
@@ -116,6 +121,7 @@ func NewDeviceService(repository DeviceRepository, config DeviceServiceConfig) *
 		now = time.Now
 	}
 	return &DeviceService{
+		applicationID: config.ApplicationID, productID: config.ProductID,
 		repository: repository, hardwareHMACKey: append([]byte(nil), config.HardwareHMACKey...),
 		tokenIssuer: config.TokenIssuer, issuer: config.Issuer, audience: config.Audience,
 		product: config.Product, now: now,
@@ -142,6 +148,16 @@ func (service *DeviceService) Verify(ctx context.Context, input VerifyInput) (Ve
 	signature, err := decodeCanonicalBase64(input.ChallengeSignature, 64)
 	if err != nil {
 		return VerifiedSession{}, ErrInvalidVerifyRequest
+	}
+	// Derive the RFC 7638 binding from the exact key that signs the challenge.
+	jwk := []byte(fmt.Sprintf(`{"crv":"P-256","kty":"EC","x":"%s","y":"%s"}`, base64.RawURLEncoding.EncodeToString(publicKey[8:40]), base64.RawURLEncoding.EncodeToString(publicKey[40:72])))
+	_, thumbprint, err := security.ParseP256JWK(jwk)
+	if err != nil {
+		return VerifiedSession{}, ErrInvalidVerifyRequest
+	}
+	randomID := make([]byte, 16)
+	if _, err := rand.Read(randomID); err != nil {
+		return VerifiedSession{}, err
 	}
 	presented := protectedDeviceInput(service.hardwareHMACKey, publicKey, input.Hardware)
 	if presented.FingerprintHMAC == "" {
@@ -240,7 +256,9 @@ func (service *DeviceService) Verify(ctx context.Context, input VerifyInput) (Ve
 	issuedAt := policyNow.Truncate(time.Second)
 	expiresAt := issuedAt.Add(sessionTokenLifetime)
 	token, err := service.tokenIssuer.Issue(security.SessionClaims{
-		Subject: userID, LicenseID: licenseID, DeviceID: deviceID, Product: service.product,
+		ApplicationID: service.applicationID, ProductID: service.productID,
+		ProofBound: &security.ProofBoundClaims{SessionID: sessionID, TokenID: base64.RawURLEncoding.EncodeToString(randomID), DeviceKeyThumbprint: thumbprint, NotBefore: issuedAt},
+		Subject:    userID, LicenseID: licenseID, DeviceID: deviceID, Product: service.product,
 		Features: []string{}, Issuer: service.issuer, Audience: service.audience,
 		IssuedAt: issuedAt, ExpiresAt: expiresAt,
 	})
