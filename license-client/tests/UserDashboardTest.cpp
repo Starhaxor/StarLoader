@@ -10,6 +10,7 @@
 #include <QDebug>
 #include <QEvent>
 #include <QFrame>
+#include <QFontDatabase>
 #include <QLabel>
 #include <QLineEdit>
 #include <QPointer>
@@ -28,10 +29,11 @@ class UserDashboardTest final : public QObject
     Q_OBJECT
 
 private slots:
-    void presentsSafeProfileInCompactSingleCard();
-    void usesIconFreeChromeAndOnePanelAction();
+    void offersOnlyExecutableSelectionForFixedPayload();
+    void successfulLoadClosesDashboard();
+    void showsOnlyAccountAndLicenseSummary();
+    void usesIconFreeChromeAndAccountAndGameActions();
     void requestsSignOutFromItsOnlyAction();
-    void copyButtonsCopyFullValuesToClipboard();
     void validatedAuthenticationShowsExactlyOneDashboard();
     void signOutClearsCredentialsAndReturnsToLogin();
     void expiryClosesDashboardAndRestoresCredentials();
@@ -168,149 +170,72 @@ int runDashboardCloseHelper(int argc, char **argv)
 
 } // namespace
 
-void UserDashboardTest::presentsSafeProfileInCompactSingleCard()
+void UserDashboardTest::offersOnlyExecutableSelectionForFixedPayload()
+{
+    const QString screenshot = qEnvironmentVariable("STARLOADER_DASHBOARD_SCREENSHOT");
+    if (!screenshot.isEmpty()) QFontDatabase::addApplicationFont(QStringLiteral("C:/Windows/Fonts/segoeui.ttf"));
+    UserDashboard dashboard(literalProfile(), QStringLiteral("TEST-HWID"));
+    auto *button = dashboard.findChild<QPushButton *>(QStringLiteral("selectGameButton"));
+    QVERIFY2(button, "Authenticated dashboard must offer game EXE selection");
+    QVERIFY(!dashboard.findChild<QPushButton *>(QStringLiteral("selectDllButton")));
+    if (!screenshot.isEmpty()) {
+        dashboard.show();
+        QCoreApplication::processEvents();
+        QVERIFY(dashboard.grab().save(screenshot));
+    }
+}
+
+void UserDashboardTest::successfulLoadClosesDashboard()
+{
+    QPointer<UserDashboard> dashboard = new UserDashboard(literalProfile(), QStringLiteral("TEST-HWID"));
+    dashboard->show();
+    auto *panel = dashboard->findChild<QWidget *>(QStringLiteral("launchPanel"));
+    QVERIFY(panel);
+    // Exercise the dashboard's real completion connection without executing a DLL.
+    QVERIFY(QMetaObject::invokeMethod(panel, "completed", Qt::DirectConnection));
+    QTRY_VERIFY(dashboard.isNull());
+}
+
+void UserDashboardTest::showsOnlyAccountAndLicenseSummary()
 {
     UserDashboard dashboard(literalProfile(), QStringLiteral("ABCDEF-123456"));
     dashboard.show();
     QCoreApplication::processEvents();
-
-    const auto cards = dashboard.findChildren<QFrame *>(QRegularExpression(QStringLiteral(".*Card$")));
-    QCOMPARE(cards.size(), 1);
-    QCOMPARE(cards.constFirst()->objectName(), QStringLiteral("dashboardCard"));
-
-    const QStringList requiredLabels = {
-        QStringLiteral("dashboardBrandLabel"),
-        QStringLiteral("activeStatusIndicator"),
-        QStringLiteral("emailValue"),
-        QStringLiteral("accountStatusValue"),
-        QStringLiteral("productValue"),
-        QStringLiteral("licenseStatusValue"),
-        QStringLiteral("licenseExpiryValue"),
-        QStringLiteral("maxDevicesValue"),
-        QStringLiteral("deviceStatusValue"),
-        QStringLiteral("deviceIdValue"),
-        QStringLiteral("hwidValue"),
-        QStringLiteral("sessionExpiryValue")
-    };
-    for (const QString &objectName : requiredLabels) {
-        auto *label = dashboard.findChild<QLabel *>(objectName);
-        QVERIFY2(label, qPrintable(QStringLiteral("Missing dashboard label: %1").arg(objectName)));
-        QVERIFY2(label->isVisible(), qPrintable(QStringLiteral("Hidden dashboard label: %1").arg(objectName)));
-    }
-
-    const auto labelText = [&dashboard](const char *objectName) {
-        return dashboard.findChild<QLabel *>(QString::fromLatin1(objectName))->text();
-    };
-
-    auto *brand = dashboard.findChild<QLabel *>(QStringLiteral("dashboardBrandLabel"));
-    QVERIFY(brand);
-    QCOMPARE(brand->text(), QStringLiteral("StarLoader"));
-    QVERIFY(!brand->font().italic());
-
-    auto *activeIndicator = dashboard.findChild<QLabel *>(QStringLiteral("activeStatusIndicator"));
-    QVERIFY(activeIndicator);
-    QCOMPARE(activeIndicator->text(), QStringLiteral("\u25CF Active License"));
-    QCOMPARE(activeIndicator->property("state").toString(), QStringLiteral("success"));
-
-    int successIndicators = 0;
+    auto *email = dashboard.findChild<QLabel *>(QStringLiteral("emailValue"));
+    auto *license = dashboard.findChild<QLabel *>(QStringLiteral("activeStatusIndicator"));
+    auto *expiry = dashboard.findChild<QLabel *>(QStringLiteral("licenseExpiryValue"));
+    QVERIFY(email && email->isVisible());
+    QVERIFY(license && license->isVisible());
+    QVERIFY(expiry && expiry->isVisible());
+    QCOMPARE(email->text(), QStringLiteral("test2@test.com"));
+    QVERIFY(license->text().contains(QStringLiteral("Active")));
+    QVERIFY(expiry->text().contains(QStringLiteral("12 Sep 2026")));
+    QVERIFY(dashboard.width() <= 600);
+    QVERIFY(dashboard.height() <= 400);
     for (const auto *label : dashboard.findChildren<QLabel *>()) {
-        if (label->property("state").toString() == QStringLiteral("success")) {
-            ++successIndicators;
-        }
+        QVERIFY(!label->text().contains(QStringLiteral("ABCDEF-123456")));
+        QVERIFY(!label->text().contains(QStringLiteral("019ffc3f")));
+        QVERIFY(!label->text().contains(QStringLiteral("18:50")));
     }
-    QCOMPARE(successIndicators, 1);
-
-    const QStringList sectionLabels = {
-        QStringLiteral("accountSectionLabel"),
-        QStringLiteral("deviceSectionLabel"),
-        QStringLiteral("sessionSectionLabel")
-    };
-    for (const QString &objectName : sectionLabels) {
-        auto *section = dashboard.findChild<QLabel *>(objectName);
-        QVERIFY2(section, qPrintable(QStringLiteral("Missing dashboard section: %1").arg(objectName)));
-        QVERIFY(section->isVisible());
-    }
-
-    QVERIFY(dashboard.findChild<QToolButton *>(QStringLiteral("copyDeviceIdButton")));
-    QVERIFY(dashboard.findChild<QToolButton *>(QStringLiteral("copyHwidButton")));
-
-    QCOMPARE(labelText("emailValue"), QStringLiteral("test2@test.com"));
-    QCOMPARE(labelText("accountStatusValue"), QStringLiteral("Active"));
-    QCOMPARE(labelText("productValue"), QStringLiteral("StarLoader"));
-    QCOMPARE(labelText("licenseStatusValue"), QStringLiteral("Active"));
-    QCOMPARE(labelText("licenseExpiryValue"), QStringLiteral("12 Sep 2026"));
-    QCOMPARE(labelText("maxDevicesValue"), QStringLiteral("1"));
-    QCOMPARE(labelText("deviceStatusValue"), QStringLiteral("Active"));
-    QCOMPARE(labelText("deviceIdValue"), QStringLiteral("019ffc3f\u20261486cc4e"));
-    QCOMPARE(labelText("hwidValue"), QStringLiteral("ABCDEF-123456"));
-    QCOMPARE(labelText("sessionExpiryValue"), QStringLiteral("13 Aug 2026, 18:50 UTC"));
-
-    QCOMPARE(dashboard.minimumSize(), dashboard.maximumSize());
-    QVERIFY(dashboard.width() <= 520);
-    QVERIFY(dashboard.height() <= 720);
+    for (const QString &name : {QStringLiteral("deviceIdValue"), QStringLiteral("hwidValue"),
+                                QStringLiteral("maxDevicesValue"), QStringLiteral("sessionExpiryValue")})
+        QVERIFY(!dashboard.findChild<QLabel *>(name));
 }
-
-void UserDashboardTest::usesIconFreeChromeAndOnePanelAction()
+void UserDashboardTest::usesIconFreeChromeAndAccountAndGameActions()
 {
     UserDashboard dashboard(literalProfile(), QStringLiteral("ABCDEF-123456"));
-
     QVERIFY(dashboard.windowFlags().testFlag(Qt::FramelessWindowHint));
     QVERIFY(dashboard.windowIcon().isNull());
-
-    auto *titleBar = dashboard.findChild<QWidget *>(QStringLiteral("windowTitleBar"));
-    QVERIFY(titleBar);
-    QVERIFY(titleBar->findChild<QLabel *>(QStringLiteral("windowTitleText")));
-    QVERIFY(!titleBar->findChild<QLabel *>(QStringLiteral("windowIcon")));
-
-    auto *minimizeButton = titleBar->findChild<QToolButton *>(QStringLiteral("windowMinimizeButton"));
-    auto *closeButton = titleBar->findChild<QToolButton *>(QStringLiteral("windowCloseButton"));
-    QVERIFY(minimizeButton);
-    QVERIFY(closeButton);
-    QVERIFY(minimizeButton->icon().isNull());
-    QVERIFY(closeButton->icon().isNull());
-    QCOMPARE(minimizeButton->accessibleName(), QStringLiteral("Minimize window"));
-    QCOMPARE(closeButton->accessibleName(), QStringLiteral("Close window"));
-
-    auto *card = dashboard.findChild<QFrame *>(QStringLiteral("dashboardCard"));
-    QVERIFY(card);
-
-    // Sign out is the single push-button action of the whole panel; it now
-    // lives outside the info card, below it.
-    const auto panelActions = dashboard.findChildren<QPushButton *>();
-    QCOMPARE(panelActions.size(), 1);
-    QCOMPARE(panelActions.constFirst()->objectName(), QStringLiteral("signOutButton"));
-    QCOMPARE(panelActions.constFirst()->text(), QStringLiteral("Sign out"));
-
-    auto *copyDeviceId = card->findChild<QToolButton *>(QStringLiteral("copyDeviceIdButton"));
-    auto *copyHwid = card->findChild<QToolButton *>(QStringLiteral("copyHwidButton"));
-    QVERIFY(copyDeviceId);
-    QVERIFY(copyHwid);
-    QVERIFY(copyDeviceId->icon().isNull() == false);
-    QVERIFY(copyHwid->icon().isNull() == false);
-
-    const QStringList forbiddenTerms = {
-        QStringLiteral("launch"),
-        QStringLiteral("password"),
-        QStringLiteral("license key"),
-        QStringLiteral("license_key"),
-        QStringLiteral("hmac"),
-        QStringLiteral("tpm public"),
-        QStringLiteral("serial number"),
-        QStringLiteral("session token")
-    };
-    const auto widgets = dashboard.findChildren<QWidget *>();
-    for (const QWidget *widget : widgets) {
-        QString presented = widget->objectName();
-        if (const auto *label = qobject_cast<const QLabel *>(widget)) {
-            presented += QLatin1Char(' ') + label->text();
-        } else if (const auto *button = qobject_cast<const QAbstractButton *>(widget)) {
-            presented += QLatin1Char(' ') + button->text();
-        }
-        presented = presented.toLower();
-        for (const QString &term : forbiddenTerms) {
-            QVERIFY2(!presented.contains(term), qPrintable(QStringLiteral("Unsafe dashboard term '%1' in '%2'").arg(term, presented)));
-        }
-    }
+    QVERIFY(dashboard.findChild<QWidget *>(QStringLiteral("windowTitleBar")));
+    QVERIFY(dashboard.findChild<QToolButton *>(QStringLiteral("windowCloseButton")));
+    QVERIFY(dashboard.findChild<QToolButton *>(QStringLiteral("windowMinimizeButton")));
+    auto *signOut = dashboard.findChild<QPushButton *>(QStringLiteral("signOutButton"));
+    QVERIFY(signOut);
+    QVERIFY(dashboard.findChild<QPushButton *>(QStringLiteral("selectGameButton")));
+    QVERIFY(!dashboard.findChild<QPushButton *>(QStringLiteral("selectDllButton")));
+    const QStringList forbidden = {QStringLiteral("session token"), QStringLiteral("hmac"), QStringLiteral("license key")};
+    for (const auto *label : dashboard.findChildren<QLabel *>())
+        for (const auto &term : forbidden) QVERIFY(!label->text().contains(term, Qt::CaseInsensitive));
 }
 
 void UserDashboardTest::requestsSignOutFromItsOnlyAction()
@@ -323,25 +248,6 @@ void UserDashboardTest::requestsSignOutFromItsOnlyAction()
     QTest::mouseClick(signOutButton, Qt::LeftButton);
 
     QCOMPARE(signOutSpy.count(), 1);
-}
-
-void UserDashboardTest::copyButtonsCopyFullValuesToClipboard()
-{
-    UserDashboard dashboard(literalProfile(), QStringLiteral("ABCDEF-123456"));
-    dashboard.show();
-    QCoreApplication::processEvents();
-
-    auto *copyDeviceId = dashboard.findChild<QToolButton *>(QStringLiteral("copyDeviceIdButton"));
-    auto *copyHwid = dashboard.findChild<QToolButton *>(QStringLiteral("copyHwidButton"));
-    QVERIFY(copyDeviceId);
-    QVERIFY(copyHwid);
-
-    QTest::mouseClick(copyDeviceId, Qt::LeftButton);
-    QCOMPARE(QApplication::clipboard()->text(),
-             QStringLiteral("019ffc3f-0396-7266-b82c-35371486cc4e"));
-
-    QTest::mouseClick(copyHwid, Qt::LeftButton);
-    QCOMPARE(QApplication::clipboard()->text(), QStringLiteral("ABCDEF-123456"));
 }
 
 void UserDashboardTest::validatedAuthenticationShowsExactlyOneDashboard()

@@ -485,6 +485,25 @@ set_property(TEST UserDashboardTest APPEND PROPERTY ENVIRONMENT "QT_QPA_PLATFORM
 set_property(TEST NativeLiveFlowTest APPEND PROPERTY ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 set_tests_properties(NativeLiveFlowTest PROPERTIES TIMEOUT 90)
 
+add_library(StarLoaderLaunch STATIC
+    src/launcher/LaunchController.cpp src/launcher/LaunchController.h
+    src/launcher/LaunchPanel.cpp src/launcher/LaunchPanel.h
+    src/launcher/NativeLaunch.cpp src/launcher/NativeLaunch.h
+    src/launcher/StarInjectorManualMap.cpp src/launcher/StarInjectorManualMap.h)
+target_include_directories(StarLoaderLaunch PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(StarLoaderLaunch PUBLIC Qt6::Widgets Qt6::Concurrent)
+foreach(launcher_target IN ITEMS LicenseClient LoginWindowUiTest UserDashboardTest NativeLiveFlowTest)
+    target_link_libraries(${launcher_target} PRIVATE StarLoaderLaunch)
+endforeach()
+
+qt_add_executable(LaunchControllerTest tests/LaunchControllerTest.cpp)
+set_target_properties(LaunchControllerTest PROPERTIES WIN32_EXECUTABLE FALSE)
+target_link_libraries(LaunchControllerTest PRIVATE StarLoaderLaunch Qt6::Test)
+add_test(NAME LaunchControllerTest COMMAND LaunchControllerTest)
+set_tests_properties(LaunchControllerTest PROPERTIES
+    ENVIRONMENT "PATH=$<TARGET_FILE_DIR:Qt6::Core>\\;${OPENSSL_CRYPTO_RUNTIME_DIR}\\;$ENV{PATH}"
+    TIMEOUT 30)
+
 set_target_properties(LicenseClient PROPERTIES
     AUTOUIC_SEARCH_PATHS "${CMAKE_CURRENT_SOURCE_DIR}/ui"
 )

@@ -115,6 +115,12 @@ The bundled `backend/` is a separate reference-service option. Its configuration
 
 ## Integration
 
+The authenticated dashboard includes a game EXE selector for the local test
+flow. It waits for that exact executable and uses only
+`AssaultCubeMultiHack.dll` beside the client, with no DLL picker. A confirmed
+successful load closes the window; errors keep it open. The DLL is supplied
+separately. See [fixed-module setup and test scope](docs/FIXED_DLL_LAUNCHER.md).
+
 For a Qt application, start with [AuthManager](license-client/src/auth/AuthManager.h), [ApiClient](license-client/src/api/ApiClient.h), and the verification code in [license-client/src/security](license-client/src/security). Connect your UI to authentication state and sign-out/expiry events.
 
 For an ImGui application, place an adapter between your rendering loop and those authentication components. They currently depend on Qt, so retain the necessary Qt runtime/event handling or port that layer deliberately. Preserve TPM signing, token validation, DPoP generation, TLS policy, and session cleanup when changing the frontend.

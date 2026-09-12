@@ -113,15 +113,17 @@ void NativeLiveFlowTest::productionClientCompletesAuthenticatedDashboardAndSignO
         return label == nullptr ? QString() : label->text();
     };
     QCOMPARE(value("emailValue"), email);
-    QCOMPARE(value("accountStatusValue"), QStringLiteral("Active"));
-    QCOMPARE(value("productValue"), QStringLiteral("StarLoader"));
-    QCOMPARE(value("licenseStatusValue"), QStringLiteral("Active"));
-    QCOMPARE(value("maxDevicesValue"), expectedMaxDevices);
-    QCOMPARE(value("deviceStatusValue"), QStringLiteral("Active"));
+    auto *manager = login.findChild<AuthManager *>();
+    QVERIFY(manager);
+    const auto &profile = manager->userProfile();
+    QCOMPARE(profile.accountStatus, QStringLiteral("active"));
+    QCOMPARE(profile.product, QStringLiteral("StarLoader"));
+    QCOMPARE(value("activeStatusIndicator"), QStringLiteral("Active"));
+    QCOMPARE(QString::number(profile.maxDevices), expectedMaxDevices);
+    QCOMPARE(profile.deviceStatus, QStringLiteral("active"));
     QVERIFY(!value("licenseExpiryValue").isEmpty() && value("licenseExpiryValue") != QStringLiteral("\u2014"));
-    QVERIFY(value("deviceIdValue").contains(QStringLiteral("\u2026")));
-    QVERIFY(!value("hwidValue").isEmpty() && value("hwidValue") != QStringLiteral("\u2014"));
-    QVERIFY(!value("sessionExpiryValue").isEmpty() && value("sessionExpiryValue") != QStringLiteral("\u2014"));
+    QVERIFY(!profile.deviceId.isEmpty());
+    QVERIFY(profile.sessionExpiresAt.isValid());
 
     auto *signOutButton = dashboard->findChild<QPushButton *>(QStringLiteral("signOutButton"));
     QVERIFY(signOutButton);
