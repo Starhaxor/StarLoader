@@ -137,4 +137,4 @@ It covers the Go/PostgreSQL tests, Go vet, Qt/CTest, secret scanning, and whites
 
 ## License
 
-No open-source license is declared in this repository. Public source availability does not grant redistribution rights.
+Released under the [MIT License](LICENSE). Anyone may use, modify, distribute, and sell this software, including in commercial projects, provided the copyright and permission notice is retained. Third-party components remain subject to their own licenses.
