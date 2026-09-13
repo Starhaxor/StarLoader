@@ -20,6 +20,16 @@ if(STARLOADER_STATIC AND MINGW)
     message(STATUS "STARLOADER_STATIC=ON -> -static aktif")
 endif()
 
+# Qt Creator configures kits directly instead of through CMakePresets.json.
+# Use the repository's bundled OpenSSL build when the kit supplies no root.
+if(NOT DEFINED OPENSSL_ROOT_DIR OR OPENSSL_ROOT_DIR STREQUAL "")
+    set(STARLOADER_BUNDLED_OPENSSL_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/build-deps/openssl-install")
+    if(EXISTS "${STARLOADER_BUNDLED_OPENSSL_ROOT}/include/openssl/crypto.h")
+        set(OPENSSL_ROOT_DIR "${STARLOADER_BUNDLED_OPENSSL_ROOT}" CACHE PATH
+            "Root directory of the bundled OpenSSL installation" FORCE)
+    endif()
+endif()
+
 # Qt Creator configures a kit with `cmake -S/-B` unless the project is opened
 # through a CMake preset. Keep that default development path coherent and safe:
 # when no API URL was supplied at all, use the numeric loopback KeyStar profile.

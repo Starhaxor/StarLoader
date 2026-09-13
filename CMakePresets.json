@@ -29,10 +29,10 @@
       "cacheVariables": {
         "STARLOADER_LOCAL_DEVELOPMENT": "ON",
         "STARLOADER_API_URL": "http://127.0.0.1:8080",
-        "STARLOADER_APPLICATION_ID": "01a04caa-baa0-72ec-9b69-b4ba548bb3e5",
+        "STARLOADER_APPLICATION_ID": "01a0806a-fe18-7247-9e6f-be0c7b901dc0",
         "STARLOADER_ED25519_KEY_RING": "local-test=e/40nbaaIxXaqAopnL6j/M0w7WeF70Nk8uIij1nr5SQ=",
-        "STARLOADER_PRODUCT_ID": "$env{STARLOADER_PRODUCT_ID}",
-        "STARLOADER_PUBLISHABLE_KEY": "ks_pk_test_3MQ61B26VW_l7Xh56LE9PuaGEAZz1YD0hsJoe_myOKLPWnPtS9dxbQ"
+        "STARLOADER_PRODUCT_ID": "$env{starloader}",
+        "STARLOADER_PUBLISHABLE_KEY": "ks_pk_test_XZ5KZ5Y61C_sqWfNhRqfJxhxb6It_n7le5NDEXn4VLvhxvYAWgs4s4"
         ,"STARLOADER_TLS_PINNED_HOST": "127.0.0.1"
         ,"STARLOADER_TLS_SPKI_PINS": ""
       }
