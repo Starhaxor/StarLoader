@@ -4,10 +4,14 @@
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QHBoxLayout>
+#include <QDir>
 #include <QLabel>
 #include <QLineEdit>
 #include <QProgressBar>
 #include <QPushButton>
+#include <QSettings>
+#include <QStandardPaths>
+#include <QTimer>
 #include <QVBoxLayout>
 
 LaunchPanel::LaunchPanel(QDateTime expiry, QWidget *parent) : QWidget(parent)
@@ -33,7 +37,7 @@ LaunchPanel::LaunchPanel(QDateTime expiry, QWidget *parent) : QWidget(parent)
     layout->setContentsMargins(18,16,18,14); layout->setSpacing(12);
     auto *targetRow = new QHBoxLayout; targetRow->setSpacing(16);
     auto *targetText = new QVBoxLayout; targetText->setSpacing(5);
-    auto *title = new QLabel(QStringLiteral("AssaultCube"), this);
+    auto *title = new QLabel(tr("Select a game"), this);
     title->setObjectName(QStringLiteral("gameNameLabel")); targetText->addWidget(title);
     auto *path = new QLineEdit(this); path->setObjectName(QStringLiteral("gameExecutablePath"));
     path->setReadOnly(true); path->setFrame(false); path->setMinimumWidth(0);
@@ -58,7 +62,9 @@ LaunchPanel::LaunchPanel(QDateTime expiry, QWidget *parent) : QWidget(parent)
     controller_ = new LaunchController(QCoreApplication::applicationDirPath(), expiry, nativeLaunchServices(), this);
     const auto refresh = [this, select, cancel, status, progress] {
         const auto state = controller_->state();
-        const bool busy = state == LaunchController::State::Waiting || state == LaunchController::State::Loading;
+        const bool busy = state == LaunchController::State::Launching
+            || state == LaunchController::State::Waiting
+            || state == LaunchController::State::Loading;
         select->setEnabled(state != LaunchController::State::Loading && state != LaunchController::State::Succeeded);
         cancel->setVisible(state == LaunchController::State::Waiting);
         progress->setRange(0, busy ? 0 : 1);
@@ -67,13 +73,51 @@ LaunchPanel::LaunchPanel(QDateTime expiry, QWidget *parent) : QWidget(parent)
         status->setStyleSheet(state == LaunchController::State::Failed ? QStringLiteral("color:#F18C96;") : QStringLiteral("color:#8296A5;"));
     };
     connect(controller_, &LaunchController::changed, this, refresh);
-    connect(controller_, &LaunchController::completed, this, &LaunchPanel::completed);
+    // After a successful load, wait for the game window to actually open
+    // (up to ~30s), linger 2.5s so the result stays readable, then report
+    // completion. If the game exits first, stay open and show why.
+    connect(controller_, &LaunchController::completed, this, [this, status] {
+        const quint32 pid = controller_->succeededPid();
+        if (pid == 0 || !processAlive(pid)) {
+            emit completed();
+            return;
+        }
+        status->setText(tr("Loaded successfully. Waiting for the game to open..."));
+        auto *watcher = new QTimer(this);
+        watcher->setInterval(500);
+        auto waits = std::make_shared<int>(0);
+        connect(watcher, &QTimer::timeout, this, [this, watcher, status, pid, waits] {
+            ++(*waits);
+            if (!processAlive(pid)) {
+                watcher->stop();
+                watcher->deleteLater();
+                status->setText(tr("The game exited before opening."));
+                status->setStyleSheet(QStringLiteral("color:#F18C96;"));
+                return;
+            }
+            if (processWindowOpen(pid) || *waits >= 60) {
+                watcher->stop();
+                watcher->deleteLater();
+                status->setText(tr("Game is running. Closing StarLoader..."));
+                QTimer::singleShot(2500, this, &LaunchPanel::completed);
+            }
+        });
+        watcher->start();
+    });
     connect(cancel, &QPushButton::clicked, controller_, &LaunchController::cancel);
-    connect(select, &QPushButton::clicked, this, [this, path, select] {
+    connect(select, &QPushButton::clicked, this, [this, title, path, select] {
         controller_->cancel();
-        const QString file = QFileDialog::getOpenFileName(this, tr("Select the game executable"), path->text(), tr("Windows executables (*.exe)"));
+        QSettings settings;
+        const QString lastDir = settings.value(QStringLiteral("launch/lastGameDir")).toString();
+        const QString startDir = !lastDir.isEmpty() && QDir(lastDir).exists()
+            ? lastDir
+            : QStandardPaths::writableLocation(QStandardPaths::HomeLocation);
+        const QString file = QFileDialog::getOpenFileName(this, tr("Select the game executable"), startDir,
+            tr("Windows executables (*.exe);;All files (*)"));
         if (file.isEmpty()) return;
         const QString absolute = QFileInfo(file).canonicalFilePath();
+        settings.setValue(QStringLiteral("launch/lastGameDir"), QFileInfo(absolute).absolutePath());
+        title->setText(QFileInfo(absolute).completeBaseName());
         path->setText(absolute); path->setToolTip(absolute); path->setCursorPosition(0);
         select->setText(tr("Change"));
         controller_->start(absolute);

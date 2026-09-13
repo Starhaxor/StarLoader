@@ -1,6 +1,8 @@
 #include "LaunchController.h"
 #include <QDir>
+#include <QFileInfo>
 #include <QtConcurrentRun>
+#include <windows.h>
 
 LaunchController::LaunchController(QString directory, QDateTime expiry, LaunchServices services, QObject *parent)
     : QObject(parent), payloadPath_(QDir(directory).absoluteFilePath(QStringLiteral("AssaultCubeMultiHack.dll"))),
@@ -14,8 +16,12 @@ LaunchController::LaunchController(QString directory, QDateTime expiry, LaunchSe
         if (QDateTime::currentDateTimeUtc() >= authorizationExpiry_) { cancel(); return; }
         timer_.stop();
         const LaunchResult result = worker_.result();
+        if (result.success) {
+            succeededPid_ = loadingPid_;
+            ownLaunchedProcess_ = false;
+        }
         transition(result.success ? State::Succeeded : State::Failed,
-                   result.success ? tr("Loaded successfully. Closing StarLoader...")
+                   result.success ? tr("Loaded successfully. Waiting for the game to open...")
                                   : result.error + tr(" Restart the game before trying again."));
         if (result.success) emit completed();
     });
@@ -31,9 +37,18 @@ void LaunchController::transition(State state, const QString &message)
     emit changed();
 }
 
+static QString gameName(const QString &executable)
+{
+    const QString base = QFileInfo(executable).completeBaseName().trimmed();
+    return base.isEmpty() ? QFileInfo(executable).fileName() : base;
+}
+
 void LaunchController::start(const QString &executable)
 {
-    if (state_ == State::Loading || worker_.isRunning() || state_ == State::Succeeded) return;
+    if (state_ == State::Loading || state_ == State::Launching || worker_.isRunning() || state_ == State::Succeeded) return;
+    stopOwnedProcess();
+    succeededPid_ = 0;
+    loadingPid_ = 0;
     timer_.stop();
     if (!authorizationExpiry_.isValid() || QDateTime::currentDateTimeUtc() >= authorizationExpiry_) {
         transition(State::Failed, tr("Your session has expired. Sign in again."));
@@ -43,17 +58,53 @@ void LaunchController::start(const QString &executable)
     if (!error.isEmpty()) { transition(State::Failed, error); return; }
     executable_ = executable;
     cancelled_ = std::make_shared<std::atomic_bool>(false);
-    transition(State::Waiting, tr("Waiting for the selected game to open..."));
+    const TargetProcess running = services_.find ? services_.find(executable_) : TargetProcess{};
+    if (!running.error.isEmpty()) { transition(State::Failed, running.error); return; }
+    if (running.pid != 0) {
+        transition(State::Waiting, tr("%1 is already running. Watching for the right moment...").arg(gameName(executable_)));
+        timer_.start();
+        poll();
+        return;
+    }
+    if (!services_.launch) {
+        transition(State::Waiting, tr("Waiting for %1 to open...").arg(gameName(executable_)));
+        timer_.start();
+        poll();
+        return;
+    }
+    transition(State::Launching, tr("Starting %1...").arg(gameName(executable_)));
+    const TargetProcess launched = services_.launch(executable_);
+    if (!launched.error.isEmpty() || launched.pid == 0) {
+        transition(State::Failed, launched.error.isEmpty()
+                   ? tr("Could not start %1.").arg(gameName(executable_)) : launched.error);
+        return;
+    }
+    launchedPid_ = launched.pid;
+    ownLaunchedProcess_ = true;
+    transition(State::Waiting, tr("%1 is starting. Waiting for it to open...").arg(gameName(executable_)));
     timer_.start();
     poll();
+}
+
+void LaunchController::stopOwnedProcess()
+{
+    if (!ownLaunchedProcess_ || launchedPid_ == 0) return;
+    ownLaunchedProcess_ = false;
+    HANDLE process = OpenProcess(PROCESS_TERMINATE, FALSE, launchedPid_);
+    launchedPid_ = 0;
+    if (!process) return;
+    TerminateProcess(process, 0);
+    CloseHandle(process);
 }
 
 void LaunchController::cancel()
 {
     timer_.stop();
     cancelled_->store(true);
-    if (state_ == State::Waiting || state_ == State::Loading)
+    if (state_ == State::Launching || state_ == State::Waiting || state_ == State::Loading) {
+        stopOwnedProcess();
         transition(State::Cancelled, tr("Stopped. An operation already started cannot be undone."));
+    }
 }
 
 void LaunchController::poll()
@@ -69,7 +120,8 @@ void LaunchController::poll()
         return;
     }
     attemptedProcesses_.insert(process.pid);
-    transition(State::Loading, tr("Game found. Loading AssaultCubeMultiHack.dll..."));
+    loadingPid_ = process.pid;
+    transition(State::Loading, tr("Game found. Loading %1...").arg(QFileInfo(payloadPath_).fileName()));
     const auto load = services_.load;
     const auto cancelled = cancelled_;
     const auto expiry = authorizationExpiry_;

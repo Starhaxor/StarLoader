@@ -5,6 +5,7 @@
 #include <QFileInfo>
 #include <QtEndian>
 #include <tlhelp32.h>
+#include <vector>
 
 namespace {
 struct Handle {
@@ -76,13 +77,86 @@ LaunchResult loadTarget(quint32 pid, const QString &executable, const QString &p
 }
 }
 
+namespace {
+struct WindowSearch {
+    DWORD pid = 0;
+    bool found = false;
+};
+BOOL CALLBACK enumProcessWindows(HWND window, LPARAM param)
+{
+    auto *search = reinterpret_cast<WindowSearch *>(param);
+    DWORD windowPid = 0;
+    GetWindowThreadProcessId(window, &windowPid);
+    if (windowPid != search->pid) return TRUE;
+    if (GetWindow(window, GW_OWNER) != nullptr) return TRUE;
+    if (!IsWindowVisible(window)) return TRUE;
+    search->found = true;
+    return FALSE;
+}
+} // namespace
+
+bool processAlive(quint32 pid)
+{
+    if (pid == 0) return false;
+    Handle process{OpenProcess(SYNCHRONIZE, FALSE, pid)};
+    if (!process.value) return false;
+    return WaitForSingleObject(process.value, 0) == WAIT_TIMEOUT;
+}
+
+bool processWindowOpen(quint32 pid)
+{
+    if (!processAlive(pid)) return false;
+    WindowSearch search{};
+    search.pid = pid;
+    EnumWindows(enumProcessWindows, reinterpret_cast<LPARAM>(&search));
+    return search.found;
+}
+
+TargetProcess launchGame(const QString &executable)
+{
+    const QString absolute = canonical(executable);
+    if (absolute.isEmpty())
+        return {0, QStringLiteral("The selected executable no longer exists.")};
+    // Games like AssaultCube must start from the game root (parent of the
+    // bin folder), not from the executable's own folder, or they cannot
+    // find their data files.
+    QDir directory(QFileInfo(absolute).absolutePath());
+    if (directory.dirName().startsWith(QStringLiteral("bin"), Qt::CaseInsensitive))
+        directory.cdUp();
+    const QString workDirPath = directory.absolutePath();
+    // AssaultCube keeps the player profile (settings, window mode, binds)
+    // outside the install dir and only uses it when started with the same
+    // arguments as its official launcher. Without them the game boots a
+    // fresh default profile (fullscreen, default settings), which looks
+    // like "my config was wiped". Keep in sync with assaultcube.bat.
+    // TODO: move to per-game launch profiles once more games are supported.
+    QString commandLine = QStringLiteral("\"%1\"").arg(absolute);
+    if (QFileInfo(absolute).fileName().compare(QStringLiteral("ac_client.exe"), Qt::CaseInsensitive) == 0)
+        commandLine += QStringLiteral(" \"--home=?MYDOCUMENTS?\\My Games\\AssaultCube\\v1.3\" --init");
+    std::vector<wchar_t> command(commandLine.size() + 1, 0);
+    commandLine.toWCharArray(command.data());
+    std::vector<wchar_t> workDir(workDirPath.size() + 1, 0);
+    workDirPath.toWCharArray(workDir.data());
+    STARTUPINFOW startup{};
+    startup.cb = sizeof(startup);
+    PROCESS_INFORMATION info{};
+    if (!CreateProcessW(nullptr, command.data(), nullptr, nullptr, FALSE, 0,
+                        nullptr, workDir.data(), &startup, &info)) {
+        const DWORD err = GetLastError();
+        return {0, QStringLiteral("Could not start the game (Windows error %1).").arg(err)};
+    }
+    CloseHandle(info.hThread);
+    CloseHandle(info.hProcess);
+    return {info.dwProcessId, {}};
+}
+
 QString validateLaunchFiles(const QString &executable, const QString &payload) {
     if (QFileInfo(executable).suffix().compare(QStringLiteral("exe"), Qt::CaseInsensitive) != 0)
         return QStringLiteral("Select a Windows game EXE.");
-    if (!QFileInfo(payload).isFile()) return QStringLiteral("AssaultCubeMultiHack.dll is missing. Place it beside StarLoader.");
+    if (!QFileInfo(payload).isFile()) return QStringLiteral("Payload %1 is missing. Place it beside StarLoader.").arg(QFileInfo(payload).fileName());
     const auto exeMachine = machine(executable, false), dllMachine = machine(payload, true);
     if (!exeMachine || !dllMachine) return QStringLiteral("The game or DLL is not a supported Windows executable.");
     if (exeMachine != dllMachine) return QStringLiteral("The game and DLL must both be x86 or both be x64.");
     return {};
 }
-LaunchServices nativeLaunchServices() { return {validateLaunchFiles, findTarget, loadTarget}; }
+LaunchServices nativeLaunchServices() { return {validateLaunchFiles, findTarget, loadTarget, launchGame}; }

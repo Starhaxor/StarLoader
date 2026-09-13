@@ -134,6 +134,11 @@ static QString findSystemDllPath(const QString &dllName, bool targetIs32)
 
 static DWORD getExportRVAFromFile(const QString &filePath, const char* funcName, WORD ordinal, bool isOrdinal);
 
+// N-arg 32-bit call inside a WOW64 target via borrowed-thread hijack (defined below).
+static bool call32ViaThreadHijack(HANDLE hProcess, DWORD pid, DWORD func32,
+                                  const DWORD *args, int nArgs, DWORD timeoutMs,
+                                  DWORD *outResult, const char *tag);
+
 static ULONGLONG getRemoteLoadLibraryAddress(DWORD pid, bool targetIs32)
 {
     ULONGLONG k32Base = getRemoteModuleBase(pid, QStringLiteral("kernel32.dll"), targetIs32);
@@ -375,6 +380,8 @@ static FARPROC getRemoteProcAddressFallback(HANDLE hTargetProc, DWORD pid, const
                 return nullptr;
             }
             ULONGLONG loadLibAddr = k32Base + loadLibRVA;
+            qDebug() << "[ManualMap] LoadLibraryW remote addr=0x" << Qt::hex << loadLibAddr
+                     << " (k32=0x" << k32Base << " rva=0x" << loadLibRVA << ")" << Qt::dec;
             QString depPath = findSystemDllPath(dllStr, targetIs32);
             // Verify file exists
             if (GetFileAttributesW(reinterpret_cast<LPCWSTR>(depPath.utf16())) == INVALID_FILE_ATTRIBUTES) {
@@ -399,29 +406,48 @@ static FARPROC getRemoteProcAddressFallback(HANDLE hTargetProc, DWORD pid, const
                 VirtualFreeEx(hTargetProc, rem, 0, MEM_RELEASE);
                 return nullptr;
             }
-            HANDLE hTh = CreateRemoteThread(hTargetProc, nullptr, 0, reinterpret_cast<LPTHREAD_START_ROUTINE>(static_cast<ULONG_PTR>(loadLibAddr)), rem, 0, nullptr);
-            if (!hTh) {
-                DWORD err = GetLastError();
-                qDebug() << "[ManualMap] CreateRemoteThread for remote LoadLibrary failed err=" << err;
-                VirtualFreeEx(hTargetProc, rem, 0, MEM_RELEASE);
-                return nullptr;
-            }
-            if (WaitForSingleObject(hTh, 4000) != WAIT_OBJECT_0) {
-                CloseHandle(hTh);
-                SetLastError(ERROR_TIMEOUT);
-                // A running remote call may still reference rem; leave it allocated.
-                return nullptr;
-            }
             DWORD ec = 0;
-            if (!GetExitCodeThread(hTh, &ec)) {
+            // A 64-bit injector's CreateRemoteThread into a WOW64 target starts
+            // a 64-bit thread, which cannot run the 32-bit LoadLibraryW entry
+            // correctly. Borrow a native 32-bit thread instead (1-arg call).
+            if (targetIs32 && sizeof(void*) == 8) {
+                const DWORD strArg = static_cast<DWORD>(reinterpret_cast<ULONG_PTR>(rem) & 0xFFFFFFFFULL);
+                const DWORD libFunc = static_cast<DWORD>(loadLibAddr & 0xFFFFFFFFULL);
+                DWORD libResult = 0;
+                if (!call32ViaThreadHijack(hTargetProc, pid, libFunc, &strArg, 1,
+                                           4000, &libResult, "LoadLibrary") ||
+                    libResult == 0) {
+                    qDebug() << "[ManualMap] Remote hijack LoadLibrary failed for" << dllName;
+                    VirtualFreeEx(hTargetProc, rem, 0, MEM_RELEASE);
+                    SetLastError(ERROR_MOD_NOT_FOUND);
+                    return nullptr;
+                }
+                ec = libResult;
+                VirtualFreeEx(hTargetProc, rem, 0, MEM_RELEASE);
+            } else {
+                HANDLE hTh = CreateRemoteThread(hTargetProc, nullptr, 0, reinterpret_cast<LPTHREAD_START_ROUTINE>(static_cast<ULONG_PTR>(loadLibAddr)), rem, 0, nullptr);
+                if (!hTh) {
+                    DWORD err = GetLastError();
+                    qDebug() << "[ManualMap] CreateRemoteThread for remote LoadLibrary failed err=" << err;
+                    VirtualFreeEx(hTargetProc, rem, 0, MEM_RELEASE);
+                    return nullptr;
+                }
+                if (WaitForSingleObject(hTh, 4000) != WAIT_OBJECT_0) {
+                    CloseHandle(hTh);
+                    SetLastError(ERROR_TIMEOUT);
+                    // A running remote call may still reference rem; leave it allocated.
+                    return nullptr;
+                }
+                if (!GetExitCodeThread(hTh, &ec)) {
+                    CloseHandle(hTh);
+                    return nullptr;
+                }
                 CloseHandle(hTh);
-                return nullptr;
-            }
-            CloseHandle(hTh);
-            VirtualFreeEx(hTargetProc, rem, 0, MEM_RELEASE);
-            if (ec == 0) {
-                qDebug() << "[ManualMap] Remote LoadLibrary failed for" << dllName << " err=" << GetLastError();
-                return nullptr;
+                VirtualFreeEx(hTargetProc, rem, 0, MEM_RELEASE);
+                if (ec == 0) {
+                    qDebug() << "[ManualMap] Remote LoadLibrary failed for" << dllName << " err=" << GetLastError();
+                    return nullptr;
+                }
             }
             qDebug() << "[ManualMap] Remote LoadLibrary succeeded for" << dllName << " hMod=0x" << Qt::hex << ec << Qt::dec;
             // Small delay and retry
@@ -496,6 +522,235 @@ static FARPROC getRemoteProcAddressFallback(HANDLE hTargetProc, DWORD pid, const
 
 
 
+// Executes one 32-bit __stdcall call func(args[0..nArgs)) inside a WOW64
+// target by briefly borrowing one of its own 32-bit threads, without any
+// code-segment switching:
+//
+//   1. Suspend a target thread and save its WOW64 context.
+//   2. Point its Eip at a plain 32-bit shell (pushad, pushfd, push args in
+//      reverse, mov eax, func, call eax, store result, popfd, popad,
+//      restore Esp, ret to the saved Eip) with a fresh 32-bit stack.
+//   3. Resume: the thread runs the call, writes the result flag, then flows
+//      back into its original code as if nothing happened.
+//   4. Poll the flag; on timeout restore the saved context.
+//
+// This is used when a 64-bit injector drives a 32-bit target, where a
+// CreateRemoteThread-started (64-bit) thread would misdeliver 32-bit
+// stdcall arguments (pushes land in 8-byte slots, so fdwReason arrives as
+// garbage and DllMain silently no-ops while still exiting TRUE).
+static bool call32ViaThreadHijack(HANDLE hProcess, DWORD pid, DWORD func32,
+                                  const DWORD *args, int nArgs, DWORD timeoutMs,
+                                  DWORD *outResult, const char *tag)
+{
+    // 1. Pick a target thread.
+    HANDLE hSnap = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+    if (hSnap == INVALID_HANDLE_VALUE) return false;
+    DWORD targetTid = 0;
+    THREADENTRY32 te{};
+    te.dwSize = sizeof(te);
+    if (Thread32First(hSnap, &te)) do {
+        if (te.th32OwnerProcessID == pid && te.th32ThreadID != GetCurrentThreadId()) {
+            targetTid = te.th32ThreadID;
+            break;
+        }
+    } while (Thread32Next(hSnap, &te));
+    CloseHandle(hSnap);
+    if (!targetTid) {
+        qDebug() << "[ManualMap] Hijack" << tag << ": no thread found in pid=" << pid;
+        return false;
+    }
+    HANDLE hThread = OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT |
+                                THREAD_SET_CONTEXT, FALSE, targetTid);
+    if (!hThread) {
+        qDebug() << "[ManualMap] Hijack" << tag << ": OpenThread failed err=" << GetLastError();
+        return false;
+    }
+
+    // 2. Suspend and save the 32-bit context.
+    if (SuspendThread(hThread) == (DWORD)-1) {
+        qDebug() << "[ManualMap] Hijack" << tag << ": SuspendThread failed err=" << GetLastError();
+        CloseHandle(hThread);
+        return false;
+    }
+    WOW64_CONTEXT saved{};
+    saved.ContextFlags = WOW64_CONTEXT_FULL;
+    if (!Wow64GetThreadContext(hThread, &saved)) {
+        qDebug() << "[ManualMap] Hijack" << tag << ": Wow64GetThreadContext failed err=" << GetLastError();
+        ResumeThread(hThread);
+        CloseHandle(hThread);
+        return false;
+    }
+
+    // 3. Allocate stack + shell (single RWX block keeps addresses < 4GB).
+    // A full 1MB stack: deep callee chains (e.g. LoadLibrary with driver
+    // init) must never run off the borrowed stack.
+    // NOTE: the flag area must start AFTER the whole shell (~160 bytes).
+    // It previously sat at +128 inside the shell: the first poll then read
+    // shell code bytes as an instant bogus "result" while the call had not
+    // run yet, and the block was freed from under the running thread.
+    static const SIZE_T kStackSize = 1024 * 1024;
+    static const SIZE_T kShellOff = kStackSize;
+    static const SIZE_T kFlagOff = kStackSize + 512;
+    static const SIZE_T kTotal = kStackSize + 1024;
+    BYTE *remote = reinterpret_cast<BYTE*>(VirtualAllocEx(
+        hProcess, nullptr, kTotal, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE));
+    if (!remote) {
+        WOW64_CONTEXT restore = saved;
+        Wow64SetThreadContext(hThread, &restore);
+        ResumeThread(hThread);
+        CloseHandle(hThread);
+        return false;
+    }
+    const DWORD remote32 = static_cast<DWORD>(reinterpret_cast<ULONG_PTR>(remote));
+    const DWORD shell32 = remote32 + static_cast<DWORD>(kShellOff);
+    const DWORD flag32 = remote32 + static_cast<DWORD>(kFlagOff);
+    const DWORD stackTop = remote32 + static_cast<DWORD>(kStackSize - 16);
+    // Shell: pushad; pushfd; capture TEB + point it at the borrowed stack;
+    //        push args[n-1..0]; mov eax, func; call eax; mov [flag], eax;
+    //        restore TEB; popfd; popad; mov esp, savedEsp; push savedEip;
+    //        ret. Built byte-exact (no patch math to get wrong).
+    // The TEB switch matters: on syscall return the kernel validates ESP
+    // against the TEB stack limits (FAST_FAIL_INCORRECT_STACK otherwise),
+    // which kills borrowed-thread calls that enter the kernel (LoadLibrary,
+    // GDI, ...). Flag layout: +0 result, +4 origBase, +8 origLimit,
+    // +12 origDealloc, +16 tebAddr.
+    if (nArgs < 0 || nArgs > 8) return false;
+    const DWORD tebFlag = flag32;
+    const DWORD myBase = remote32 + static_cast<DWORD>(kTotal);
+    const DWORD myLimit = remote32;
+    std::vector<BYTE> shell;
+    shell.reserve(96 + size_t(nArgs) * 5);
+    auto pushU32 = [&shell](DWORD v) {
+        shell.push_back(0x68);
+        for (int i = 0; i < 4; ++i) shell.push_back(BYTE((v >> (8 * i)) & 0xFF));
+    };
+    auto movEaxU32 = [&shell](DWORD v) {
+        shell.push_back(0xB8);
+        for (int i = 0; i < 4; ++i) shell.push_back(BYTE((v >> (8 * i)) & 0xFF));
+    };
+    auto movEaxFs = [&shell](DWORD off) {
+        shell.push_back(0x64); shell.push_back(0xA1);
+        for (int i = 0; i < 4; ++i) shell.push_back(BYTE((off >> (8 * i)) & 0xFF));
+    };
+    auto movFsEax = [&shell](DWORD off) {
+        shell.push_back(0x64); shell.push_back(0xA3);
+        for (int i = 0; i < 4; ++i) shell.push_back(BYTE((off >> (8 * i)) & 0xFF));
+    };
+    auto movMemEax = [&shell](DWORD addr) {
+        shell.push_back(0xA3);
+        for (int i = 0; i < 4; ++i) shell.push_back(BYTE((addr >> (8 * i)) & 0xFF));
+    };
+    shell.push_back(0x60);                               // pushad
+    shell.push_back(0x9C);                               // pushfd
+    movEaxFs(0x18);                                      // eax = TEB (FS:[Self])
+    movMemEax(tebFlag + 16);                             // save TEB address
+    movEaxFs(0x04);                                      // eax = StackBase
+    movMemEax(tebFlag + 4);                              // save orig base
+    movEaxFs(0x08);                                      // eax = StackLimit
+    movMemEax(tebFlag + 8);                              // save orig limit
+    movEaxFs(0x0E0C);                                    // eax = DeallocationStack
+    movMemEax(tebFlag + 12);                             // save orig dealloc
+    movEaxU32(myBase);
+    movFsEax(0x04);                                      // StackBase = borrowed top
+    movEaxU32(myLimit);
+    movFsEax(0x08);                                      // StackLimit = borrowed bottom
+    movEaxU32(remote32);
+    movFsEax(0x0E0C);                                    // DeallocationStack = block
+    for (int i = nArgs - 1; i >= 0; --i) pushU32(args ? args[i] : 0);
+    movEaxU32(func32);
+    shell.push_back(0xFF); shell.push_back(0xD0);        // call eax
+    movMemEax(flag32);                                   // [flag] = result
+    movEaxU32(tebFlag + 4); shell.push_back(0x8B); shell.push_back(0x00);
+    movFsEax(0x04);                                      // restore StackBase
+    movEaxU32(tebFlag + 8); shell.push_back(0x8B); shell.push_back(0x00);
+    movFsEax(0x08);                                      // restore StackLimit
+    movEaxU32(tebFlag + 12); shell.push_back(0x8B); shell.push_back(0x00);
+    movFsEax(0x0E0C);                                    // restore DeallocationStack
+    shell.push_back(0x9D);                               // popfd
+    shell.push_back(0x61);                               // popad
+    shell.push_back(0xBC);                               // mov esp, savedEsp
+    DWORD espV = saved.Esp;
+    for (int i = 0; i < 4; ++i) shell.push_back(BYTE((espV >> (8 * i)) & 0xFF));
+    shell.push_back(0x68);                               // push savedEip
+    DWORD eipV = saved.Eip;
+    for (int i = 0; i < 4; ++i) shell.push_back(BYTE((eipV >> (8 * i)) & 0xFF));
+    shell.push_back(0xC3);                               // ret -> original code
+    const DWORD pending = 0xFFFFFFFF;
+    if (!WriteProcessMemory(hProcess, remote + kFlagOff, &pending, sizeof(pending), nullptr) ||
+        !WriteProcessMemory(hProcess, remote + kShellOff, shell.data(), shell.size(), nullptr)) {
+        WOW64_CONTEXT restore = saved;
+        Wow64SetThreadContext(hThread, &restore);
+        ResumeThread(hThread);
+        VirtualFreeEx(hProcess, remote, 0, MEM_RELEASE);
+        CloseHandle(hThread);
+        return false;
+    }
+    qDebug() << "[ManualMap] Hijack" << tag << "tid=" << targetTid
+             << "shell=0x" << Qt::hex << shell32 << "flag=0x" << flag32 << Qt::dec;
+
+    // 4. Divert, resume, poll.
+    WOW64_CONTEXT divert = saved;
+    divert.Eip = shell32;
+    divert.Esp = stackTop;
+    if (!Wow64SetThreadContext(hThread, &divert)) {
+        ResumeThread(hThread);
+        VirtualFreeEx(hProcess, remote, 0, MEM_RELEASE);
+        CloseHandle(hThread);
+        return false;
+    }
+    ResumeThread(hThread);
+    DWORD result = pending;
+    const DWORD waitedStep = 50;
+    DWORD waited = 0;
+    while (waited < timeoutMs) {
+        Sleep(waitedStep);
+        waited += waitedStep;
+        DWORD current = pending;
+        SIZE_T done = 0;
+        if (ReadProcessMemory(hProcess, remote + kFlagOff, &current, sizeof(current), &done) &&
+            done == sizeof(current) && current != pending) {
+            result = current;
+            break;
+        }
+    }
+    if (outResult) *outResult = result;
+    qDebug() << "[ManualMap] Hijack" << tag << "result=0x" << Qt::hex << result << Qt::dec;
+    VirtualFreeEx(hProcess, remote, 0, MEM_RELEASE);
+    CloseHandle(hThread);
+    if (result == pending) {
+        // Timed out: try to put the borrowed thread back where it was,
+        // including its TEB stack limits (the shell may have switched them
+        // before hanging inside the call).
+        HANDLE hReopen = OpenThread(THREAD_SUSPEND_RESUME | THREAD_SET_CONTEXT, FALSE, targetTid);
+        if (hReopen) {
+            SuspendThread(hReopen);
+            DWORD tebAddr = 0;
+            SIZE_T tebDone = 0;
+            DWORD captured[3] = { 0, 0, 0 };
+            SIZE_T capDone = 0;
+            if (ReadProcessMemory(hProcess, remote + kFlagOff + 16, &tebAddr,
+                                  sizeof(tebAddr), &tebDone) &&
+                tebDone == sizeof(tebAddr) && tebAddr != 0 &&
+                ReadProcessMemory(hProcess, remote + kFlagOff + 4, captured,
+                                  sizeof(captured), &capDone) &&
+                capDone == sizeof(captured) && captured[0] != 0) {
+                const DWORD tebOff[3] = { 4, 8, 0x0E0C };
+                for (int i = 0; i < 3; ++i) {
+                    WriteProcessMemory(hProcess,
+                        reinterpret_cast<BYTE*>(static_cast<ULONG_PTR>(tebAddr)) + tebOff[i],
+                        &captured[i], sizeof(DWORD), nullptr);
+                }
+            }
+            WOW64_CONTEXT restore = saved;
+            Wow64SetThreadContext(hReopen, &restore);
+            ResumeThread(hReopen);
+            CloseHandle(hReopen);
+        }
+        return false;
+    }
+    return true;
+}
+
 bool InjectorEngine::injectManualMap(DWORD pid, const QString& dllPath, DWORD timeoutMs)
 {
     HANDLE hProcess = OpenProcess(PROCESS_CREATE_THREAD | PROCESS_QUERY_INFORMATION | PROCESS_VM_OPERATION | PROCESS_VM_WRITE | PROCESS_VM_READ | SYNCHRONIZE, FALSE, pid);
@@ -504,6 +759,16 @@ bool InjectorEngine::injectManualMap(DWORD pid, const QString& dllPath, DWORD ti
         qDebug() << "[ManualMap] OpenProcess failed pid=" << pid << " err=" << err;
         return false;
     }
+
+    // A 64-bit injector's CreateRemoteThread into a WOW64 target starts a
+    // 64-bit thread. Raw 32-bit entry shellcode there silently misdelivers
+    // arguments (fdwReason != DLL_PROCESS_ATTACH) while still exiting TRUE.
+    // Detect that case once and route 32-bit calls through thread hijack.
+    BOOL targetWow64 = FALSE;
+    IsWow64Process(hProcess, &targetWow64);
+    const bool needWow64Gate = (sizeof(void*) == 8) && (targetWow64 == TRUE);
+    if (needWow64Gate)
+        qDebug() << "[ManualMap] WOW64 cross-arch target: 32-bit calls will use Heaven's Gate";
 
     // 1. Dosyayi ac ve map et (dogru yontem: CreateFile + CreateFileMapping)
     HANDLE hFile = CreateFileW(reinterpret_cast<LPCWSTR>(dllPath.utf16()), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
@@ -1165,6 +1430,24 @@ bool InjectorEngine::injectManualMap(DWORD pid, const QString& dllPath, DWORD ti
                             // cbVA is remote VA, convert to remote address
                             LPVOID pCallback = reinterpret_cast<LPVOID>(static_cast<ULONG_PTR>(cbVA));
                             qDebug() << "[ManualMap] Calling TLS callback x86" << ti << " VA=0x" << Qt::hex << cbVA << Qt::dec;
+                            // TLS callback: same as DllMain (HMODULE,1,0). From
+                            // a 64-bit injector into a WOW64 target, borrow a
+                            // native 32-bit thread instead of CreateRemoteThread.
+                            if (needWow64Gate && dllIs32) {
+                                DWORD tlsResult = 0xFFFFFFFF;
+                                const DWORD tlsArgs[3] = {
+                                    static_cast<DWORD>(remoteBaseAddr & 0xFFFFFFFF), 1, 0 };
+                                if (!call32ViaThreadHijack(
+                                        hProcess, pid,
+                                        static_cast<DWORD>(cbVA & 0xFFFFFFFF),
+                                        tlsArgs, 3,
+                                        3000, &tlsResult, "TLS")) {
+                                    qDebug() << "[ManualMap] TLS hijack failed, continuing";
+                                    break;
+                                }
+                                qDebug() << "[ManualMap] TLS hijack result=0x" << Qt::hex << tlsResult << Qt::dec;
+                                continue;
+                            }
                             // Build shellcode for TLS callback: same as DllMain (HMODULE,1,0)
                             std::vector<BYTE> tlsShell = {
                                 0x68, 0x00,0x00,0x00,0x00, // push 0
@@ -1285,8 +1568,35 @@ bool InjectorEngine::injectManualMap(DWORD pid, const QString& dllPath, DWORD ti
             *reinterpret_cast<ULONGLONG*>(&shell[2]) = remoteBaseAddr;
             *reinterpret_cast<ULONGLONG*>(&shell[32]) = reinterpret_cast<ULONGLONG>(pEntryPoint);
             shellSize = shell.size();
+        } else if (needWow64Gate) {
+            // 64-bit injector into a WOW64 target (dllIs32 implied by the
+            // architecture check above): borrow a native 32-bit thread so the
+            // stdcall arguments arrive intact, then return with success.
+            DWORD gateResult = 0xFFFFFFFF;
+            const DWORD entry32 =
+                static_cast<DWORD>(reinterpret_cast<ULONG_PTR>(pEntryPoint) & 0xFFFFFFFF);
+            const DWORD base32 = static_cast<DWORD>(remoteBaseAddr & 0xFFFFFFFF);
+            const DWORD dllArgs[3] = { base32, 1, 0 };
+            if (!call32ViaThreadHijack(hProcess, pid, entry32, dllArgs, 3, timeoutMs,
+                                       &gateResult, "DllMain")) {
+                qDebug() << "[ManualMap] DllMain hijack failed";
+                cleanupFile(); CloseHandle(hProcess);
+                SetLastError(ERROR_TIMEOUT);
+                return false;
+            }
+            qDebug() << "[ManualMap] DllMain hijack result=0x" << Qt::hex << gateResult << Qt::dec;
+            if (gateResult != TRUE) {
+                cleanupFile(); CloseHandle(hProcess);
+                SetLastError(ERROR_DLL_INIT_FAILED);
+                return false;
+            }
+            cleanupFile();
+            CloseHandle(hProcess);
+            return true;
         } else {
-            // x86: push 0, push 1, push dllBase, mov eax, entry, call eax, ret
+            // x86: push 0, push 1, push dllBase, mov eax, entry, call eax, ret.
+            // Same-architecture injector: the remote thread is 32-bit, so the
+            // arguments land correctly.
             shell = {
                 0x68, 0x00,0x00,0x00,0x00, // push 0
                 0x68, 0x01,0x00,0x00,0x00, // push 1
@@ -1321,7 +1631,9 @@ bool InjectorEngine::injectManualMap(DWORD pid, const QString& dllPath, DWORD ti
         }
         const DWORD waitResult = WaitForSingleObject(hThread, timeoutMs);
         DWORD exitCode = 0;
-        const bool initialized = GetExitCodeThread(hThread, &exitCode)
+        const bool gotExit = GetExitCodeThread(hThread, &exitCode) != FALSE;
+        qDebug() << "[ManualMap] DllMain thread wait=" << waitResult << " exit=" << Qt::hex << exitCode << Qt::dec << (needWow64Gate && dllIs32 ? " (heavens-gate)" : "");
+        const bool initialized = gotExit
             && nativeInitializationConfirmed(waitResult, exitCode,
                                               WaitForSingleObject(hProcess, 0) == WAIT_TIMEOUT);
         CloseHandle(hThread);

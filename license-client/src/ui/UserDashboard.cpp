@@ -35,7 +35,7 @@ UserDashboard::UserDashboard(const UserProfileResponse &profile, const QString &
     ui->contentLayout->insertWidget(1, launchPanel_);
     connect(ui->signOutButton, &QPushButton::clicked, this, &UserDashboard::signOutRequested);
     connect(launchPanel_, &LaunchPanel::completed, this, [this] {
-        QTimer::singleShot(900, this, &QWidget::close);
+        QTimer::singleShot(1500, this, &QWidget::close);
     });
     setAttribute(Qt::WA_DeleteOnClose);
     setFixedSize(560, 330);

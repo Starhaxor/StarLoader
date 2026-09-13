@@ -5,6 +5,7 @@
 int main(int argc, char **argv)
 {
     QApplication application(argc, argv);
+    application.setOrganizationName(QStringLiteral("StarLoader"));
     application.setApplicationName(QStringLiteral("StarLoader"));
 
     LoginWindow window;

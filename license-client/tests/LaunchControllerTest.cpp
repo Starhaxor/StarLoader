@@ -22,6 +22,8 @@ private slots:
     void nativeProcessLookupMatchesFullPath();
     void validatesMissingMalformedAndMismatchedFiles();
     void abnormalNativeCompletionNeverCompletes();
+    void autoLaunchesGameWhenNotRunning();
+    void skipsLaunchWhenGameAlreadyRunning();
 };
 
 namespace {
@@ -142,6 +144,49 @@ void LaunchControllerTest::validatesMissingMalformedAndMismatchedFiles() {
     QVERIFY(!validateLaunchFiles(exe, dll).isEmpty());
     writePe(dll, 0x14c, true); QVERIFY(validateLaunchFiles(exe, dll).isEmpty());
     writePe(dll, 0x14c, false); QVERIFY(!validateLaunchFiles(exe, dll).isEmpty());
+}
+void LaunchControllerTest::autoLaunchesGameWhenNotRunning() {
+    std::atomic_int loads = 0, launches = 0, unusedPid = 0;
+    std::atomic<quint32> runningPid = 0;
+    auto native = services(loads, unusedPid);
+    native.find = [&](const QString &) { return TargetProcess{runningPid.load(), {}}; };
+    QString launchedExe;
+    native.launch = [&](const QString &exe) {
+        ++launches;
+        launchedExe = exe;
+        runningPid.store(5678);
+        return TargetProcess{quint32(5678), {}};
+    };
+    quint32 loadedPid = 0;
+    native.load = [&](quint32 p, const QString &, const QString &) {
+        ++loads;
+        loadedPid = p;
+        return LaunchResult{true, {}};
+    };
+    LaunchController controller(QDir::tempPath(), expiry(), native);
+    QSignalSpy done(&controller, &LaunchController::completed);
+    controller.start(QStringLiteral("selected-game.exe"));
+    QTRY_COMPARE(done.count(), 1);
+    QCOMPARE(launches.load(), 1);
+    QCOMPARE(loads.load(), 1);
+    QCOMPARE(launchedExe, QStringLiteral("selected-game.exe"));
+    QCOMPARE(loadedPid, quint32(5678));
+    QCOMPARE(controller.succeededPid(), quint32(5678));
+}
+void LaunchControllerTest::skipsLaunchWhenGameAlreadyRunning() {
+    std::atomic_int loads = 0, launches = 0, pid = 4321;
+    auto native = services(loads, pid);
+    native.launch = [&](const QString &) {
+        ++launches;
+        return TargetProcess{quint32(9999), {}};
+    };
+    LaunchController controller(QDir::tempPath(), expiry(), native);
+    QSignalSpy done(&controller, &LaunchController::completed);
+    controller.start(QStringLiteral("selected-game.exe"));
+    QTRY_COMPARE(done.count(), 1);
+    QCOMPARE(launches.load(), 0);
+    QCOMPARE(loads.load(), 1);
+    QCOMPARE(controller.succeededPid(), quint32(4321));
 }
 QTEST_GUILESS_MAIN(LaunchControllerTest)
 #include "LaunchControllerTest.moc"

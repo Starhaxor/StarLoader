@@ -44,11 +44,10 @@ endif()
 # production keys cannot be mixed with the local API and invalidate tokens.
 if(STARLOADER_LOCAL_DEVELOPMENT)
     set(STARLOADER_API_URL "http://127.0.0.1:8080" CACHE STRING "KeyStar API base URL" FORCE)
-    set(STARLOADER_APPLICATION_ID "01a04caa-baa0-72ec-9b69-b4ba548bb3e5" CACHE STRING "KeyStar application UUID used by the StarLoader client" FORCE)
-    set(STARLOADER_PUBLISHABLE_KEY "ks_pk_test_3MQ61B26VW_l7Xh56LE9PuaGEAZz1YD0hsJoe_myOKLPWnPtS9dxbQ" CACHE STRING "KeyStar publishable API key used by the StarLoader client" FORCE)
-    set(STARLOADER_ED25519_KEY_RING "local-test=e/40nbaaIxXaqAopnL6j/M0w7WeF70Nk8uIij1nr5SQ=" CACHE STRING "Configured Ed25519 session-token key ring" FORCE)
-    # The product belongs to the deployment, not to this development profile.
-    # Preserve an explicitly supplied ID (KeyStar uses the licensed product UUID).
+    set(STARLOADER_APPLICATION_ID "01a09b80-e4ab-701a-9877-17f4de59bb87" CACHE STRING "KeyStar application UUID used by the StarLoader client" FORCE)
+    set(STARLOADER_PUBLISHABLE_KEY "ks_pk_test_GG126KTJ94_qS4v3yPrqCwXO0pcJb0nZEPEZwiSmnBHETrU1bj7sj8" CACHE STRING "KeyStar publishable API key used by the StarLoader client" FORCE)
+    set(STARLOADER_ED25519_KEY_RING "ksk_VGk8ciwsoB-tqJ5uZATjzg=zmSZLEBBeHk/LXcwUI1xF0386zZxJlMjc2nqp3h9a74=" CACHE STRING "Configured Ed25519 session-token key ring" FORCE)
+    set(STARLOADER_PRODUCT_ID "01a09b80-e4d8-7d87-9198-6c5072ea0712" CACHE STRING "KeyStar product UUID bound into StarLoader access tokens" FORCE)
     set(STARLOADER_TLS_PINNED_HOST "127.0.0.1" CACHE STRING "Exact local KeyStar host" FORCE)
     set(STARLOADER_TLS_SPKI_PINS "" CACHE STRING "Production SPKI pins are intentionally absent in local development" FORCE)
 endif()
